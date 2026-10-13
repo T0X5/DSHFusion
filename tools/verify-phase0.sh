@@ -470,14 +470,27 @@ if [ -d ../audit/DSHBox ]; then
         expect 0 "导入后许可原件哈希仍一致" \
             bash -c "cd '$IMP_CLONE' && python3 tools/check-license-hashes.py"
 
-        # 偏离重放此时应报「4 项失败、1 项已生效」—— 这是设计如此，不是缺陷
+        # 偏离重放此时应报「待处理项全部失败、排除项已生效」。设计如此，不是缺陷。
+        #
+        # 断言不硬编码数量：早先写死「4 项失败」，新增 DIV-0006 后立刻失效，
+        # 而失效的原因是测试过期、不是代码出错 —— 这种误报会训练人忽略红灯。
+        # 改为从治理文件推导：凡是作为「导入排除」登记的偏离（见
+        # import-exclusions.json 的 excluded_paths[].divergence），导入后天然已生效；
+        # 其余都需要人工施加，导入后应全部报失败。新增偏离时测试自动跟上。
         IMP_DIV="$(cd "$IMP_CLONE" && bash tools/apply-divergences.sh --check 2>&1 || true)"
-        if printf '%s' "$IMP_DIV" | grep -q "4 项失败" &&
+        EXP_FAIL="$(cd "$IMP_CLONE" && python3 -c "
+import json
+d=json.load(open('governance/divergences.json',encoding='utf-8'))
+x=json.load(open('governance/import-exclusions.json',encoding='utf-8'))
+excl={e.get('divergence') for e in x.get('excluded_paths',[])}
+print(sum(1 for e in d['planned'] if e['id'] not in excl))
+" 2>/dev/null || echo 5)"
+        if printf '%s' "$IMP_DIV" | grep -q "$EXP_FAIL 项失败" &&
            printf '%s' "$IMP_DIV" | grep -q "DIV-0005"; then
-            printf '  [PASS] %-52s\n' "导入后偏离重放正确报出 4 项待处理"
-            PASS=$((PASS + 1)); RESULTS+=("PASS|导入后偏离重放|4 项失败 1 项已生效")
+            printf '  [PASS] %-52s\n' "导入后偏离重放正确报出 $EXP_FAIL 项待处理"
+            PASS=$((PASS + 1)); RESULTS+=("PASS|导入后偏离重放|$EXP_FAIL 项失败 1 项已生效")
         else
-            printf '  [FAIL] %-52s\n' "导入后偏离重放未报出预期的 4 项失败"
+            printf '  [FAIL] %-52s\n' "导入后偏离重放未报出预期的 $EXP_FAIL 项失败"
             FAIL=$((FAIL + 1)); RESULTS+=("FAIL|导入后偏离重放|未报出预期失败项")
         fi
     else
