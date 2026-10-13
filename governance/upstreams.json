@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-13",
+  "note": "双上游清单。每个上游的锁定提交是 DSHFusion 的同步基线；改动本文件必须走 PR。",
+  "role_legend": {
+    "base": "第一阶段稳定骨干，源码作为主干导入",
+    "feature_source": "按需选择性吸收其实现与优化的来源，不整体导入"
+  },
+  "upstreams": [
+    {
+      "id": "dshbox",
+      "role": "base",
+      "full_name": "WSK-build/DSHBox",
+      "url": "https://github.com/WSK-build/DSHBox.git",
+      "default_branch": "main",
+      "locked_commit": "266290a6d16fa1ea08b3b734cbfe726437a75fb2",
+      "locked_commit_date": "2026-10-11T08:23:53Z",
+      "locked_ref": "main (v1.4.0 release commit 之后)",
+      "is_fork": false,
+      "license": "GPL-3.0",
+      "license_file": "governance/upstream-licenses/DSHBox/LICENSE",
+      "trademark_notice": "governance/upstream-licenses/DSHBox/TRADEMARK.md",
+      "language": "Kotlin",
+      "stars_at_audit": 117,
+      "tracked_files": 790,
+      "ci_status_at_audit": "green",
+      "toolchain": {
+        "jdk": "21",
+        "agp": "8.9.2",
+        "gradle": "8.11.1",
+        "kotlin": "2.0.21",
+        "compileSdk": 36,
+        "minSdk": 29,
+        "targetSdk": 36,
+        "abis": ["arm64-v8a"]
+      },
+      "modules": [
+        "app",
+        "common",
+        "bridge",
+        "sandbox-manager",
+        "plugin-manager",
+        "terminal-emulator",
+        "terminal-view",
+        "terminal-session",
+        "pilot/interlock-relay-core",
+        "pilot/dshbox-adapter"
+      ],
+      "runtime_asset_strategy": "layered: base/node/android-side fetched online from Debian official archive + npm mirrors, or imported offline from a public release zip; NOT committed to git",
+      "sync_policy": {
+        "method": "merge-upstream-tag-then-reapply-divergences",
+        "auto_pr_allowed": true,
+        "auto_publish_allowed": false,
+        "requires_contract_checks": true
+      }
+    },
+    {
+      "id": "dsha",
+      "role": "feature_source",
+      "full_name": "DSH-APP/DSHA",
+      "url": "https://github.com/DSH-APP/DSHA.git",
+      "default_branch": "main",
+      "locked_commit": "467c7eb09da871a64a1aaa44e82428c30455ecc3",
+      "locked_commit_date": "2026-10-13T15:34:13Z",
+      "locked_ref": "main (build171, 未发布)",
+      "is_fork": false,
+      "license": "MIT",
+      "license_file": "governance/upstream-licenses/DSHA/LICENSE",
+      "copyright": "Copyright (c) 2026 qiannianhuanxiang",
+      "language": "Java",
+      "stars_at_audit": 1114,
+      "tracked_files": 2639,
+      "ci_status_at_audit": "failing (4 contract checks) — see docs/AUDIT.md §DSHA 主干健康度",
+      "toolchain": {
+        "jdk": "17",
+        "agp": "9.1.1",
+        "gradle": "9.3.1",
+        "kotlin": null,
+        "compileSdk": 37,
+        "minSdk": 30,
+        "minSdk_low_flavor": 23,
+        "abis": ["arm64-v8a"]
+      },
+      "runtime_asset_strategy": "offline-rootfs.bin + dsh-runtime.bin + ubuntu-tools.bin generated locally, NOT committed; CI consumes an externally supplied immutable bundle URL+SHA256",
+      "sync_policy": {
+        "method": "selective-port-with-adaptation-layer",
+        "auto_pr_allowed": false,
+        "auto_publish_allowed": false,
+        "requires_contract_checks": true,
+        "requires_provenance_review": true
+      }
+    }
+  ],
+  "transitive_upstreams": [
+    {
+      "id": "deepseek-harness",
+      "full_name": "deepseek-ai/deepseek-harness",
+      "role": "runtime",
+      "tracked_version": "0.2.0-rc.2",
+      "note": "DSH 本体。以 npm 包形式进入运行环境，不在本仓库中打源码补丁。"
+    },
+    {
+      "id": "interlock-relay",
+      "full_name": "WSK-build/interlock-relay",
+      "role": "phone_assistant_kernel",
+      "tracked_version": "0.1.0",
+      "license": "Apache-2.0",
+      "note": "手机助手内核，以源码形式内嵌在 DSHBox 的 pilot/interlock-relay-core 中。"
+    },
+    {
+      "id": "termux-terminal",
+      "full_name": "termux/termux-app",
+      "role": "terminal_emulator",
+      "tracked_version": "0.118.0",
+      "license": "Apache-2.0 (terminal-emulator / terminal-view 模块例外)",
+      "note": "DSHBox 与 DSHA 都使用；许可为 Apache-2.0 例外，不要扩展到 termux-app 的 GPLv3 部分。"
+    },
+    {
+      "id": "proroot",
+      "full_name": "coderredlab/proroot",
+      "role": "runtime_accelerator",
+      "tracked_version": "1.2.8",
+      "license": "upstream proprietary",
+      "note": "仅 DSHA 使用。专有二进制，复用前必须单独确认分发权利。"
+    }
+  ]
+}

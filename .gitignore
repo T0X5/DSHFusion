@@ -1,0 +1,53 @@
+# 上游镜像：上百 MB 的对象库，绝不入库
+upstream-mirrors/
+*.git/
+
+# 运行环境资产：分层 bundle，从公开来源获取或离线导入，不入库
+runtime/
+runtime/android-assets/
+dist/
+*.tar.zst
+*.tar.gz
+*.tar.xz
+offline-rootfs.bin
+dsh-runtime.bin
+ubuntu-tools.bin
+pnpm-runtime.bin
+python-support.bin
+glibc-python.tar.gz
+
+# Android / Gradle 构建产物
+.gradle/
+build/
+app/build/
+*/build/
+captures/
+*.apk
+*.aar
+*.ap_
+*.dex
+local.properties
+.cxx/
+
+# 签名密钥：绝不入库
+*.jks
+*.keystore
+keystore.properties
+*.p12
+*.pem
+
+# IDE / 编辑器
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# 临时文件
+tmp_*/
+tmp-*/
+/tmp/
+*.log

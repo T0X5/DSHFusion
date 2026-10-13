@@ -1,0 +1,97 @@
+name: Upstream watch
+
+# 定期检查两个上游是否有新提交，并生成变更摘要。
+#
+# 设计原则：本工作流**只报告，不改主干**。它产出摘要与冲突预警，
+# 由人决定是否同步（见 docs/UPSTREAM-SYNC.md）。
+# 低风险变更可以后续开启自动候选 PR，但默认关闭。
+
+on:
+  schedule:
+    # 每周一 03:00 UTC
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      upstream:
+        description: '要检查的上游（dshbox / dsha / both）'
+        required: false
+        default: both
+        type: choice
+        options: [both, dshbox, dsha]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5
+        with:
+          python-version: '3.12'
+
+      - name: Clone upstream mirrors
+        run: |
+          set -euo pipefail
+          mkdir -p ../upstream-mirrors
+          git clone --mirror https://github.com/WSK-build/DSHBox.git ../upstream-mirrors/DSHBox.git
+          git clone --mirror https://github.com/DSH-APP/DSHA.git   ../upstream-mirrors/DSHA.git
+          du -sh ../upstream-mirrors/*
+
+      - name: Generate upstream change summaries
+        id: summaries
+        run: |
+          set -euo pipefail
+          target="${{ github.event.inputs.upstream || 'both' }}"
+          changed=0
+          if [ "$target" = "both" ] || [ "$target" = "dshbox" ]; then
+            echo "::group::DSHBox"
+            tools/sync-upstream.sh dshbox --report || true
+            echo "::endgroup::"
+          fi
+          if [ "$target" = "both" ] || [ "$target" = "dsha" ]; then
+            echo "::group::DSHA"
+            tools/sync-upstream.sh dsha --report || true
+            echo "::endgroup::"
+          fi
+          # 有新报告文件 = 上游有新提交
+          if [ -n "$(git status --porcelain docs/upstream-reports/ 2>/dev/null)" ]; then
+            changed=1
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+      - name: Upload summaries
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: upstream-change-summaries
+          path: docs/upstream-reports/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Open an issue when upstream moved
+        if: steps.summaries.outputs.changed == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          title="上游有新提交需要评估 ($(date -u +%Y-%m-%d))"
+          {
+            echo "定期检查发现上游有新提交。摘要见本次运行的 artifact \`upstream-change-summaries\`。"
+            echo
+            echo "处理流程见 \`docs/UPSTREAM-SYNC.md\`。重点看摘要里的："
+            echo
+            echo "- **§3 冲突预警** —— 变更文件与已登记偏离的交集，这些必须人工重放"
+            echo "- **§4 测试基线变化** —— 测试文件净减少要查明原因"
+            echo "- **§5 许可与依赖变化** —— 任一变化都要求人工确认"
+            echo
+            echo "> 构建或测试失败时**保留现有稳定主干，不要合并**。"
+          } > /tmp/issue-body.md
+          gh issue create --title "$title" --body-file /tmp/issue-body.md || {
+            echo "NOTE: 无法创建 issue（可能未开启 issues）。摘要已作为 artifact 上传。"
+          }

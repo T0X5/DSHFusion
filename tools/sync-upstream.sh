@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# DSHFusion 上游同步工具（阶段 0）。
+#
+# 职责：拉取上游 → 生成变更摘要 → 冲突预警。不自动改主干、不自动合并、不自动推送。
+# 合并与开 PR 由人决定（见 docs/UPSTREAM-SYNC.md）。
+#
+# 用法：
+#   tools/sync-upstream.sh dshbox --fetch      # 拉取上游镜像并生成摘要
+#   tools/sync-upstream.sh dsha   --fetch
+#   tools/sync-upstream.sh dshbox --report     # 只用本地镜像生成摘要
+#   tools/sync-upstream.sh dshbox --record <commit>   # 更新 upstreams.json 的锁定提交
+#
+# 环境：
+#   DSHFUSION_MIRRORS  上游镜像目录（默认 ../upstream-mirrors）
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+MIRRORS="${DSHFUSION_MIRRORS:-$(cd "$ROOT/.." && pwd)/upstream-mirrors}"
+REPORTS="$ROOT/docs/upstream-reports"
+UPSTREAMS_JSON="$ROOT/governance/upstreams.json"
+DIVERGENCES_JSON="$ROOT/governance/divergences.json"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+info() { echo "==> $*"; }
+
+usage() {
+    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+    exit "${1:-0}"
+}
+
+[ $# -ge 1 ] || usage 1
+UPSTREAM_ID="$1"; shift
+
+case "$UPSTREAM_ID" in
+    dshbox|dsha) ;;
+    -h|--help) usage 0 ;;
+    *) die "未知上游 '$UPSTREAM_ID'（可选：dshbox / dsha）" ;;
+esac
+
+ACTION=""
+RECORD_COMMIT=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --fetch)  ACTION="fetch"; shift ;;
+        --report) ACTION="report"; shift ;;
+        --record) ACTION="record"; RECORD_COMMIT="${2:-}"; [ -n "$RECORD_COMMIT" ] || die "--record 需要一个提交号"; shift 2 ;;
+        -h|--help) usage 0 ;;
+        *) die "未知参数 '$1'" ;;
+    esac
+done
+[ -n "$ACTION" ] || usage 1
+
+# ---------- 读取上游清单 ----------
+command -v python3 >/dev/null 2>&1 || die "需要 python3"
+
+read_upstream() {   # $1 = 字段名
+    python3 - "$UPSTREAM_ID" "$1" <<'PY'
+import json, sys
+from pathlib import Path
+doc = json.loads(Path("governance/upstreams.json").read_text(encoding="utf-8"))
+entry = next((u for u in doc["upstreams"] if u["id"] == sys.argv[1]), None)
+if entry is None:
+    raise SystemExit("UPSTREAM_NOT_FOUND")
+print(entry.get(sys.argv[2], ""))
+PY
+}
+
+FULL_NAME="$(read_upstream full_name)"
+LOCKED="$(read_upstream locked_commit)"
+URL="$(read_upstream url)"
+echo "上游：$FULL_NAME"
+echo "锁定：$LOCKED"
+
+# ---------- record ----------
+if [ "$ACTION" = "record" ]; then
+    [ ${#RECORD_COMMIT} -eq 40 ] || die "--record 需要完整的 40 位提交号（收到 ${#RECORD_COMMIT} 位）"
+    python3 - "$UPSTREAM_ID" "$RECORD_COMMIT" <<'PY'
+import json, sys, datetime
+from pathlib import Path
+path = Path("governance/upstreams.json")
+doc = json.loads(path.read_text(encoding="utf-8"))
+uid, commit = sys.argv[1], sys.argv[2]
+entry = next((u for u in doc["upstreams"] if u["id"] == uid), None)
+if entry is None:
+    raise SystemExit("UPSTREAM_NOT_FOUND")
+old = entry.get("locked_commit")
+entry["locked_commit"] = commit
+entry["locked_commit_date"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+path.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(f"{uid}: {old} -> {commit}")
+PY
+    info "已更新 upstreams.json。别忘了把这次同步写进 docs/upstream-reports/。"
+    exit 0
+fi
+
+# ---------- 定位镜像 ----------
+case "$UPSTREAM_ID" in
+    dshbox) MIRROR="$MIRRORS/DSHBox.git" ;;
+    dsha)   MIRROR="$MIRRORS/DSHA.git" ;;
+esac
+
+if [ ! -d "$MIRROR" ]; then
+    cat >&2 <<EOF
+ERROR: 找不到上游镜像 $MIRROR
+
+仓库不跟踪镜像（避免把上百 MB 对象库提交进 git）。请先建立：
+
+    mkdir -p "$MIRRORS"
+    git clone --mirror "$URL" "$MIRROR"
+
+或用 DSHFUSION_MIRRORS 指定其他位置。
+EOF
+    exit 1
+fi
+
+if [ "$ACTION" = "fetch" ]; then
+    info "拉取上游更新到镜像"
+    git -C "$MIRROR" fetch --prune origin '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
+fi
+
+# ---------- 确定目标提交 ----------
+DEFAULT_BRANCH="$(read_upstream default_branch)"
+[ -n "$DEFAULT_BRANCH" ] || DEFAULT_BRANCH="main"
+TARGET="$(git -C "$MIRROR" rev-parse "refs/heads/$DEFAULT_BRANCH" 2>/dev/null || true)"
+[ -n "$TARGET" ] || die "镜像里找不到分支 $DEFAULT_BRANCH（镜像可能未正确 fetch）"
+
+if [ "$LOCKED" = "$TARGET" ]; then
+    info "上游没有新提交（$TARGET 就是当前锁定提交）。"
+    exit 0
+fi
+
+git -C "$MIRROR" cat-file -e "$LOCKED^{commit}" 2>/dev/null \
+    || die "锁定提交 $LOCKED 不在镜像中，无法计算变更范围。请检查 upstreams.json。"
+
+info "新提交范围：$LOCKED..$TARGET"
+
+# ---------- 生成摘要 ----------
+mkdir -p "$REPORTS"
+DATE="$(date +%Y%m%d)"
+REPORT="$REPORTS/${DATE}-${UPSTREAM_ID}.md"
+
+# 变更文件清单（供后续交集计算）
+CHANGED="$(git -C "$MIRROR" diff --name-only "$LOCKED" "$TARGET")"
+
+{
+    echo "# 上游同步摘要：$FULL_NAME"
+    echo
+    echo "- 生成时间：$(date -Iseconds)"
+    echo "- 上游：\`$FULL_NAME\`"
+    echo "- 范围：\`$LOCKED\` → \`$TARGET\`"
+    echo "- 目标分支：\`$DEFAULT_BRANCH\`"
+    echo "- 提交数：$(git -C "$MIRROR" rev-list --count "$LOCKED..$TARGET")"
+    echo "- 变更文件数：$(printf '%s\n' "$CHANGED" | grep -c . || true)"
+    echo
+
+    echo "## 1. 提交清单"
+    echo
+    echo "| 提交 | 日期 | 作者 | 标题 | 标记 |"
+    echo "|---|---|---|---|---|"
+    git -C "$MIRROR" log --reverse --date=short \
+        --format='%h%x09%ad%x09%an%x09%s' "$LOCKED..$TARGET" | while IFS=$'\t' read -r sha date author subject; do
+        mark=""
+        case "$subject" in
+            *fix*|*fix:*|*FIX*) mark="fix" ;;
+        esac
+        case "$subject" in
+            *security*|*Security*|*CVE*|*安全*|*漏洞*) mark="${mark:+$mark,}security" ;;
+        esac
+        echo "| \`$sha\` | $date | $author | ${subject//|/\\|} | $mark |"
+    done
+    echo
+
+    echo "## 2. 按模块聚合的变更量"
+    echo
+    echo "| 模块 | 文件数 |"
+    echo "|---|---:|"
+    printf '%s\n' "$CHANGED" | grep . | awk -F/ '{print ($1=="app"||$1=="docs"||$1=="tools"||$1=="website")?$1:$1}' \
+        | sort | uniq -c | sort -rn | head -25 \
+        | while read -r count module; do echo "| \`$module\` | $count |"; done
+    echo
+
+    echo "## 3. ⚠️ 冲突预警（变更文件 ∩ 已登记偏离）"
+    echo
+    if [ -f "$DIVERGENCES_JSON" ]; then
+        printf '%s\n' "$CHANGED" | grep . > /tmp/dshfusion-changed.txt || true
+        python3 - "$DIVERGENCES_JSON" <<'PY'
+import json, sys
+from pathlib import Path
+changed = set(Path("/tmp/dshfusion-changed.txt").read_text(encoding="utf-8").split())
+doc = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+hits = []
+for state in ("applied", "planned"):
+    for entry in doc.get(state, []):
+        for target in entry.get("target_files", []):
+            if target in changed or any(c.startswith(target.rstrip("/") + "/") for c in changed):
+                hits.append((entry["id"], entry.get("title", ""), target, state))
+if not hits:
+    print("本次上游变更**没有**触及已登记偏离的文件。")
+else:
+    print("| 偏离 | 标题 | 文件 | 状态 |")
+    print("|---|---|---|---|")
+    for div_id, title, target, state in hits:
+        print(f"| `{div_id}` | {title} | `{target}` | {state} |")
+    print()
+    print(f"**共 {len(hits)} 处冲突需要人工重放。** 合并后必须跑 `tools/apply-divergences.sh`。")
+PY
+    else
+        echo "（divergences.json 不存在，跳过）"
+    fi
+    echo
+
+    echo "## 4. 测试基线变化"
+    echo
+    BEFORE=$(git -C "$MIRROR" ls-tree -r --name-only "$LOCKED" | grep -cE 'src/(test|androidTest)/.*\.(kt|java)$' || true)
+    AFTER=$(git -C "$MIRROR" ls-tree -r --name-only "$TARGET" | grep -cE 'src/(test|androidTest)/.*\.(kt|java)$' || true)
+    echo "- 上游测试文件：$BEFORE → $AFTER"
+    if [ "$AFTER" -lt "$BEFORE" ]; then
+        echo "- 🚨 **测试文件净减少 $((BEFORE - AFTER)) 个。** 必须查明是删测试还是重构，不允许静默接受。"
+    fi
+    echo "- 本项目基线：**≥ 156**（见 docs/FUSION-PLAN.md 阶段 1 验收清单第 8 项）"
+    echo
+
+    echo "## 5. ⚠️ 许可与依赖变化（要求人工确认）"
+    echo
+    for f in LICENSE THIRD_PARTY_NOTICES.md TRADEMARK.md gradle/libs.versions.toml \
+             app/build.gradle.kts app/build.gradle package.json package-lock.json \
+             runtime-bundle/bundle.yaml .github/workflows/android.yml; do
+        if printf '%s\n' "$CHANGED" | grep -qx "$f"; then
+            echo "- \`$f\` **已变更** — 需人工确认许可/依赖影响"
+        fi
+    done
+    echo
+    echo "> 若 \`LICENSE\`、\`THIRD_PARTY_NOTICES.md\` 或 \`TRADEMARK.md\` 变更，"
+    echo "> 必须重新生成 \`governance/upstream-license-hashes.json\` 并复核 \`governance/ATTRIBUTION.md\`。"
+    echo
+
+    echo "## 6. 变更文件全清单"
+    echo
+    echo '```'
+    printf '%s\n' "$CHANGED"
+    echo '```'
+    echo
+
+    echo "## 7. 下一步（人工）"
+    echo
+    echo '```bash'
+    echo "git switch -c sync/$UPSTREAM_ID-$(printf '%s' "$TARGET" | cut -c1-10)"
+    echo "git merge --no-ff $TARGET   # 从镜像合并，或先把它推到一个可访问的 remote"
+    echo "tools/apply-divergences.sh  # 重放已登记的偏离"
+    echo "./gradlew testDebugUnitTest lintDebug"
+    echo "python3 tools/check-upstreams.py"
+    echo "tools/sync-upstream.sh $UPSTREAM_ID --record $TARGET"
+    echo '```'
+    echo
+    echo "**构建或测试失败时：保留现有稳定主干，不要合并。**"
+} > "$REPORT"
+
+info "摘要已写入 $REPORT"
+echo
+echo "--- 摘要预览（前 40 行）---"
+head -40 "$REPORT"

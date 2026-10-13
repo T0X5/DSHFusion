@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-13",
+  "purpose": "受保护的上游许可原件哈希。这些文件必须保持上游原样，改动即检查失败。",
+  "sources": {
+    "DSHA": "https://github.com/DSH-APP/DSHA @ 467c7eb09da871a64a1aaa44e82428c30455ecc3",
+    "DSHBox": "https://github.com/WSK-build/DSHBox @ 266290a6d16fa1ea08b3b734cbfe726437a75fb2"
+  },
+  "files": {
+    "governance/upstream-licenses/DSHA/LICENSE": {
+      "sha256": "e0ddc2f4a383d900a26e3148a19c256e9dbe06585a274307509e9714636be0b1",
+      "bytes": 1074
+    },
+    "governance/upstream-licenses/DSHA/THIRD_PARTY_NOTICES.md": {
+      "sha256": "d903f52c80d333be75afe8025911f351457ff87b55e8e6a74005e181c739b047",
+      "bytes": 15173
+    },
+    "governance/upstream-licenses/DSHBox/LICENSE": {
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "bytes": 35149
+    },
+    "governance/upstream-licenses/DSHBox/THIRD_PARTY_NOTICES.md": {
+      "sha256": "8c3b9bae095e72a289cb59b87806660827c62a50c826514acecff9a3203d59ea",
+      "bytes": 9484
+    },
+    "governance/upstream-licenses/DSHBox/TRADEMARK.md": {
+      "sha256": "638e3a0df4a4f97e5ae7c7e12bd82c794f16ef20335431b634dece435e072360",
+      "bytes": 4154
+    }
+  }
+}

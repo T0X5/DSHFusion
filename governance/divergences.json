@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-13",
+  "purpose": "登记 DSHFusion 对上游代码的每一处偏离。未登记的偏离会在下一次上游同步时静默丢失。",
+  "rules": [
+    "applied 里的每一项都必须对应主干中真实存在的文件；check-upstreams.py 会核验。",
+    "reapply 字段必须写明同步后如何重新施加这处偏离（脚本或人工步骤）。",
+    "能通过配置或适配层实现、不改上游文件的偏离，优先走 adaptation 类型，不要改上游文件。",
+    "planned 是尚未施加的偏离；施加后必须移入 applied 并补上实际文件与提交号。"
+  ],
+  "applied": [],
+  "planned": [
+    {
+      "id": "DIV-0001",
+      "title": "独立应用标识 com.dshfusion.app",
+      "upstream": "dshbox",
+      "type": "identity",
+      "phase": 1,
+      "target_files": ["app/build.gradle.kts"],
+      "change": "applicationId 与 namespace 由 com.dshbox.app 改为 com.dshfusion.app；versionCode/versionName 改用独立版本线。",
+      "rationale": "必须能与 com.dshbox.app、com.dsh.client 并存安装，否则无法在真机上与上游对照测试。",
+      "reapply": "同步后由 tools/apply-divergences.sh 按规则重写 app/build.gradle.kts 中的这三行。",
+      "conflict_risk": "medium — 上游每次改 build.gradle.kts 都可能冲突；冲突时以本项为准。"
+    },
+    {
+      "id": "DIV-0002",
+      "title": "独立应用名与自有图标",
+      "upstream": "dshbox",
+      "type": "identity",
+      "phase": 1,
+      "target_files": [
+        "app/src/main/res/values/strings.xml",
+        "app/src/main/res/values-*/strings.xml",
+        "app/src/main/res/mipmap-*/brand_icon.png"
+      ],
+      "change": "app_name 改为 DSHFusion；替换 brand_icon 为自绘图标。",
+      "rationale": "DSHBox 的 TRADEMARK.md §4 保留其名称与品牌图形全部权利，并禁止复用。",
+      "reapply": "图标为二进制自有资产，同步时不覆盖（登记为 keep-ours）。app_name 由脚本重写。",
+      "conflict_risk": "low"
+    },
+    {
+      "id": "DIV-0003",
+      "title": "运行环境资产路径可配置",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": ["app/build.gradle.kts"],
+      "change": "assets.srcDirs(\"../../runtime/android-assets\") 改为可由环境变量 DSHFUSION_RUNTIME_ASSETS 覆盖，缺省仍为该相对路径。",
+      "rationale": "原路径要求仓库外必须存在一个同级 runtime/ 目录，且默认值依赖原作者的目录布局；独立仓库需要自持。",
+      "reapply": "由 tools/apply-divergences.sh 重写该行。",
+      "conflict_risk": "medium"
+    },
+    {
+      "id": "DIV-0004",
+      "title": "上游监测地址指向 DSHFusion 自身",
+      "upstream": "dshbox",
+      "type": "config",
+      "phase": 1,
+      "target_files": ["app/src/main/java/com/dshbox/app/util/AppVersion.kt"],
+      "change": "SITE_URL / REPO_URL / 更新检查 API_URL 改为 DSHFusion 自己的地址，或改为可配置并默认关闭检查。",
+      "rationale": "不能把用户导向 DSHBox 的发布页；也不能让本应用去拉取 DSHBox 的 Release 作为自身更新源。",
+      "reapply": "由 tools/apply-divergences.sh 重写这三个常量。",
+      "conflict_risk": "low"
+    },
+    {
+      "id": "DIV-0005",
+      "title": "移除对上游品牌页面的硬引用",
+      "upstream": "dshbox",
+      "type": "config",
+      "phase": 1,
+      "target_files": ["website/"],
+      "change": "website/ 不导入主干，或导入后改写为自有页面。",
+      "rationale": "官网内容与品牌属于上游；本项目不需要对外站点。",
+      "reapply": "同步时整目录忽略。",
+      "conflict_risk": "none"
+    }
+  ]
+}

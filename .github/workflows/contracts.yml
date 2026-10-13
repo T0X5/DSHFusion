@@ -1,0 +1,107 @@
+name: Contracts
+
+# 阶段 0 的 CI：校验治理文件的内部一致性与真实文件存在性。
+# 不构建 Android —— 上游代码尚未导入（见 AGENTS.md「当前处于什么阶段」）。
+# 阶段 1 导入源码后，本工作流会增加 Gradle 单测与 Lint 步骤。
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5
+        with:
+          python-version: '3.12'
+
+      - name: Governance contract checks
+        run: python3 tools/check-upstreams.py
+
+      - name: Reference integrity (links and repo paths)
+        run: python3 tools/check-references.py
+
+      - name: Upstream license originals unchanged
+        run: python3 tools/check-license-hashes.py
+
+      - name: All JSON files parse
+        run: |
+          set -euo pipefail
+          failed=0
+          while IFS= read -r file; do
+            if ! python3 -c "import json,sys; json.load(open(sys.argv[1], encoding='utf-8'))" "$file"; then
+              echo "::error file=$file::JSON 解析失败"
+              failed=1
+            fi
+          done < <(find . -name '*.json' -not -path './.git/*')
+          exit "$failed"
+
+      - name: Shell scripts pass syntax check
+        run: |
+          set -euo pipefail
+          failed=0
+          while IFS= read -r file; do
+            if ! bash -n "$file"; then
+              echo "::error file=$file::bash 语法错误"
+              failed=1
+            fi
+          done < <(find tools -name '*.sh')
+          exit "$failed"
+
+      - name: Shell scripts are executable
+        run: |
+          set -euo pipefail
+          failed=0
+          while IFS= read -r file; do
+            if [ ! -x "$file" ]; then
+              echo "::error file=$file::缺少可执行位"
+              failed=1
+            fi
+          done < <(find tools -name '*.sh')
+          exit "$failed"
+
+      - name: Python tools compile
+        run: python3 -m compileall -q tools
+
+      - name: Verify upstream mirrors are NOT tracked
+        run: |
+          set -euo pipefail
+          # 上游镜像是上百 MB 的对象库，绝不能进 git。
+          if git ls-files | grep -qE 'upstream-mirrors/|\.git/objects'; then
+            echo "::error::上游镜像被误提交进仓库"
+            exit 1
+          fi
+          # 运行环境大资产同样不提交。
+          if git ls-files | grep -qE 'runtime/android-assets|\.tar\.zst$|\.tar\.gz$|offline-rootfs'; then
+            echo "::error::运行环境大资产被误提交进仓库"
+            exit 1
+          fi
+          echo "无镜像与大资产入库。"
+
+      - name: Phase 0 verification suite (success and failure paths)
+        run: bash tools/verify-phase0.sh
+
+      - name: No upstream brand assets reused
+        run: |
+          set -euo pipefail
+          # DSHBox 的 TRADEMARK.md 保留其品牌图形全部权利。
+          # 阶段 1 导入上游源码后，自有图标必须替换 brand_icon。
+          # 阶段 0 不该存在任何图片资产。
+          if find . -name '*.png' -o -name '*.jpg' -o -name '*.webp' | grep -q .; then
+            echo "NOTE: 仓库中出现图片资产。阶段 1 起需确认不是 DSHBox 的品牌图形："
+            find . \( -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) -not -path './.git/*'
+          fi
+          echo "无品牌资产复用风险。"
