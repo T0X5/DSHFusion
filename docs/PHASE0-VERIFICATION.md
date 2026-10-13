@@ -406,6 +406,45 @@ terminal-emulator、terminal-session、`pilot:dshbox-adapter`、
 
 ---
 
+### 2.13 产物身份核验步骤的首次真实运行（DIV-0008）
+
+- 运行：`38483533327`（提交 `a969b76`），作业 `build`，第 15 步
+  `Verify APK application identity`
+- 结果：**通过**
+
+该步骤执行 `python3 tools/check-apk-identity.py app/build/outputs/apk/debug/app-debug.apk`，
+只用标准库解析产物的二进制 `AndroidManifest.xml` 与 `resources.arsc`。CI 日志原文：
+
+```
+applicationId  : com.dshfusion.app
+versionCode    : 1
+versionName    : 0.1.0
+application    : com.dshbox.app.DshApp
+应用名（android:label = 0x7f0e001f）在各语言下的解析结果：
+  ar         = 'DSHFusion'  ✅
+  default    = 'DSHFusion'  ✅
+  es         = 'DSHFusion'  ✅
+  fr         = 'DSHFusion'  ✅
+  ru         = 'DSHFusion'  ✅
+  zh         = 'DSHFusion'  ✅
+备注：不含任何运行环境层（无 .tar.zst / assets/dsh/）—— 这个 APK 能安装，但起不了 DSH
+APK 身份核验通过 ✔
+```
+
+> 上面 6 行语言解析结果来自本地对同一 APK 的完整输出；
+> CI 日志里这几行被 GitHub 的日志折叠截断了，但退出码为 0 ——
+> 6 个语言全部匹配是「通过」的必要条件。
+
+**为什么这一步值得单独记。** 它把「独立身份」从一个**源码承诺**变成了
+**产物断言**。阶段 1 实测过两者的差别：`versionCode`/`versionName` 当时是
+上游的 `8` / `1.4.0`，`app/build.gradle.kts` 与 APK 完全一致 —— 一致，但都错。
+`android:label` 更隐蔽：它是资源引用 `0x7f0e001f`，不解 `resources.arsc`
+就无从知道它在各语言下解析成什么。
+
+**同一日志确认的另一件事**：CI 产出的 APK **不含任何运行环境层**。
+这不是缺陷，是上游的设计（`runtime/` 不进仓库）；但它意味着
+**这个 APK 能安装、不能运行 DSH**。第 3 节的限制条目据此保持有效。
+
 ## 3. 已知限制（诚实记录）
 
 1. ~~未执行 Android 构建~~ → **已执行**，见 §2.12。本机仍无 JDK / Android SDK /
