@@ -218,6 +218,26 @@ Shizuku (MIT)、AndroidX/Compose/Kotlin (Apache-2.0)、JUnit (EPL-2.0) 等。
 只要任一仍与上游一致，就报 FAILED 并点名具体文件。
 三种状态（已替换 / 仍为上游 / 文件缺失）都有隔离夹具覆盖，见 [tools/README.md](../tools/README.md)。
 
+#### 2.4.2 DSHFusion 的替代图形是**生成**出来的，不是手绘后提交
+
+8 个替代图形全部由 `tools/make-brand-assets.py` 生成：
+
+```bash
+tools/make-brand-assets.py            # 生成
+tools/make-brand-assets.py --check    # 重新渲染并逐字节比对（CI 用这个）
+```
+
+- 渲染器是**纯 Python**（只用 `zlib` 做 PNG 编码，不依赖 Pillow）。
+  CI 里没有 Pillow，也不该为画图标装一个图像库。
+- `--check` 在**临时目录**里重渲染再比对，不落盘到仓库 ——
+  这样 CI 能证明「提交的图确实由脚本生成」，又不会因为 CI 自己改了文件而变脏。
+- 生成器是自写的 SDF 光栅化，**没有复用上游的标识构造方法** ——
+  这是 `TRADEMARK.md` §四 明确禁止的。
+
+> 记录一个曾经踩过的坑：`ic_splash_mark.png` 的**上游原图是白底透明前景**
+> （白图形 + 全透明背景），在浅色启动背景上等于看不见。
+> 上游自己就有这个潜在缺陷。我们的替代图没有继承它。
+
 ### 2.5 DSHFusion 的义务
 
 **私有自用（当前状态）**：
