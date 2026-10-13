@@ -19,7 +19,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
 （`README.md`、`.gitignore`）→ **实际导入 765 个文件、25.4 MB**。
-7 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
+8 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
 
 **「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
@@ -47,6 +47,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 独立签名密钥库 | ❌ 未创建 |
 | 运行环境层构建脚本 `tools/build-dsh-layer.sh`（补运行环境风险 R1） | ✅ 已编写并**真跑通**（538 包 / 118.6 MB 层 / 冒烟测试通过） |
 | 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ✅ **通过**（run 38478523535，含单元测试 / lint / APK 组装） |
+| APK **产物**身份核验（DIV-0008） | ⚠️ 已写进 CI，但**还没跑过** —— 该步骤尚未在 CI 上执行 |
 | 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
 | 生成的 APK 装到真机上验证 | ❌ **未做**（无设备连接、无 adb） |
 | APK 内含运行环境层（能真正跑起 DSH） | ❌ 不含 —— 仓库未提交 `runtime/`，CI 只做编译 |
@@ -143,7 +144,9 @@ dshfusion/
 │   ├── check-android-identity.py  namespace 对得上 R 引用与 manifest 相对类名
 │   ├── make-brand-assets.py     生成自有品牌图形 8 个（--check 逐字节核验）
 │   ├── build-dsh-layer.sh       构建 DSH 运行环境层（版本取自 upstreams.json）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 85 项）
+│   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
+│   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 90 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）

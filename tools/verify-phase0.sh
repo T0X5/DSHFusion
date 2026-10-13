@@ -743,6 +743,52 @@ d = json.load(open(\"governance/upstreams.json\", encoding=\"utf-8\"))
 assert any(e.get(\"id\") == \"deepseek-harness\" for e in d[\"transitive_upstreams\"])
 "'
 
+section "5d. APK 产物身份核验 check-apk-identity.py"
+
+# 这个工具的价值全在断言上，所以不能只测「文件不存在时退出 2」——
+# 那测的是 argparse。用一个手写的合成 APK 逐个场景验证断言真的会拦。
+expect 0 "--help 可用" \
+    run_tool tools/check-apk-identity.py --help
+expect 2 "失败路径：APK 不存在" \
+    run_tool tools/check-apk-identity.py "$SCRATCH/definitely-not-an.apk"
+printf 'not a zip' > "$SCRATCH/notzip.apk"
+expect 2 "失败路径：不是 zip" \
+    run_tool tools/check-apk-identity.py "$SCRATCH/notzip.apk"
+
+# 六个场景。前五个是「断言应该通过/应该拦住」，最后一个是结构缺失。
+expect 0 "合成 APK：身份正确时应通过" \
+    bash -c "python3 tools/make-apk-identity-fixture.py '$SCRATCH/good.apk' good >/dev/null && \
+             python3 tools/check-apk-identity.py '$SCRATCH/good.apk'"
+
+for scen in upstream-id upstream-ver wrong-ns wrong-label; do
+    python3 tools/make-apk-identity-fixture.py "$SCRATCH/$scen.apk" "$scen" >/dev/null
+done
+
+# 逐个断言「拦得住」，并核对报出的原因确实是那一条（不是碰巧失败）
+check_scenario() {
+    local scen="$1" expect_text="$2"
+    local out rc
+    out="$(python3 tools/check-apk-identity.py "$SCRATCH/$scen.apk" 2>&1)" || rc=$?
+    rc="${rc:-0}"
+    if [ "$rc" -ne 1 ]; then
+        fail "场景 $scen 应退出 1，实际 $rc"
+        return
+    fi
+    case "$out" in
+        *"$expect_text"*) ok "场景 $scen 被拦住，原因是预期的：$expect_text" ;;
+        *) fail "场景 $scen 退出了 1，但原因不是预期的「$expect_text」" ;;
+    esac
+}
+
+check_scenario upstream-id  "applicationId 仍是上游的"
+check_scenario upstream-ver "版本号仍是上游的"
+check_scenario wrong-ns     "期望在 com.dshbox.app 下"
+check_scenario wrong-label  "期望 'DSHFusion'"
+
+expect 2 "失败路径：包里没有 AndroidManifest.xml" \
+    bash -c "python3 tools/make-apk-identity-fixture.py '$SCRATCH/no-manifest.apk' no-manifest >/dev/null && \
+             python3 tools/check-apk-identity.py '$SCRATCH/no-manifest.apk'"
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do

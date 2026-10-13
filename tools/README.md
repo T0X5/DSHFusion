@@ -216,6 +216,45 @@ tools/apply-divergences.sh            # 施加 type=identity/config 的偏离
 
 ---
 
+## 产物核验类
+
+### `check-apk-identity.py`
+
+核验**构建产物** APK 的应用身份，而不只是构建配置：`applicationId`、
+`versionCode` / `versionName`、`application` 类、以及 `android:label`
+在**各语言下**解析成的应用名。顺带报告 APK 里有没有运行环境层。
+
+```bash
+tools/check-apk-identity.py <apk> [--expect-label DSHFusion]
+```
+
+只用标准库（`zipfile` + `struct`）解析二进制 `AndroidManifest.xml` 与
+`resources.arsc`，不依赖 aapt2 / apktool。
+
+**为什么需要它**：配置写对了不等于打进 APK 的东西对了 —— 中间还有资源合并、
+资源 ID 分配、字符串池去重。阶段 1 实测过这个区别：
+`versionCode`/`versionName` 在 gradle 里是上游的 `8` / `1.4.0`，
+配置与产物一致但两者都错；而 `android:label` 是资源引用 `0x7f0e001f`，
+不解 `resources.arsc` 就不知道它各语言下解析成什么。
+已接进 `android.yml`（DIV-0008），在 `assembleDebug` 之后运行。
+
+退出码：0 通过；1 有身份断言失败；2 用法错误或 APK 无法解析。
+
+### `make-apk-identity-fixture.py`
+
+造合成 APK 供上面那个检查器做隔离测试 —— 否则只能测到 argparse，
+测不到断言。
+
+```bash
+tools/make-apk-identity-fixture.py <输出 apk> <场景>
+```
+
+场景：`good`（应通过）、`upstream-id`、`upstream-ver`、`wrong-ns`、
+`wrong-label`（都应退出 1）、`no-manifest`（应退出 2）。
+
+手写 AXML 而不是用 aapt2：本机没有 Android SDK，CI 里也不该为造夹具装一整套；
+手写反而让「检查器读的到底是什么字节」完全明确。
+
 ## 构建类
 
 这些工具**产出文件**，不参与 CI 的通过/失败判定。
@@ -275,7 +314,7 @@ bash tools/verify-phase0.sh 2>&1 | tee verification.log
 
 **退出码**：`0` 全部通过；`1` 有失败项。
 
-覆盖 16 组检查。项数随环境伸缩：依赖齐全、有审计副本与上游镜像时 **85 项**；
+覆盖 17 组检查。项数随环境伸缩：依赖齐全、有审计副本与上游镜像时 **90 项**；
 干净克隆里 **60 项**。其中 **3 项**依赖可选依赖
 （PyYAML、actionlint、shellcheck），其余依赖上游审计副本或镜像存在：
 

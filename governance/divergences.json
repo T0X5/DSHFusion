@@ -123,6 +123,20 @@
       "rationale": "上游的隐私审计在 DSHFusion 里报出 34 处，其中两类需要区别对待。第一类是**门禁互相矛盾**：governance/upstream-licenses/ 是上游许可与声明的冻结副本，字节由 upstream-license-hashes.json 锁定，改动会让 check-license-hashes.py 失败 —— 也就是说那里报出的发现我们无权修改。审计一个改不了、也不属于我们的目录没有意义。同一口径已用于 tools/check-references.py 的 FROZEN_DIRS。实测触发点是 DSHA 的 THIRD_PARTY_NOTICES.md 里 GeckoView 版本号 143.0.<14位日期串>，被「设备序列号样式」规则误判。第二类是**保留域误报**：make-record-fixture.sh 用 upstream@example.invalid 造测试夹具，而 .invalid 是 RFC 2606 保留的测试专用顶级域，与已在白名单里的 example.com 同性质，保证解析不到任何真实主机。其余 31 处（/tmp 硬编码路径）没有走白名单，而是在我们自己的文件里改掉了 —— 那些是真实的工程缺陷：并发会互相覆盖、中断会留残留，用 mktemp 本来就更对。",
       "reapply": "tools/apply-divergences.sh 的 handle_div_0007：确认 FROZEN_PREFIXES 存在、scan() 里引用了它、ALLOW 含 example\\.invalid；缺任一项即报失败。",
       "conflict_risk": "low-medium —— 单文件两处。上游若自己改了 SKIP 逻辑或 ALLOW，锚点检查会先失败而不是静默覆盖。"
+    },
+    {
+      "id": "DIV-0008",
+      "title": "android.yml 增加 APK 产物身份核验步骤",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        ".github/workflows/android.yml"
+      ],
+      "change": "在 `Assemble debug APK` 之后插入 `Verify APK application identity` 步骤，运行 `python3 tools/check-apk-identity.py <apk>`。",
+      "rationale": "上游只构建、不核验产物身份。DSHFusion 承诺了独立 applicationId、独立版本线与独立应用名，而这些都编译进二进制 —— 光看构建配置无法确认。阶段 1 实测证明这不是多虑：versionCode/versionName 当时是上游的 8 / 1.4.0，配置与产物一致但两者都错；android:label 是资源引用，必须解 resources.arsc 才能知道各语言下解析成什么。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0008 校验该步骤存在且指向脚本。",
+      "conflict_risk": "low"
     }
   ]
 }

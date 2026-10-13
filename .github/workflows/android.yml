@@ -101,6 +101,15 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew assembleDebug --stacktrace
 
+      # DIV-0008：核验**产物**的应用身份，而不只是构建配置。
+      # 配置写对了不等于打进 APK 的东西对了 —— 中间还有资源合并、资源 ID 分配、
+      # 字符串池去重。阶段 1 就踩过：versionCode/versionName 在 gradle 里是
+      # 上游的 8 / 1.4.0，配置与产物一致，但两者都错；
+      # 而 android:label 是资源引用 0x7f0e001f，不解 resources.arsc 就不知道它
+      # 到底解析成什么。这一步把「独立身份」变成对产物的断言。
+      - name: Verify APK application identity
+        run: python3 tools/check-apk-identity.py app/build/outputs/apk/debug/app-debug.apk
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:

@@ -508,6 +508,72 @@ def handle_div_0006(entry) -> tuple[str, str]:
     return OK, "已为 android.yml 补上顶层 permissions: contents: read"
 
 
+def handle_div_0008(entry) -> tuple[str, str]:
+    """android.yml 增加 APK 产物身份核验步骤。
+
+    上游只构建、不核验产物身份。DSHFusion 承诺了独立 applicationId、
+    独立版本线与独立应用名 —— 这些都被编译进二进制，光看构建配置确认不了。
+
+    为什么值得改上游文件：这条检查的价值恰恰在于它看的是**产物**。
+    阶段 1 实测过它的必要性：versionCode/versionName 当时是上游的 8 / 1.4.0，
+    配置与产物一致但两者都错；android:label 是资源引用 0x7f0e001f，
+    不解 resources.arsc 就不知道它各语言下解析成什么。
+    """
+    path = ROOT / ".github" / "workflows" / "android.yml"
+    if not path.exists():
+        return PENDING, "android.yml 尚未导入"
+
+    text = read(path)
+    step_name = "Verify APK application identity"
+    script = "tools/check-apk-identity.py"
+
+    if step_name in text:
+        if script not in text:
+            return FAILED, f"步骤 {step_name!r} 存在但没有调用 {script}"
+        return OK, "APK 身份核验步骤已存在"
+
+    if CHECK_ONLY:
+        return FAILED, f"android.yml 缺少 {step_name!r} 步骤"
+
+    # 锚点：插在 assembleDebug 与 Upload 之间。用整段匹配而不是行号，
+    # 这样上游调整步骤顺序时这里会明确失败，而不是静默插到错误的位置。
+    anchor = (
+        "      - name: Assemble debug APK\n"
+        "        run: ./gradlew assembleDebug --stacktrace\n"
+    )
+    if anchor not in text:
+        return FAILED, (
+            "找不到 Assemble debug APK 步骤的锚点，无法确定插入位置"
+            "（需人工确认后更新 divergences.json 的 reapply 字段）"
+        )
+
+    apk = "app/build/outputs/apk/debug/app-debug.apk"
+    block = (
+        anchor
+        + "\n"
+        + "      # DIV-0008：核验**产物**的应用身份，而不只是构建配置。\n"
+        + "      - name: " + step_name + "\n"
+        + "        run: python3 " + script + " " + apk + "\n"
+    )
+
+    original = text
+    write(path, text.replace(anchor, block, 1))
+    files_changed.append(str(path))
+
+    # 不谎报成功：复核步骤真的落到了 assemble 之后、Upload 之前。
+    after = read(path)
+    if step_name not in after or script not in after:
+        revert(path, original)
+        return FAILED, "写入后未发现核验步骤（已还原）"
+    i_assemble = after.find("Assemble debug APK")
+    i_verify = after.find(step_name)
+    i_upload = after.find("Upload debug APK")
+    if not (i_assemble < i_verify < i_upload):
+        revert(path, original)
+        return FAILED, "核验步骤的位置不在 assemble 与 Upload 之间（已还原）"
+    return OK, "已插入 APK 身份核验步骤（位于 assemble 与 Upload 之间）"
+
+
 def handle_div_0007(entry) -> tuple[str, str]:
     """隐私审计：跳过冻结的上游许可副本，并放行 .invalid 测试域。
 
@@ -593,6 +659,7 @@ HANDLERS = {
     "DIV-0005": handle_div_0005,
     "DIV-0006": handle_div_0006,
     "DIV-0007": handle_div_0007,
+    "DIV-0008": handle_div_0008,
 }
 
 
