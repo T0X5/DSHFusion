@@ -10,13 +10,31 @@
 
 ## 1. 结论
 
-| 项 | 结果 |
+验证套件共 **47 项**。其中 **44 项**无条件运行；**3 项**依赖可选依赖
+（PyYAML、actionlint、shellcheck）；**2 项**（第 6 组：两个上游仓库工作树是否干净）
+依赖 `../audit/DSHA` 与 `../audit/DSHBox` 存在。
+**依赖缺失时报告 SKIP，既不算通过也不算失败。**
+
+因此同一套件在不同环境下有不同结果，都是正确的：
+
+| 运行环境 | 通过 | 失败 | 跳过 | 退出码 |
+|---|---:|---:|---:|---:|
+| 工具齐全 + 有审计副本（本次工作区） | **47** | 0 | 0 | 0 |
+| 无审计副本（干净检出/克隆） | **45** | 0 | **2** | 0 |
+
+| 其他检查 | 结果 |
 |---|---|
-| 验证套件 | **23 通过 / 0 失败**，退出码 0 |
 | 治理契约检查 | 通过（4 项） |
-| 引用完整性 | 通过（26 个 Markdown 链接、29 个仓库内路径引用） |
+| 引用完整性 | 通过（27 个 Markdown 链接、43 个仓库内路径引用） |
 | 许可原件哈希 | 通过（5 个文件、65,034 字节） |
-| 干净检出复跑 | 通过 |
+| 工作流 YAML 解析（PyYAML） | 通过（2 个文件） |
+| 工作流语义检查（actionlint 1.7.7 + shellcheck 0.10.0） | 通过（0 条告警） |
+
+> **修订说明（本版）**：本报告早先版本的结论表只写了「23 通过」，没有区分
+> 「有/无审计副本」两种情形，与干净检出下实测的「21 通过 / 2 跳过」不一致。
+> 该表述当时已修正为双行表格。本次修订把套件从 23 项扩展到 47 项
+> （新增 `--record` 校验、偏离重放失败路径、工作流真实解析与 actionlint），
+> 数字全部来自脚本实际输出，不再依赖人工推算。
 
 **这个报告能证明的**：阶段 0 的骨架自洽、检查器有效、每个工具的成功与失败路径都按预期工作。
 
@@ -24,6 +42,9 @@
 本环境没有 JDK、Android SDK、NDK 与 Gradle，阶段 0 也不含上游源码，
 因此**不存在 APK 产物，也不存在构建结论**。任何关于"能构建出可用的 App"的说法
 在本阶段都不成立。
+
+**也没有任何真机验证。** 本报告全部结论来自静态检查、脚本执行与配置阅读，
+没有在 Android 设备上运行过任何东西。
 
 ---
 
@@ -70,7 +91,7 @@ $ echo $?
 
 ```
 $ python3 tools/check-references.py
-引用检查通过：26 个 Markdown 链接、29 个仓库内路径引用全部有效（另有 1 处按约定跳过）。
+引用检查通过：27 个 Markdown 链接、43 个仓库内路径引用全部有效（另有 2 处按约定跳过）。
 $ echo $?
 0
 ```
@@ -179,23 +200,132 @@ $ git -C audit/DSHBox status --porcelain | wc -l
 两个上游仓库的工作树在整个审计与阶段 0 建设过程中保持零改动。
 DSHFusion 从未向 `DSH-APP/DSHA` 或 `WSK-build/DSHBox` 推送任何内容。
 
-### 2.8 干净检出复跑
+### 2.8 `--record` 的四项校验
 
-从 git bundle 克隆到全新目录后复跑全部检查：
+`--record` 是唯一会改动 `governance/upstreams.json` 的动作，因此在**隔离夹具**上
+逐条验证它的四道校验。夹具由 `tools/make-record-fixture.sh` 在临时目录里生成，
+跑完即删，不碰真实仓库。
+
+> 为什么必须用夹具：真实镜像的 HEAD 就是锁定提交，**没有"更靠前的提交"可用**，
+> 无法在真实仓库上制造「关系回退」这类失败。
+
+```
+$ bash tools/make-record-fixture.sh /tmp/fixture     # 造出假上游与假仓库
+$ cd /tmp/fixture/repo && bash tools/sync-upstream.sh dshbox --record <各测试提交>
+
+  校验1：提交不存在于镜像                    exit=1   ← 提交号写错
+  校验1：对象不是 commit（tree 的 SHA）       exit=1   ← 把 tree SHA 当提交
+  校验1：非十六进制提交号                    exit=1   ← 格式非法
+  校验2：提交不属于默认分支历史               exit=1   ← 来自别的分支
+  校验3：锁定提交不是新提交的祖先             exit=1   ← 无共同祖先
+  校验3b：关系回退（rewound 在 main 上但非后代） exit=1   ← force-push 型回退
+  校验3c：就是当前锁定提交                    exit=1   ← 无需更新
+  校验4a：缺审核记录                          exit=1   ← 未做人工审核
+  校验4b：摘要存在但无 record_commit          exit=1
+  校验4c：integration=rejected 时拒绝推进     exit=1   ← 集成未通过
+  校验4d：审核记录范围与实际错配              exit=1
+  正常路径：4 项校验通过后推进 locked_commit  exit=0
+  成功路径留下 locked_commit_history 审计痕迹
+```
+
+校验 3b 是特意补的：最初的夹具里「无关历史提交」会在**校验 2** 就被拦下，
+根本走不到校验 3，等于校验 3 没有被测到。为此额外造了一个
+「在 main 上、但不是锁定提交后代」的提交，让校验 2 通过、校验 3 生效。
+
+### 2.9 偏离重放：成功路径与失败路径
+
+`apply-divergences.sh` 在**上游已导入**的情形下才真正工作，阶段 0 走不到那段逻辑。
+因此用 `tools/make-divergence-fixture.sh` 造出最小的假 DSHBox 文件来测：
+
+| 场景 | 期望 | 实测 |
+|---|---|---|
+| `normal` | 全部偏离可施加，退出 0 | ✓ 退出 0，4 个文件被改，二次运行幂等 |
+| `drift` | 上游改了 `applicationId` 写法 → 失败 | ✓ 退出 1，文件被还原 |
+| `asset-missing` | `assets.srcDirs(...)` 不存在 → 失败 | ✓ 退出 1，打印期望字符串与实际文件 |
+| `strings-moved` | `app_name` 条目消失 → 失败 | ✓ 退出 1 |
+| `unknown-div` | 混入未实现施加逻辑的偏离 → 失败 | ✓ 退出 1 |
+| 阶段 0 一致性 | `applied` 非空但上游未导入 → 失败 | ✓ 退出 1 |
+
+**`strings-moved` 场景发现了一个真实漏洞。** 早先版本的 `app_name` 偏离只检查
+「旧值 `DSHBox` 不存在了」就算成功。上游一旦把 `app_name` 改名或删掉，
+这个判据会**假性成立**——脚本报"已生效"，而目标状态其实从未达成。
+现在改为**正向确认目标值存在**。这个漏洞不是推理出来的，是夹具跑出来的。
+
+### 2.10 工作流验证（真实解析器 + actionlint）
+
+此前两个工作流**只被结构性检查过**（顶层键是否存在、有没有制表符），
+从未被真正的解析器读过。本版补上了两级验证：
+
+```
+$ python3 tools/check-workflows.py
+工作流验证通过：2 个文件可被 YAML 解析器解析，结构完整。
+
+$ actionlint -no-color .github/workflows/contracts.yml .github/workflows/upstream-watch.yml
+（无输出）
+$ echo $?
+0
+```
+
+actionlint 带 **shellcheck 集成**，因此 `run:` 块里的 shell 也被检查。
+**它的检查能力经过负向测试确认**：故意造的错误工作流被正确拦下
+（`github.nonexistent_context` → 表达式错误；`actions/checkout@v4` 的不存在输入 →
+action 输入错误；`for f in $(ls)` → SC2045/SC2086），退出码 1。
+
+> **actionlint 发现的一个真实问题**：`upstream-watch.yml` 里 `jq` 表达式原用单引号，
+> 导致 `$title` 不展开（SC2016）。已改用 `--arg` / 双引号传参修正。
+
+本机运行 actionlint 需要 arm64 版二进制 —— 下错架构会得到
+`Illegal instruction`（SIGILL），这个坑已记录在 CI 的安装步骤里
+（按 `uname -m` 选 `amd64`/`arm64`）。
+
+### 2.11 干净检出复跑
+
+从 git bundle 克隆到全新目录后复跑全部检查（真实输出，非重述）：
 
 ```
 $ git clone dshfusion-phase0.bundle /tmp/verify-bundle
 $ cd /tmp/verify-bundle && git rev-parse HEAD
-<与交付提交一致>                              # 与 dshfusion-phase0.bundle 的 HEAD 相同
-$ python3 tools/check-upstreams.py      -> 通过
-$ python3 tools/check-references.py     -> 通过
-$ python3 tools/check-license-hashes.py -> 通过
-$ bash tools/verify-phase0.sh           -> 21 通过 / 0 失败
+<与 dshfusion-phase0.bundle 的 HEAD 相同>      # 刻意不写死：写死会让本文件每次修订都过期
+$ git status --porcelain | wc -l
+0                                            # 工作树干净
+$ git ls-files | wc -l
+31
+
+$ python3 tools/check-upstreams.py
+契约检查通过（4 项）。                          # exit=0
+$ python3 tools/check-references.py
+引用检查通过：27 个 Markdown 链接、43 个仓库内路径引用全部有效（另有 2 处按约定跳过）。  # exit=0
+$ python3 tools/check-license-hashes.py
+许可原件核验通过：5 个文件、65034 字节，哈希与登记一致。   # exit=0
+$ python3 tools/check-workflows.py
+工作流验证通过：2 个文件可被 YAML 解析器解析，结构完整。   # exit=0
+$ actionlint -no-color .github/workflows/*.yml
+（无输出）                                     # exit=0
+$ bash tools/verify-phase0.sh
+  通过: 45
+  失败: 0
+  跳过: 2
+  合计: 47 项
+
+  ⚠️  跳过项（既不算通过，也不算失败）：
+    - 上游 DSHA 未被修改（无审计副本，未检查）
+    - 上游 DSHBox 未被修改（无审计副本，未检查）
+
+  45 项通过、0 项失败、2 项跳过。
+  注意：有跳过项，本次运行并未验证全部 47 项。
 ```
 
-**21 而非 23** 的原因：第 6 组的两项检查依赖 `../audit/DSHA` 与 `../audit/DSHBox`
+**45 而非 47** 的原因：第 6 组的两项检查依赖 `../audit/DSHA` 与 `../audit/DSHBox`
 存在，克隆目录里没有审计副本，因此报告 **SKIP 而不是 PASS**。
 这是刻意的设计——缺少审计副本既不能算通过，也不该算失败。
+脚本会在有跳过项时**明确提示"本次运行并未验证全部 47 项"**，
+避免把跳过误读成通过。
+
+> 若克隆环境还缺少 PyYAML / actionlint / shellcheck，第 5b 组的三项也会转为 SKIP，
+> 计数相应变为「42 通过 / 5 跳过」。脚本在这三种情形下都打印真实计数，
+> 不做任何推算。
+
+在本工作区（依赖齐全且有审计副本）下，同一套件的结果是 **47 通过 / 0 失败 / 0 跳过**。
 
 ---
 
@@ -206,12 +336,25 @@ $ bash tools/verify-phase0.sh           -> 21 通过 / 0 失败
 2. **未做真机验证。** 阶段 0 没有可安装的产物。
 3. **未推送 GitHub、未创建 PR。** 本环境无 GitHub 写入凭据。
    交付形式为本地 git 仓库 + bundle + ZIP，推送步骤由用户执行。
-4. **工作流未在 GitHub 上真实运行过。** 只做了结构性检查
-   （顶层 `name`/`on`/`jobs`/`permissions` 齐全、每个 job 有 `runs-on` 与 `steps`、
-   无制表符）。**未用 YAML 解析器验证**——环境里没有 PyYAML 且无法安装。
-   真实可运行性只能在推送后由 GitHub 确认。
+4. **工作流仍未在 GitHub 上真实运行过。** 本版已用**真实 YAML 解析器**（PyYAML）
+   与 **actionlint 1.7.7 + shellcheck 0.10.0** 验证，且 actionlint 的能力经过
+   负向测试确认（故意造的错误工作流被正确拦下）。但这只证明
+   「工作流定义本身合法且语义正确」，**不证明它在 GitHub 的 runner 上能跑通**——
+   例如 `gh issue list --search` 的实际返回、`sudo install` 的权限、
+   runner 上 `uname -m` 的取值，都只能在推送后由 GitHub 确认。
 5. **`check-references.py` 的跳过规则是约定，不是证明。**
    带 `DSHA:`/`DSHBox:` 前缀的路径与 `<!-- future: ... -->` 标注的路径不检查存在性。
    这依赖标注者诚实；它防的是笔误，不防故意。
 6. **`--update` 可以改写许可哈希登记。** 它是同步上游后的合法操作，
    但也因此是唯一能"合法化"篡改的入口。用它必须人工复核许可变化。
+7. **`--record` 的校验只覆盖「提交来自哪个仓库/分支、关系是否线性、
+   有没有审核记录」。** 它**不判断集成质量**——审核记录里的
+   `integration: passed` 是人工填写的，脚本无法验证上游代码是否真的合并好了、
+   测试是否真的跑过。这是刻意的边界：工具能验的验，验不了的明确交给人。
+8. **偏离重放的 `website/` 删除是手动的。** 目录型偏离不会自动删除，
+   脚本只打印提示并退出 1。自动化不替人执行破坏性操作。
+9. **`upstream-watch.yml` 的 Issue 去重依赖标题精确匹配。**
+   如果有人手工改了这个 issue 的标题，下一次运行会**新建**一个。
+   这是可接受的取舍：宁可多一个 issue，也不要误把评论发到无关 issue 上。
+10. **两个工作流都未在真实 GitHub 上验证过 `concurrency` 与 Issue 写入的实际行为。**
+    本机无法模拟 GitHub 的 API 侧行为。

@@ -10,6 +10,15 @@
 #   tools/sync-upstream.sh dshbox --report     # 只用本地镜像生成摘要
 #   tools/sync-upstream.sh dshbox --record <commit>   # 更新 upstreams.json 的锁定提交
 #
+# --record 会先做 4 项校验，任一不通过即拒绝更新（退出码 1）：
+#   1. 提交对象在镜像中存在且是 commit；
+#   2. 提交是该上游默认分支的祖先（证明来源正确）；
+#   3. 当前锁定提交是它的祖先（证明关系是向前推进而非回退）；
+#   4. docs/upstream-reports/<日期>-<上游>.md 里有针对该提交的审核记录，
+#      且 integration 为 passed 或 not-applicable。
+# 理由：提前推进 locked_commit 会让下次摘要的范围从新提交开始算，
+# 未集成的提交就此静默消失。
+#
 # 环境：
 #   DSHFUSION_MIRRORS  上游镜像目录（默认 ../upstream-mirrors）
 
@@ -20,7 +29,6 @@ cd "$ROOT"
 
 MIRRORS="${DSHFUSION_MIRRORS:-$(cd "$ROOT/.." && pwd)/upstream-mirrors}"
 REPORTS="$ROOT/docs/upstream-reports"
-UPSTREAMS_JSON="$ROOT/governance/upstreams.json"
 DIVERGENCES_JSON="$ROOT/governance/divergences.json"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -75,24 +83,157 @@ echo "上游：$FULL_NAME"
 echo "锁定：$LOCKED"
 
 # ---------- record ----------
+# 这是唯一会改动 governance/upstreams.json 的动作，因此必须先证明「这次同步确实
+# 已经完成并通过验证」。校验不通过时拒绝更新，因为提前把 locked_commit 推到新提交
+# 会让下一次摘要的范围从新提交开始算 —— 未集成的提交就此静默消失。
 if [ "$ACTION" = "record" ]; then
     [ ${#RECORD_COMMIT} -eq 40 ] || die "--record 需要完整的 40 位提交号（收到 ${#RECORD_COMMIT} 位）"
-    python3 - "$UPSTREAM_ID" "$RECORD_COMMIT" <<'PY'
+    case "$RECORD_COMMIT" in
+        *[!0-9a-fA-F]*) die "--record 不是合法的十六进制提交号：$RECORD_COMMIT" ;;
+    esac
+
+    # 镜像必须在场：没有镜像就无法验证提交来源
+    case "$UPSTREAM_ID" in
+        dshbox) RECORD_MIRROR="$MIRRORS/DSHBox.git" ;;
+        dsha)   RECORD_MIRROR="$MIRRORS/DSHA.git" ;;
+    esac
+    [ -d "$RECORD_MIRROR" ] || die "找不到上游镜像 $RECORD_MIRROR，无法验证提交来源。
+   先建立镜像：git clone --mirror \"$URL\" \"$RECORD_MIRROR\""
+
+    # --- 校验 1：提交对象真实存在，且确实是 commit ---
+    if ! git -C "$RECORD_MIRROR" cat-file -e "$RECORD_COMMIT^{commit}" 2>/dev/null; then
+        die "校验失败：$RECORD_COMMIT 在上游镜像 $UPSTREAM_ID 中不存在或不是 commit 对象。
+   拒绝把不存在于该上游的提交写进 locked_commit。"
+    fi
+    info "校验 1/4 通过：提交对象存在于 $UPSTREAM_ID 镜像"
+
+    # --- 校验 2：提交确实来自该上游的默认分支（而非任意游离对象） ---
+    RECORD_BRANCH="$(read_upstream default_branch)"
+    [ -n "$RECORD_BRANCH" ] || RECORD_BRANCH="main"
+    if ! git -C "$RECORD_MIRROR" merge-base --is-ancestor "$RECORD_COMMIT" "refs/heads/$RECORD_BRANCH" 2>/dev/null; then
+        die "校验失败：$RECORD_COMMIT 不是 $UPSTREAM_ID 的 refs/heads/$RECORD_BRANCH 的祖先。
+   可能是别的分支、别的上游仓库、或已被 force-push 丢弃的提交。
+   当前该分支 HEAD：$(git -C "$RECORD_MIRROR" rev-parse "refs/heads/$RECORD_BRANCH" 2>/dev/null || echo '未知')"
+    fi
+    info "校验 2/4 通过：提交属于 $UPSTREAM_ID 的 $RECORD_BRANCH 分支历史"
+
+    # --- 校验 3：提交关系正确（不倒退、不回退、确为新提交） ---
+    if [ "$LOCKED" = "$RECORD_COMMIT" ]; then
+        die "校验失败：$RECORD_COMMIT 已经是当前锁定提交，无需更新。"
+    fi
+    if ! git -C "$RECORD_MIRROR" cat-file -e "$LOCKED^{commit}" 2>/dev/null; then
+        die "校验失败：当前锁定提交 $LOCKED 不在镜像中，无法验证新旧关系。
+   先修复 upstreams.json 或重新建立镜像。"
+    fi
+    if ! git -C "$RECORD_MIRROR" merge-base --is-ancestor "$LOCKED" "$RECORD_COMMIT" 2>/dev/null; then
+        die "校验失败：当前锁定提交 $LOCKED 不是 $RECORD_COMMIT 的祖先。
+   这说明新提交不是从锁定提交线性推进而来（可能上游 force-push、或选错了提交）。
+   直接更新会让 $LOCKED..$RECORD_COMMIT 之间的历史关系不可信。
+   本工具**不提供**强制跳过的开关 —— 请人工确认上游历史后，
+   手动编辑 governance/upstreams.json 并写明理由（手动编辑会留下 diff 痕迹）。"
+    fi
+    RECORD_AHEAD="$(git -C "$RECORD_MIRROR" rev-list --count "$LOCKED..$RECORD_COMMIT")"
+    info "校验 3/4 通过：锁定提交是它的祖先，领先 $RECORD_AHEAD 个提交"
+
+    # --- 校验 4：存在对应的审核记录，且已声明集成通过 ---
+    # 不按文件名推断记录归属：摘要文件名用「运行日期」，而提交日期可能不同
+    # （从旧提交开始集成、跨天合并都会错位）。改为在全部摘要里按 record_commit
+    # 内容查找 —— 记录属于哪个提交由内容决定，不由文件名决定。
+    RECORD_FILE=""
+    if [ -d "$REPORTS" ]; then
+        RECORD_FILE="$(grep -rl --include='*.md' -F "record_commit: $RECORD_COMMIT" "$REPORTS" 2>/dev/null | head -1 || true)"
+    fi
+
+    if [ -z "$RECORD_FILE" ]; then
+        cat >&2 <<EOF
+校验失败：在 $REPORTS 下找不到针对 $RECORD_COMMIT 的审核记录。
+
+在对应的摘要文件末尾补充以下段落（字段名不可改）：
+
+    ## 审核记录
+
+    \`\`\`yaml
+    record_commit: $RECORD_COMMIT
+    upstream: $UPSTREAM_ID
+    range: $LOCKED..$RECORD_COMMIT
+    integration: passed
+    tests: <实际执行的命令与结果>
+    divergences_replayed: <重放了几处偏离>
+    reviewer: <你的名字>
+    date: $(date -Iseconds)
+    \`\`\`
+
+integration 必须是 passed / not-applicable / rejected 三者之一。
+未写审核记录时拒绝更新 locked_commit —— 否则未集成的提交会在下次摘要里消失。
+
+当前已有的摘要文件：
+$(ls -1 "$REPORTS"/*.md 2>/dev/null | sed 's/^/    /' || echo "    （无）")
+EOF
+        exit 1
+    fi
+
+    RECORD_INTEGRATION="$(python3 - "$RECORD_FILE" <<'PY'
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+m = re.search(r"^integration:\s*(\S+)\s*$", text, re.M)
+print(m.group(1) if m else "")
+PY
+)"
+    case "$RECORD_INTEGRATION" in
+        passed|not-applicable)
+            info "校验 4/4 通过：审核记录 $(basename "$RECORD_FILE")，integration=$RECORD_INTEGRATION"
+            ;;
+        "")
+            die "校验失败：$RECORD_FILE 提到了该提交，但缺少 integration 字段。"
+            ;;
+        *)
+            die "校验失败：$RECORD_FILE 的 integration=$RECORD_INTEGRATION，不是 passed 或 not-applicable。
+   集成未通过时不得推进 locked_commit —— 保持稳定基线不动。"
+            ;;
+    esac
+
+    # 记录里声明的范围必须与实际一致，防止记录与提交错配
+    RECORD_RANGE="$(python3 - "$RECORD_FILE" <<'PY'
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+m = re.search(r"^range:\s*(\S+)\s*$", text, re.M)
+print(m.group(1) if m else "")
+PY
+)"
+    if [ -n "$RECORD_RANGE" ] && [ "$RECORD_RANGE" != "$LOCKED..$RECORD_COMMIT" ]; then
+        die "校验失败：审核记录声明的范围是 $RECORD_RANGE，
+   但按当前 locked_commit 计算应为 $LOCKED..$RECORD_COMMIT。
+   记录与提交错配，拒绝更新。"
+    fi
+
+    python3 - "$UPSTREAM_ID" "$RECORD_COMMIT" "$RECORD_FILE" "$RECORD_AHEAD" <<'PY'
 import json, sys, datetime
 from pathlib import Path
 path = Path("governance/upstreams.json")
 doc = json.loads(path.read_text(encoding="utf-8"))
-uid, commit = sys.argv[1], sys.argv[2]
+uid, commit, report, ahead = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 entry = next((u for u in doc["upstreams"] if u["id"] == uid), None)
 if entry is None:
     raise SystemExit("UPSTREAM_NOT_FOUND")
 old = entry.get("locked_commit")
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 entry["locked_commit"] = commit
-entry["locked_commit_date"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+entry["locked_commit_date"] = now
+# 留下审计痕迹：谁在什么时候、依据哪份审核记录推进了锁定提交
+history = entry.setdefault("locked_commit_history", [])
+history.append({
+    "commit": commit,
+    "previous": old,
+    "recorded_at": now,
+    "commits_integrated": int(ahead),
+    "review_record": report,
+})
 path.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-print(f"{uid}: {old} -> {commit}")
+print(f"{uid}: {old} -> {commit}（集成 {ahead} 个提交）")
 PY
-    info "已更新 upstreams.json。别忘了把这次同步写进 docs/upstream-reports/。"
+    info "已更新 upstreams.json，并在 locked_commit_history 留下审计痕迹。"
     exit 0
 fi
 
@@ -164,7 +305,7 @@ CHANGED="$(git -C "$MIRROR" diff --name-only "$LOCKED" "$TARGET")"
         --format='%h%x09%ad%x09%an%x09%s' "$LOCKED..$TARGET" | while IFS=$'\t' read -r sha date author subject; do
         mark=""
         case "$subject" in
-            *fix*|*fix:*|*FIX*) mark="fix" ;;
+            *fix*|*FIX*) mark="fix" ;;
         esac
         case "$subject" in
             *security*|*Security*|*CVE*|*安全*|*漏洞*) mark="${mark:+$mark,}security" ;;
@@ -216,11 +357,12 @@ PY
     echo
     BEFORE=$(git -C "$MIRROR" ls-tree -r --name-only "$LOCKED" | grep -cE 'src/(test|androidTest)/.*\.(kt|java)$' || true)
     AFTER=$(git -C "$MIRROR" ls-tree -r --name-only "$TARGET" | grep -cE 'src/(test|androidTest)/.*\.(kt|java)$' || true)
-    echo "- 上游测试文件：$BEFORE → $AFTER"
+    echo "- 上游测试**文件**数：$BEFORE → $AFTER（仅供参考，文件数会被重构轻易改变）"
     if [ "$AFTER" -lt "$BEFORE" ]; then
         echo "- 🚨 **测试文件净减少 $((BEFORE - AFTER)) 个。** 必须查明是删测试还是重构，不允许静默接受。"
     fi
-    echo "- 本项目基线：**≥ 156**（见 docs/FUSION-PLAN.md 阶段 1 验收清单第 8 项）"
+    echo "- 本项目护栏是 **\`@Test\` 方法数 ≥ 1058**，不是文件数。"
+    echo "  合并后必须实际统计并对比（见 docs/FUSION-PLAN.md 阶段 1 验收清单第 8 项）。"
     echo
 
     echo "## 5. ⚠️ 许可与依赖变化（要求人工确认）"

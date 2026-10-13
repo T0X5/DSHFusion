@@ -11,10 +11,11 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 PASS=0
 FAIL=0
+SKIP=0
 declare -a RESULTS=()
 
 # expect <期望退出码> <描述> <命令...>
@@ -143,10 +144,176 @@ else
         run_tool tools/sync-upstream.sh dshbox --report
 fi
 
+section "3b. --record 校验（在隔离夹具上跑，不动真实仓库）"
+
+# --record 是唯一会改 governance/upstreams.json 的动作。它的失败路径在真实仓库上
+# 无法安全制造（真实镜像 HEAD 就是锁定提交），所以在临时夹具上测。
+FIXTURE="$(mktemp -d)"
+if bash tools/make-record-fixture.sh "$FIXTURE" >/dev/null 2>&1; then
+    # shellcheck disable=SC1091
+    . "$FIXTURE/commits.env"
+    export DSHFUSION_MIRRORS="$FIXTURE/mirrors"
+
+    # 注意：不能放进子 shell —— expect 在子 shell 里累加 PASS/FAIL 会丢失。
+    # 用保存/恢复目录代替。
+    ORIG_PWD="$PWD"
+    cd "$FIX_REPO" || exit 1
+
+    expect 1 "校验1：提交不存在于镜像" \
+        bash tools/sync-upstream.sh dshbox --record 0000000000000000000000000000000000000000
+    expect 1 "校验1：对象不是 commit（tree 的 SHA）" \
+        bash tools/sync-upstream.sh dshbox --record "$(git -C "$FIX_MIRROR" rev-parse "$FIX_C3^{tree}")"
+    expect 1 "校验1：非十六进制提交号" \
+        bash tools/sync-upstream.sh dshbox --record zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+    expect 1 "校验2：提交不属于默认分支历史" \
+        bash tools/sync-upstream.sh dshbox --record "$FIX_SIDE"
+    expect 1 "校验3：锁定提交不是新提交的祖先" \
+        bash tools/sync-upstream.sh dshbox --record "$FIX_ORPHAN"
+    expect 1 "校验3b：关系回退（rewound 在 main 上但非后代）" \
+        bash tools/sync-upstream.sh dshbox --record "$FIX_REWOUND"
+    expect 1 "校验3c：就是当前锁定提交" \
+        bash tools/sync-upstream.sh dshbox --record "$FIX_C3"
+    expect 1 "校验4a：缺审核记录" \
+        bash tools/sync-upstream.sh dshbox --record "$FIX_AHEAD"
+
+    # 生成摘要后补齐记录，逐级验证 4b/4c/4d/成功
+    bash tools/sync-upstream.sh dshbox --report >/dev/null 2>&1 || true
+    REC="$(ls docs/upstream-reports/*dshbox*.md 2>/dev/null | head -1)"
+
+    if [ -n "$REC" ]; then
+        # 4b：有摘要文件但未写 record_commit
+        expect 1 "校验4b：摘要存在但无 record_commit" \
+            bash tools/sync-upstream.sh dshbox --record "$FIX_AHEAD"
+
+        # 4c：integration=rejected
+        cat >> "$REC" <<EOF
+
+## 审核记录
+
+\`\`\`yaml
+record_commit: $FIX_AHEAD
+upstream: dshbox
+range: $FIX_C3..$FIX_AHEAD
+integration: rejected
+tests: fixture
+\`\`\`
+EOF
+        expect 1 "校验4c：integration=rejected 时拒绝推进" \
+            bash tools/sync-upstream.sh dshbox --record "$FIX_AHEAD"
+
+        # 4d：范围声明错配
+        sed -i 's/^integration: rejected$/integration: passed/' "$REC"
+        sed -i 's|^range: .*$|range: deadbeef..deadbeef|' "$REC"
+        expect 1 "校验4d：审核记录范围与实际错配" \
+            bash tools/sync-upstream.sh dshbox --record "$FIX_AHEAD"
+
+        # 正常路径：全部校验通过，推进锁定提交并留下审计痕迹
+        sed -i "s|^range: .*\$|range: $FIX_C3..$FIX_AHEAD|" "$REC"
+        expect 0 "正常路径：4 项校验通过后推进 locked_commit" \
+            bash tools/sync-upstream.sh dshbox --record "$FIX_AHEAD"
+
+        # 确认审计痕迹确实写入
+        if python3 -c "
+import json
+d=json.load(open('governance/upstreams.json'))
+e=[u for u in d['upstreams'] if u['id']=='dshbox'][0]
+h=e.get('locked_commit_history') or []
+assert e['locked_commit']=='$FIX_AHEAD', 'locked_commit 未更新'
+assert h and h[-1]['commit']=='$FIX_AHEAD', '未写入 locked_commit_history'
+assert h[-1]['previous']=='$FIX_C3', 'previous 记录错误'
+"; then
+            printf '  [PASS] %-52s\n' "成功路径留下 locked_commit_history 审计痕迹"
+            PASS=$((PASS + 1))
+            RESULTS+=("PASS|locked_commit_history 审计痕迹|ok")
+        else
+            printf '  [FAIL] %-52s\n' "成功路径留下 locked_commit_history 审计痕迹"
+            FAIL=$((FAIL + 1))
+            RESULTS+=("FAIL|locked_commit_history 审计痕迹|缺失或不正确")
+        fi
+    else
+        printf '  [FAIL] %-52s\n' "夹具摘要生成失败，校验 4 未覆盖"
+        FAIL=$((FAIL + 1))
+        RESULTS+=("FAIL|夹具摘要生成|失败")
+    fi
+
+    cd "$ORIG_PWD" || exit 1
+    unset DSHFUSION_MIRRORS
+else
+    printf '  [FAIL] %-52s\n' "无法建立 --record 测试夹具"
+    FAIL=$((FAIL + 1))
+    RESULTS+=("FAIL|--record 测试夹具|建立失败")
+fi
+rm -rf "$FIXTURE"
+
 section "4. 偏离重放 apply-divergences.sh"
 
 expect 0 "阶段 0：正确报告上游代码尚未导入" \
     run_tool tools/apply-divergences.sh --check
+
+section "4b. 偏离重放：施加逻辑与失败路径（隔离夹具）"
+
+# 这些场景在真实仓库上无法制造（会污染主干或根本不存在），因此在夹具上测。
+DV_ORIG="$PWD"
+for scenario in normal drift asset-missing strings-moved unknown-div; do
+    DV_DIR="$(mktemp -d)"
+    if bash tools/make-divergence-fixture.sh "$DV_DIR" "$scenario" >/dev/null 2>&1; then
+        cd "$DV_DIR" || exit 1
+        case "$scenario" in
+            normal)
+                expect 0 "场景 normal：全部偏离可施加" \
+                    bash tools/apply-divergences.sh
+                expect 0 "场景 normal：再次运行幂等（全部已生效）" \
+                    bash tools/apply-divergences.sh --check
+                # 正向确认修改真的落盘
+                if grep -q 'applicationId = "com.dshfusion.app"' app/build.gradle.kts \
+                   && grep -q 'DSHFUSION_RUNTIME_ASSETS' app/build.gradle.kts \
+                   && grep -q 'app_name">DSHFusion' app/src/main/res/values/strings.xml \
+                   && ! grep -rq 'WSK-build' app/src/main/java/com/dshbox/app/util/AppVersion.kt; then
+                    printf '  [PASS] %-52s\n' "场景 normal：改动确实写入文件"
+                    PASS=$((PASS + 1)); RESULTS+=("PASS|normal 改动落盘|ok")
+                else
+                    printf '  [FAIL] %-52s\n' "场景 normal：改动确实写入文件"
+                    FAIL=$((FAIL + 1)); RESULTS+=("FAIL|normal 改动落盘|未生效")
+                fi
+                ;;
+            drift)
+                expect 1 "场景 drift：applicationId 写法变化应报失败" \
+                    bash tools/apply-divergences.sh
+                ;;
+            asset-missing)
+                expect 1 "场景 asset-missing：固定字符串未匹配应报失败" \
+                    bash tools/apply-divergences.sh
+                ;;
+            strings-moved)
+                expect 1 "场景 strings-moved：目标条目消失应报失败（非静默通过）" \
+                    bash tools/apply-divergences.sh
+                ;;
+            unknown-div)
+                expect 1 "场景 unknown-div：未实现施加逻辑的偏离应报失败" \
+                    bash tools/apply-divergences.sh
+                ;;
+        esac
+        cd "$DV_ORIG" || exit 1
+    else
+        printf '  [FAIL] %-52s\n' "无法建立偏离夹具（$scenario）"
+        FAIL=$((FAIL + 1)); RESULTS+=("FAIL|偏离夹具 $scenario|建立失败")
+    fi
+    rm -rf "$DV_DIR"
+done
+
+# 阶段 0 一致性：applied 非空但上游未导入，必须报错
+DV_DIR="$(mktemp -d)"
+if bash tools/make-divergence-fixture.sh "$DV_DIR" applied-nonempty >/dev/null 2>&1; then
+    rm -f "$DV_DIR/app/build.gradle.kts"     # 回到「上游未导入」状态
+    cd "$DV_DIR" || exit 1
+    expect 1 "阶段 0 一致性：applied 非空但上游未导入应报错" \
+        bash tools/apply-divergences.sh
+    cd "$DV_ORIG" || exit 1
+else
+    printf '  [FAIL] %-52s\n' "无法建立 applied-nonempty 夹具"
+    FAIL=$((FAIL + 1)); RESULTS+=("FAIL|applied-nonempty 夹具|建立失败")
+fi
+rm -rf "$DV_DIR"
 
 section "5. 静态检查"
 
@@ -158,6 +325,40 @@ expect 0 "所有 JSON 可解析" \
     bash -c 'for f in $(find . -name "*.json" -not -path "./.git/*"); do python3 -c "import json,sys; json.load(open(sys.argv[1],encoding=\"utf-8\"))" "$f" || exit 1; done'
 expect 0 "受保护许可原件哈希与登记一致" \
     run_tool tools/check-license-hashes.py
+
+section "5b. 工作流验证（真实解析器 / actionlint）"
+
+# PyYAML 与 actionlint 都是可选依赖。缺失时报告 SKIP，而不是假装通过。
+if python3 -c "import yaml" 2>/dev/null; then
+    expect 0 "工作流 YAML 可被真实解析器解析且结构完整" \
+        run_tool tools/check-workflows.py
+else
+    printf '  [SKIP] %-52s 未安装 PyYAML\n' "工作流 YAML 解析"
+    SKIP=$((SKIP + 1))
+    RESULTS+=("SKIP|工作流 YAML 解析|未安装 PyYAML，未检查")
+fi
+
+ACTIONLINT=""
+for candidate in actionlint /tmp/actionlint/actionlint /usr/local/bin/actionlint; do
+    if command -v "$candidate" >/dev/null 2>&1; then ACTIONLINT="$candidate"; break; fi
+done
+if [ -n "$ACTIONLINT" ]; then
+    expect 0 "actionlint 语义检查（含 shellcheck）" \
+        "$ACTIONLINT" -no-color .github/workflows/contracts.yml .github/workflows/upstream-watch.yml
+else
+    printf '  [SKIP] %-52s 未找到 actionlint\n' "actionlint 语义检查"
+    SKIP=$((SKIP + 1))
+    RESULTS+=("SKIP|actionlint 语义检查|未安装 actionlint，未检查")
+fi
+
+if command -v shellcheck >/dev/null 2>&1; then
+    expect 0 "tools/*.sh 通过 shellcheck" \
+        bash -c 'shellcheck -S warning tools/*.sh'
+else
+    printf '  [SKIP] %-52s 未找到 shellcheck\n' "tools/*.sh shellcheck"
+    SKIP=$((SKIP + 1))
+    RESULTS+=("SKIP|tools/*.sh shellcheck|未安装 shellcheck，未检查")
+fi
 
 section "6. 上游仓库未被修改（只读审计承诺）"
 
@@ -174,19 +375,42 @@ for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do
             RESULTS+=("FAIL|上游 $(basename "$d") 被修改|$n 改动")
         fi
     else
-        printf '  [SKIP] 无审计副本: %s\n' "$d"
+        printf '  [SKIP] %-52s 无审计副本\n' "上游工作树检查: $(basename "$d")"
+        SKIP=$((SKIP + 1))
+        RESULTS+=("SKIP|上游 $(basename "$d") 未被修改|无审计副本，未检查")
     fi
 done
 
 section "汇总"
+TOTAL=$((PASS + FAIL + SKIP))
 printf '  通过: %d\n' "$PASS"
 printf '  失败: %d\n' "$FAIL"
+printf '  跳过: %d\n' "$SKIP"
+printf '  合计: %d 项\n' "$TOTAL"
+
+if [ "$SKIP" -gt 0 ]; then
+    printf '\n  ⚠️  跳过项（既不算通过，也不算失败）：\n'
+    for r in "${RESULTS[@]}"; do
+        case "$r" in
+            SKIP*)
+                body="${r#SKIP|}"
+                printf '    - %s（%s）\n' "${body%%|*}" "${body##*|}"
+                ;;
+        esac
+    done
+fi
+
 if [ "$FAIL" -gt 0 ]; then
     printf '\n  失败项：\n'
     for r in "${RESULTS[@]}"; do
         case "$r" in FAIL*) printf '    - %s\n' "${r#FAIL|}" ;; esac
     done
+    printf '\n  存在失败项，退出码 1。\n'
     exit 1
 fi
-printf '\n  全部通过。\n'
+
+printf '\n  %d 项通过、0 项失败、%d 项跳过。\n' "$PASS" "$SKIP"
+if [ "$SKIP" -gt 0 ]; then
+    printf '  注意：有跳过项，本次运行并未验证全部 %d 项。\n' "$TOTAL"
+fi
 exit 0

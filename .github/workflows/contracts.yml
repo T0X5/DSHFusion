@@ -31,6 +31,28 @@ jobs:
       - name: Governance contract checks
         run: python3 tools/check-upstreams.py
 
+      - name: Validate workflow YAML (PyYAML)
+        run: python3 tools/check-workflows.py
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          version=1.7.7
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64)  goarch=amd64 ;;
+            aarch64) goarch=arm64 ;;
+            *) echo "::error::不支持的架构 $arch"; exit 1 ;;
+          esac
+          curl -sSL -o /tmp/actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_${goarch}.tar.gz"
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          sudo install -m 0755 /tmp/actionlint /usr/local/bin/actionlint
+          actionlint --version
+
+      - name: Lint workflows with actionlint (incl. shellcheck)
+        run: actionlint -no-color .github/workflows/*.yml
+
       - name: Reference integrity (links and repo paths)
         run: python3 tools/check-references.py
 
