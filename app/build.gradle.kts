@@ -39,8 +39,8 @@ android {
         minSdk = 29
         targetSdk = 36
         // 多语言版本：联合国六语 + 语言选择器 + 硬编码清零 + 布局恒 LTR + i18n 门禁。
-        versionCode = 8
-        versionName = "1.4.0"
+        versionCode = 1
+        versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

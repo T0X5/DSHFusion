@@ -32,16 +32,27 @@ fun compareVersions(a: String, b: String): Int {
 
 /** App 自动更新检测：从 GitHub Releases 读取最新 tag 与本地版本比对。 */
 object AppUpdater {
-    /** 官网首页（含下载入口） */
-    const val SITE_URL = "https://example.invalid/DSHFusion/"
+    /**
+     * 项目地址（DIV-0004）。
+     *
+     * 上游这三个常量指向 DSHBox 自己的站点与仓库。那会把用户导向另一个项目，
+     * 也会让本应用把 DSHBox 的 Release 当成自身更新源 —— 两者都必须避免。
+     *
+     * ⚠️ 已知限制（不是 bug，不要"修"它）：
+     * DSHFusion 的仓库当前是**私有**的，`releases/latest` 对匿名请求返回 404，
+     * 因此自动更新检查不会成功。这是私有仓库的必然结果。
+     * 自建自用时更新靠手动安装 APK；将来仓库若公开，这里无需改动即可工作。
+     * 失败路径是静默的（见 MainScreen 的 isNewer 判断），不会打扰用户。
+     */
+    const val SITE_URL = "https://github.com/T0X5/DSHFusion/releases"
 
     /** GitHub 仓库首页（右上角可点 Star）——设置页「用户反馈」用。 */
-    const val REPO_URL = "https://example.invalid/DSHFusion"
+    const val REPO_URL = "https://github.com/T0X5/DSHFusion"
 
     /** GitHub Issues 列表（提 Bug / 建议）——设置页「用户反馈」用。 */
     const val ISSUES_URL = "$REPO_URL/issues"
 
-    private const val API_URL = "https://example.invalid/DSHFusion/releases/latest"
+    private const val API_URL = "https://api.github.com/repos/T0X5/DSHFusion/releases/latest"
     private const val CONNECT_TIMEOUT_MS = 8_000
     private const val READ_TIMEOUT_MS = 8_000
 
@@ -66,7 +77,7 @@ object AppUpdater {
                 conn.connectTimeout = CONNECT_TIMEOUT_MS
                 conn.readTimeout = READ_TIMEOUT_MS
                 // GitHub API 要求显式 UA，否则返回 403。
-                conn.setRequestProperty("User-Agent", "DSHBox/${currentVersion}")
+                conn.setRequestProperty("User-Agent", "DSHFusion/${currentVersion}")
                 conn.setRequestProperty("Accept", "application/vnd.github+json")
                 val code = conn.responseCode
                 val ok = code in 200..299

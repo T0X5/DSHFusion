@@ -12,16 +12,16 @@
   "planned": [
     {
       "id": "DIV-0001",
-      "title": "独立 applicationId com.dshfusion.app（namespace 不动）",
+      "title": "独立 applicationId 与独立版本线（namespace 不动）",
       "upstream": "dshbox",
       "type": "identity",
       "phase": 1,
       "target_files": [
         "app/build.gradle.kts"
       ],
-      "change": "applicationId 由 com.dshbox.app 改为 com.dshfusion.app。**namespace 保持上游值 com.dshbox.app 不变。**",
-      "rationale": "applicationId 决定安装身份 —— 必须能与 com.dshbox.app、com.dsh.client 并存安装，否则无法在真机上与上游对照测试。namespace 则决定生成的 R/BuildConfig 类所在包，也决定 AndroidManifest 中相对类名（.DshApp、.MainActivity、.service.SandboxService）的解析基准。改 namespace 就必须同时改 36 处 `import com.dshbox.app.R`、4 处 `import com.dshbox.app.BuildConfig` 与全部相对类名 —— 那正是被刻意推迟到阶段 4 的全量重命名。2026-10-13 的首次真实 CI 运行验证了这个判断：把 namespace 一起改掉后报出 36 个 Unresolved reference 'R'。",
-      "reapply": "tools/apply-divergences.sh 的 handle_div_0001：把 applicationId 改写为应用标识，并在发现 namespace 被误改时回退为 com.dshbox.app。",
+      "change": "applicationId 由 com.dshbox.app 改为 com.dshfusion.app；versionCode 8→1、versionName 1.4.0→0.1.0。**namespace 保持上游值 com.dshbox.app 不变。**",
+      "rationale": "applicationId 决定安装身份 —— 必须能与 com.dshbox.app、com.dsh.client 并存安装，否则无法在真机上与上游对照测试。namespace 则决定生成的 R/BuildConfig 类所在包，也决定 AndroidManifest 中相对类名（.DshApp、.MainActivity、.service.SandboxService）的解析基准。改 namespace 就必须同时改 36 处 `import com.dshbox.app.R`、4 处 `import com.dshbox.app.BuildConfig` 与全部相对类名 —— 那正是被刻意推迟到阶段 4 的全量重命名。2026-10-13 的首次真实 CI 运行验证了这个判断：把 namespace 一起改掉后报出 36 个 Unresolved reference 'R'。 版本号也必须独立：SettingsScreen 会显示 v${BuildConfig.VERSION_NAME}，沿用上游的 1.4.0 会让设置页显示「v1.4.0」，而 CHANGES.md 里 v1.4.0 正是 DSHBox 的 versionCode 8 —— 用户会以为装的是上游那个版本。",
+      "reapply": "tools/apply-divergences.sh 的 handle_div_0001：改写 applicationId 与版本线；发现 namespace 被误改时回退为 com.dshbox.app。",
       "conflict_risk": "low —— 单文件单行。上游若改 applicationId 的写法，锚点检查会先失败而不是静默覆盖。"
     },
     {
@@ -69,17 +69,18 @@
     },
     {
       "id": "DIV-0004",
-      "title": "上游监测地址指向 DSHFusion 自身",
+      "title": "上游监测地址改指 DSHFusion 真实仓库",
       "upstream": "dshbox",
       "type": "config",
       "phase": 1,
       "target_files": [
         "app/src/main/java/com/dshbox/app/util/AppVersion.kt"
       ],
-      "change": "SITE_URL / REPO_URL / 更新检查 API_URL 改为 DSHFusion 自己的地址，或改为可配置并默认关闭检查。",
-      "rationale": "不能把用户导向 DSHBox 的发布页；也不能让本应用去拉取 DSHBox 的 Release 作为自身更新源。",
-      "reapply": "由 tools/apply-divergences.sh 重写这三个常量。",
-      "conflict_risk": "low"
+      "change": "AppVersion.kt 的 SITE_URL / REPO_URL / API_URL 由 DSHBox 的站点与仓库改为 https://github.com/T0X5/DSHFusion；User-Agent 由 DSHBox/ 改为 DSHFusion/。",
+      "rationale": "不能把用户导向 DSHBox 的发布页，也不能让本应用把 DSHBox 的 Release 当成自身更新源。**本项曾经做错**：常量被换成了 example.invalid 占位域名，而重放器只检查「还有没有指向上游的地址」，于是报告「已指向自身」—— 占位域名解析不到任何主机，那句话是假的，链接会死、更新检查永远失败。现在重放器改为正向校验地址里确实出现 SELF_URL，并显式拒绝 example.invalid。",
+      "reapply": "tools/apply-divergences.sh 的 handle_div_0004：把三处上游地址替换为 SELF_URL，并复核替换结果里确实出现 SELF_URL。",
+      "conflict_risk": "low",
+      "known_limitation": "DSHFusion 仓库当前是私有的，releases/latest 对匿名请求返回 404，自动更新检查不会成功。这是私有仓库的必然结果，不是缺陷。失败路径静默（MainScreen 只在 isNewer 时弹窗），不打扰用户。自建自用时更新靠手动安装 APK；仓库若将来公开，无需改动即可工作。"
     },
     {
       "id": "DIV-0005",

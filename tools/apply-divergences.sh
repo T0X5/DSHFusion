@@ -112,10 +112,17 @@ CHECK_ONLY = sys.argv[1] == "1"
 ROOT = Path(".")
 
 APPLICATION_ID = "com.dshfusion.app"
+
+# 独立版本线（DIV-0001）。不复用上游的 8 / 1.4.0：
+# 设置页会显示 v${BuildConfig.VERSION_NAME}，复用会让人以为装的是 DSHBox。
+OWN_VERSION_CODE = 1
+OWN_VERSION_NAME = "0.1.0"
 APP_NAME = "DSHFusion"
 # 自有仓库地址：先用不可路由的保留域名占位，避免误指向任何真实上游。
 # 阶段 4 建立自有仓库后再改成真实地址（属于 DIV-0004 的一部分）。
-SELF_URL = "https://example.invalid/DSHFusion"
+# DSHFusion 自己的仓库地址。曾用过 example.invalid 占位 —— 那是错的：
+# 占位域名解析不到任何主机，重放器却报告"已指向自身"，是一句假话。
+SELF_URL = "https://github.com/T0X5/DSHFusion"
 
 OK = "ok"
 PENDING = "pending"      # 目标文件还没导入 —— 阶段 0/未合并时是正常的
@@ -200,15 +207,30 @@ def handle_div_0001(entry) -> tuple[str, str]:
         id_ok = re.search(rf'applicationId\s*=?\s*"{re.escape(APPLICATION_ID)}"', t) is not None
         # namespace 必须仍是上游原值：被改成 APPLICATION_ID 反而是错的。
         ns_bad = re.search(rf'namespace\s*=?\s*"{re.escape(APPLICATION_ID)}"', t) is not None
-        return id_ok and not ns_bad
+        ver_ok = re.search(rf'versionCode\s*=?\s*{OWN_VERSION_CODE}\b', t) is not None
+        ver_ok = ver_ok and (
+            re.search(rf'versionName\s*=?\s*"{re.escape(OWN_VERSION_NAME)}"', t) is not None)
+        return id_ok and not ns_bad and ver_ok
 
     if satisfied(text):
-        return OK, f"applicationId = {APPLICATION_ID}（namespace 保持上游值）"
+        return OK, (f"applicationId = {APPLICATION_ID}、versionCode = {OWN_VERSION_CODE}、"
+                    f"versionName = {OWN_VERSION_NAME}（namespace 保持上游值）")
 
     if CHECK_ONLY:
         if re.search(rf'namespace\s*=?\s*"{re.escape(APPLICATION_ID)}"', text):
             return FAILED, "namespace 被误改为应用标识（会让 R 引用与相对类名失效）"
-        return FAILED, f"applicationId 尚未改为 {APPLICATION_ID}"
+        if re.search(r'versionCode\s*=?\s*8\b', text) and \
+           re.search(r'versionName\s*=?\s*"1\.4\.0"', text):
+            return FAILED, ("版本号仍是上游的 8 / 1.4.0 —— 设置页会显示「v1.4.0」，"
+                            "让人以为装的是 DSHBox v1.4.0")
+        missing = []
+        if not re.search(rf'applicationId\s*=?\s*"{re.escape(APPLICATION_ID)}"', text):
+            missing.append("applicationId")
+        if not re.search(rf'versionCode\s*=?\s*{OWN_VERSION_CODE}\b', text):
+            missing.append(f"versionCode = {OWN_VERSION_CODE}")
+        if not re.search(rf'versionName\s*=?\s*"{re.escape(OWN_VERSION_NAME)}"', text):
+            missing.append(f'versionName = "{OWN_VERSION_NAME}"')
+        return FAILED, "尚未满足：" + "、".join(missing)
 
     original = text
     # 先纠正历史误改：namespace 回到上游值
@@ -223,6 +245,18 @@ def handle_div_0001(entry) -> tuple[str, str]:
     if re.search(pattern, text):
         text = re.sub(pattern, rf'\1"{APPLICATION_ID}"', text)
         changed = True
+
+    # 独立版本线：不复用上游的 versionCode/versionName。
+    # 复用的后果不是技术故障，而是身份混淆 —— 设置页会显示上游的版本号。
+    if re.search(r'versionCode\s*=?\s*\d+', text):
+        new_t = re.sub(r'(versionCode\s*=?\s*)\d+', rf'\g<1>{OWN_VERSION_CODE}', text)
+        changed = changed or new_t != text
+        text = new_t
+    if re.search(r'versionName\s*=?\s*"[^"]*"', text):
+        new_t = re.sub(r'(versionName\s*=?\s*)"[^"]*"',
+                       rf'\g<1>"{OWN_VERSION_NAME}"', text)
+        changed = changed or new_t != text
+        text = new_t
 
     if not changed:
         return FAILED, (
@@ -371,10 +405,18 @@ def handle_div_0004(entry) -> tuple[str, str]:
     upstream_refs = re.findall(r"https://[^\s\"']*(?:WSK-build|wsk-build)[^\s\"']*", text)
 
     if not upstream_refs:
-        # 没有上游引用就算达成目标（可能上游已经自己参数化了）
-        if "dshfusion" in text.lower():
-            return OK, "已指向自身"
-        return OK, "文件中已无指向上游的地址"
+        # 没有上游引用还不够 —— 得确认地址真的指向 DSHFusion。
+        # 这里曾经只检查"有没有上游引用"，于是把常量换成 example.invalid 占位域
+        # 也能通过，并报告"已指向自身"。占位域名解析不到任何主机，
+        # 那句话是假的：链接会死、更新检查永远失败。
+        if SELF_URL in text:
+            return OK, f"三个地址均指向 {SELF_URL}"
+        if "example.invalid" in text:
+            return FAILED, (
+                "地址里还有 example.invalid 占位域名 —— 它解析不到任何主机，"
+                "不是\"指向自身\"。需改为真实仓库地址"
+            )
+        return FAILED, "文件中既无上游引用，也无指向 DSHFusion 的地址，需人工确认"
 
     if CHECK_ONLY:
         return FAILED, f"仍有 {len(upstream_refs)} 处指向上游仓库的地址"
@@ -396,11 +438,15 @@ def handle_div_0004(entry) -> tuple[str, str]:
     write(path, updated)
     files_changed.append(str(path))
 
-    remaining = re.findall(r"https://[^\s\"']*(?:WSK-build|wsk-build)[^\s\"']*", read(path))
+    after = read(path)
+    remaining = re.findall(r"https://[^\s\"']*(?:WSK-build|wsk-build)[^\s\"']*", after)
     if remaining:
         revert(path, original)
         return FAILED, f"替换后仍有 {len(remaining)} 处上游地址（已还原）"
-    return OK, "上游监测地址已改指自身"
+    if SELF_URL not in after:
+        revert(path, original)
+        return FAILED, f"替换后未出现 {SELF_URL}（已还原）"
+    return OK, f"上游监测地址已改指 {SELF_URL}"
 
 
 def handle_div_0005(entry) -> tuple[str, str]:

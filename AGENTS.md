@@ -25,12 +25,19 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
 17 处差异全部能对上已登记的偏离。
 
-> ⚠️ **本仓库仍不是「已验证可构建」的 Android 项目。**
-> 至今**没有执行过任何 Android 构建、单元测试或真机验证** ——
-> 本环境没有 JDK、Android SDK/NDK 与 Gradle。
-> 所有构建结论都来自仓库配置与上游 CI 历史，不来自实际运行。
-> 不要把这个状态读成「已经能跑」。见
-> [docs/PHASE0-VERIFICATION.md](docs/PHASE0-VERIFICATION.md) 的诚实性声明。
+> ⚠️ **构建已真实验证，真机运行没有。**
+>
+> 2026-10-13，上游 `android.yml` 在 DSHFusion 下首次真实运行**通过**：
+> 10 个模块的 `testDebugUnitTest`、`lintDebug`、`assembleDebug` 全部成功，
+> 产出 `dshapp-debug-apk`（39.0 MB 压缩 / 94.0 MB 解压，777 个条目）。
+> 这一步不再是「凭配置推断」。
+>
+> **但装到手机上还没做过** —— 没有设备连接。更要紧的是：CI 产出的 APK
+> **不含任何运行环境层**（无 `base/node/android-side/dsh` 的 `.tar.zst`），
+> 因为上游不把 `runtime/` 提交进仓库。所以它**能安装，但起不了 DSH**，
+> 除非先通过「运行环境在线获取」或离线整包导入补上。
+> 不要把这个状态读成「装上就能用」。
+> 见 [docs/PHASE0-VERIFICATION.md](docs/PHASE0-VERIFICATION.md) 的诚实性声明。
 
 阶段 1 的未完成项（**不要误认为已完成**）：
 
@@ -40,8 +47,10 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 独立签名密钥库 | ❌ 未创建 |
 | 运行环境层构建脚本 <!-- future: tools/build-dsh-layer.sh -->`tools/build-dsh-layer.sh`（补运行环境风险 R1） | ❌ 未编写 |
 | Android 构建 / 单元测试 / 真机验证 | ❌ **一次都没跑过** |
-| 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ⚠️ 已运行，**失败**，原因已定位并修复 |
-| 该工作流在修复后重跑通过 | ❌ 未验证（修复尚未推送到 CI） |
+| 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ✅ **通过**（run 38478523535，含单元测试 / lint / APK 组装） |
+| 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
+| 生成的 APK 装到真机上验证 | ❌ **未做**（无设备连接、无 adb） |
+| APK 内含运行环境层（能真正跑起 DSH） | ❌ 不含 —— 仓库未提交 `runtime/`，CI 只做编译 |
 
 ### 首次真实 CI 运行（2026-10-13）暴露的问题
 
@@ -148,7 +157,7 @@ dshfusion/
 |---|---|---|
 | 应用标识 | `com.dshfusion.app` | **独立于** `com.dsh.client` 与 `com.dshbox.app`，可与两者并存安装 |
 | 应用名 | DSHFusion | |
-| 版本号 | 独立版本线，不复用上游 versionCode | |
+| 版本号 | `versionCode = 1` / `versionName = 0.1.0` | 独立版本线，不复用上游的 8 / 1.4.0 |
 | 签名 | 独立自建密钥库 | 不要求、也不使用任何上游发布证书 |
 
 > **阶段 1 刻意不做全量包名重命名。** DSHBox 内部有 721 处 `com.dshbox.app`
