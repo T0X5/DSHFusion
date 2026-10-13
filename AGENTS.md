@@ -78,6 +78,7 @@ dshfusion/
 │   ├── FUSION-PLAN.md           融合方案与实施优先级
 │   ├── UPSTREAM-SYNC.md         双上游长期同步流程
 │   ├── PHASE0-VERIFICATION.md   阶段 0 验证报告（命令、输出、退出码）
+│   ├── PHASE1-PREREQUISITES.md  阶段 1 前置审计（资产 / 许可 / 数据迁移）
 │   └── upstream-reports/        每次同步生成的变更摘要
 ├── tools/
 │   ├── README.md                工具清单（各自用途、用法、退出码）
@@ -121,10 +122,15 @@ compileSdk 36、minSdk 29、arm64-v8a**。
 ```
 
 **运行环境资产不在仓库内。** DSHBox 的 `DSHBox:app/build.gradle.kts` 从
-`../../runtime/android-assets` 读取 base/node/android-side 三层。DSHFusion 保留
-这一机制，但把路径改为可配置（`DSHFUSION_RUNTIME_ASSETS`），并支持两条获取途径：
-在线获取（Debian 官方源，`OnlineRuntimeImportManager`）或离线导入整包。
-见 [docs/FUSION-PLAN.md](docs/FUSION-PLAN.md) 的资产策略。
+`../../runtime/android-assets` 读取运行环境层。DSHFusion 保留这一机制，
+但把路径改为可配置（`DSHFUSION_RUNTIME_ASSETS`），并支持两条获取途径：
+在线获取（Debian 官方源）或离线导入整包。
+
+> **修正（2026-10-13 阶段 1 前置审计）**：此处原先写「读取 base/node/android-side
+> 三层」，**与实际不符**。v1.4.0 起 APK 内**只内嵌 `dsh` 与 `android-side` 两层**；
+> `base` 与 `node` 不进 APK，由在线获取现场组装或离线整包导入。
+> 四层的来源、可复现性与风险见
+> [docs/PHASE1-PREREQUISITES.md](docs/PHASE1-PREREQUISITES.md) 第 1 节。
 
 ## 编码约定
 
