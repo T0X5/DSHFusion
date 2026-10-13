@@ -440,8 +440,10 @@ if [ -d ../audit/DSHBox ]; then
     if git clone -q . "$IMP_CLONE" 2>/dev/null &&
        git -C "$IMP_CLONE" switch -q -c phase-1/import-dshbox-base 2>/dev/null; then
 
+        # dry-run 必须在克隆里跑 —— run_tool 用的是套件自身的工作目录，
+        # 而套件通常跑在 main 上，会被导入器的分支保护直接拒绝。
         expect 0 "分支上 dry-run 通过且与清单预期一致" \
-            run_tool tools/import-upstream-base.py --upstream "$IMP_UP"
+            bash -c "cd '$IMP_CLONE' && python3 tools/import-upstream-base.py --upstream '$IMP_UP'"
 
         IMP_OUT="$(cd "$IMP_CLONE" && python3 tools/import-upstream-base.py \
                        --upstream "$IMP_UP" --apply 2>&1 || true)"
