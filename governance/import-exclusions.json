@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "_comment": "阶段 1 导入 DSHBox 基线时的取舍清单。tools/import-upstream-base.sh 读这份文件决定导入什么、排除什么、哪些同名文件保留我方版本。每一条排除都必须有理由和对应的偏离登记号 —— 没有登记的排除等于下次同步时静默丢失。",
+
+  "upstream": "dshbox",
+  "locked_commit": "266290a6d16fa1ea08b3b734cbfe726437a75fb2",
+
+  "excluded_paths": [
+    {
+      "path": "website/",
+      "kind": "prefix",
+      "divergence": "DIV-0005",
+      "reason": "上游品牌官网。含 DSHBox 品牌图形、文案与站点资源，属 TRADEMARK.md §4 保留范围，DSHFusion 不复用。22 个文件、约 1.4 MB。"
+    },
+    {
+      "path": ".github/workflows/pages.yml",
+      "kind": "exact",
+      "divergence": "DIV-0005",
+      "reason": "只服务 website/ 的 GitHub Pages 发布流程（第 28 行 path: website）。website/ 已排除，保留它会得到一个永远失败或发布上游品牌站点的 workflow。随 DIV-0005 一并排除。"
+    }
+  ],
+
+  "preserved_files": [
+    {
+      "path": "README.md",
+      "archive_as": "docs/upstream/DSHBox-README.md",
+      "reason": "双方都有 README.md。DSHFusion 的 README 是本项目入口，必须保留；上游 README 含构建手册与运行说明，有参考价值，改名归档保留出处，不丢弃也不覆盖。"
+    },
+    {
+      "path": ".gitignore",
+      "archive_as": "docs/upstream/DSHBox-gitignore.txt",
+      "reason": "DSHFusion 的 .gitignore 是为此仓库定制的（排除运行环境资产、密钥库、上游镜像），必须保留。上游版本改名归档，供比对是否遗漏了需要忽略的路径。"
+    }
+  ],
+
+  "requires_adaptation": [
+    {
+      "path": ".github/workflows/android.yml",
+      "divergence": null,
+      "reason": "上游 Android CI，是本阶段最想复用的资产，但直接导入会失败：第 55-57 行「Check website asset version string」读取 website/ 下的版本串，而 website/ 已排除。导入后必须改写或删除该步骤。",
+      "action": "导入后人工改写该步骤，并登记偏离"
+    },
+    {
+      "path": "app/build.gradle.kts",
+      "divergence": "DIV-0001/DIV-0003",
+      "reason": "applicationId 与 namespace 需改为 com.dshfusion.app；assets.srcDirs 需改为可被 DSHFUSION_RUNTIME_ASSETS 覆盖。由 apply-divergences.sh 自动重放。",
+      "action": "导入后运行 tools/apply-divergences.sh"
+    },
+    {
+      "path": "app/src/main/res/**",
+      "divergence": "DIV-0002",
+      "reason": "app_name 与 8 个受保护品牌图形必须替换为 DSHFusion 自有资产。app_name 可由脚本重放，图形必须人工自绘 —— 脚本会核验哈希并拒绝通过。",
+      "action": "导入后运行 apply-divergences.sh；品牌图形需人工绘制"
+    }
+  ],
+
+  "expected_counts": {
+    "_comment": "基于锁定提交 266290a6 的实测值。import-upstream-base.sh --dry-run 会重新计算并与此比对，不一致即报警 —— 上游若在锁定提交之外被动过，这里会先发现。",
+    "upstream_tracked_files": 790,
+    "excluded": 23,
+    "preserved": 2,
+    "imported": 765,
+    "imported_bytes_approx": 26633830
+  }
+}
