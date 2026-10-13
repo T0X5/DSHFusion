@@ -70,6 +70,7 @@ dshfusion/
 ├── governance/
 │   ├── upstreams.json           双上游清单（URL、锁定提交、许可、同步策略）
 │   ├── divergences.json         对上游的每一处偏离登记
+│   ├── import-exclusions.json   阶段 1 导入的取舍清单（排除/归档/需改写）
 │   ├── upstream-license-hashes.json  受保护许可原件的 SHA-256（改动即 CI 失败）
 │   ├── ATTRIBUTION.md           署名与许可义务
 │   └── upstream-licenses/       上游许可原文（原样保留，勿改）
@@ -92,7 +93,8 @@ dshfusion/
 │   ├── make-divergence-fixture.sh  偏离重放的隔离测试夹具
 │   ├── check-divergence-anchors.py 偏离锚点预检（对照真实上游）
 │   ├── make-anchor-fixture.sh   锚点预检的隔离测试夹具
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；58 项）
+│   ├── import-upstream-base.py  阶段 1 导入器（拒绝在 main 上运行）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 66 项）
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）
     └── upstream-watch.yml       上游变更监测，产出摘要（每周）

@@ -297,18 +297,76 @@ SharedPreferences：`dshapp_prefs`（`Constants.PREFS_NAME`）、
 
 ### 4.2 步骤
 
-| # | 步骤 | 产出 |
+步骤 2 之后的内容已由 `tools/import-upstream-base.py` 与
+`governance/import-exclusions.json` 固化为可执行流程，不再依赖手工操作。
+
+| # | 步骤 | 产出 | 工具 |
+|---|---|---|---|
+| 0 | **先修 `.gitignore`**：`runtime/`、`dist/` 加前导斜杠；放行 `libs/*.aar` | 避免 23 个文件静默丢失 | 见 §4.5 陷阱 1 |
+| 1 | 从 `main` 建分支 `phase-1/import-dshbox-base` | 分支 | 手动（导入器强制检查） |
+| 2 | 以 DSHBox `266290a6` 为源导入源码（**767** 文件，排除 23） | 主干代码 | `import-upstream-base.py --apply` |
+| 3 | 原样保留上游 `LICENSE` / `THIRD_PARTY_NOTICES.md` / `TRADEMARK.md` | 许可文件（哈希仍受 CI 保护） | 随步骤 2 导入 |
+| 4 | 施加 `DIV-0001`：`applicationId` / `namespace` → `com.dshfusion.app` | 并存安装能力 | `apply-divergences.sh` |
+| 5 | 施加 `DIV-0002`：`app_name` → DSHFusion + **自绘图标** | 独立标识 | 脚本改名字，**图标必须人工绘制** |
+| 6 | 施加 `DIV-0003`：`assets.srcDirs` 可被 `DSHFUSION_RUNTIME_ASSETS` 覆盖 | 无资产也能跑单测/lint | `apply-divergences.sh` |
+| 7 | 施加 `DIV-0004` / `DIV-0005`：监测地址指向自身；不导入 `website/` | 去除上游硬引用 | 脚本 + 清单排除 |
+| 8 | 改写 `.github/workflows/android.yml` 中依赖 `website/` 的步骤 | 可用构建 CI | 见 §4.5 陷阱 2 |
+| 9 | 自建 dsh 层打包脚本（补 R1） | `tools/build-dsh-layer.sh` <!-- future: tools/build-dsh-layer.sh --> | 尚未编写 |
+| 10 | 自建 keystore（不复用任何上游证书） | 独立签名 | 尚未创建 |
+| 11 | 跑 `./gradlew testDebugUnitTest lintDebug`，记录真实输出与退出码 | 验证证据 | **本机无 JDK/SDK，只能在 CI 跑** |
+
+### 4.5 导入会踩的四个坑（2026-10-13 在一次性克隆里实测）
+
+这些不是推测，是在 `/tmp` 的克隆里跑完整导入流程时真实撞到的。
+全部已修，并已纳入 `tools/verify-phase0.sh` 第 4d 段（8 项）作为回归护栏。
+
+**坑 1（最严重）：`.gitignore` 静默吞掉 23 个文件。**
+DSHFusion 的 `.gitignore` 写的是 `runtime/` 与 `dist/`，**没有前导斜杠** ——
+这种模式匹配任意层级的同名目录。后果：
+
+- 上游 4 个名为 `runtime` 的源码包全部被吞：
+  `app/src/main/java/com/dshbox/app/runtime/`（6 个）、
+  `app/src/test/java/com/dshbox/app/runtime/`（4 个）、
+  `pilot/interlock-relay-core/src/{main,test}/java/interlock/relay/core/runtime/`（各 6 个）
+- `libs/zstd-jni-1.5.7-15.aar` 命中 `*.aar` 被吞 —— 而它是上游**刻意 vendored
+  的构建依赖**（`app/build.gradle.kts:129` 引用），不是构建产物
+
+文件会复制到磁盘但**不进提交**，克隆后直接构建失败，而且**没有任何提示**。
+修正后 git 跟踪数 **744 → 767**。导入器现在会在 `--apply` 结尾重新检出被忽略的
+导入文件并以非零码退出 —— 这道检查就是为它加的。
+
+**坑 2：`website/` 的连带依赖。**
+上游 `website/` 22 个文件属 `TRADEMARK.md` §4 保留范围，不导入。但
+`.github/workflows/pages.yml` 第 28 行写死 `path: website`，必须一并排除；
+`android.yml` 第 55-57 行还有一句「Check website asset version string」读取
+`website/` 下的版本串，导入后必然失败，需人工改写。
+
+**坑 3：同名文件会覆盖 DSHFusion 自己的治理文档。**
+逐文件同名 2 个：`README.md`、`.gitignore`。
+`.github/`、`docs/`、`tools/` 三个目录虽有重叠，但内部无同名文件，安全。
+归档位置刻意选在**仓库根**（`README.upstream.md`）—— 上游 README 里有
+`README.en.md`、`CHANGES.md`、`LICENSE`、`TRADEMARK.md` 四处相对链接，
+放根目录它们才成立；挪到 `docs/` 子目录立刻产生 4 个断链。
+
+**坑 4：引用检查器对行内路径只按仓库根解析。**
+上游嵌套文档里的相对路径指的是它自己所在目录，按根解析会误报断链
+（导入后实测 2 处，见 `plugin-manager/dshbox-plugins/README.md`）。
+`check_markdown_links` 本来就是文件相对，`check_backtick_paths` 却不是。
+已统一为双基准解析。
+
+### 4.6 导入后必须依次跑的检查
+
+在一次性克隆里全部实测过，任一失败都说明导入不完整，**不要提交**：
+
+| 检查 | 预期退出码 | 实测结果 |
 |---|---|---|
-| 1 | 从 `main` 建分支 `phase-1/import-dshbox-base` | 分支 |
-| 2 | 以 DSHBox `266290a6` 为源导入全部源码（790 文件） | 主干代码 |
-| 3 | 原样保留上游 `LICENSE` / `THIRD_PARTY_NOTICES.md` / `TRADEMARK.md` | 许可文件（哈希仍受 CI 保护） |
-| 4 | 施加 `DIV-0001`：`applicationId` / `namespace` → `com.dshfusion.app` | 并存安装能力 |
-| 5 | 施加 `DIV-0002`：`app_name` → DSHFusion + **自绘图标** | 独立标识 |
-| 6 | 施加 `DIV-0003`：`assets.srcDirs` 可被 `DSHFUSION_RUNTIME_ASSETS` 覆盖 | 无资产也能跑单测/lint |
-| 7 | 施加 `DIV-0004` / `DIV-0005`：监测地址指向自身；不导入 `website/` | 去除上游硬引用 |
-| 8 | 自建 dsh 层打包脚本（补 R1） | `tools/build-dsh-layer.sh` <!-- future: tools/build-dsh-layer.sh --> |
-| 9 | 自建 keystore（不复用任何上游证书） | 独立签名 |
-| 10 | 跑 `./gradlew testDebugUnitTest lintDebug`，记录真实输出与退出码 | 验证证据 |
+| `tools/check-references.py` | 0 | 39 个链接、64 个路径全部有效 |
+| `tools/check-upstreams.py` | 0 | 契约 4 项通过 |
+| `tools/check-license-hashes.py` | 0 | 5 个受保护许可原件哈希一致 |
+| `tools/check-divergence-anchors.py --upstream <上游检出>` | 0 | 16 个锚点全部成立 |
+| `tools/apply-divergences.sh --check` | **1** | 预期失败：DIV-0001/0002/0003/0004 待重放，DIV-0005 已生效 |
+
+最后一项**退出码为 1 是设计如此**，不是缺陷 —— 它正是在告诉你还有四处偏离没施加。
 
 ### 4.3 验收清单
 
