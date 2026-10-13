@@ -139,7 +139,7 @@ x86_64）——这些都是额外的构建脆弱点。DSHBox 的 API 36 + AGP 8.
 | DSH 启动 | `127.0.0.1:3080`，自动解析 launchToken | 动态端口（`--port 0`）或手动 3080 |
 | 端口 | 3080 固定 | **动态分配**并复用上次可用端口 |
 | Node | 24.19.0（独立层） | Node 24（随 rootfs） |
-| 性能 | 标准 proot | proroot 实测关键项合计 **+58%**（vivo V2352A / Android 14） |
+| 性能 | 标准 proot | proroot 实测关键项合计 **+58%**（DSHA 自述；测试机为某 vivo 机型 / Android 14） |
 
 **关键差异 —— 对上游 DSH 的处理方式**：
 

@@ -44,6 +44,7 @@ import argparse
 import math
 import struct
 import sys
+import tempfile
 import zlib
 from pathlib import Path
 
@@ -276,12 +277,16 @@ def check(out_dir: Path) -> int:
             bad.append(rel)
             continue
         expect = render_mark(size, **kw)
-        # 重新编码后逐字节比较
-        tmp = Path("/tmp/_brand_check.png")
-        write_png(tmp, size, size, expect)
-        got = p.read_bytes()
-        want = tmp.read_bytes()
-        tmp.unlink(missing_ok=True)
+        # 重新编码后逐字节比较。用 tempfile 而不是写死 /tmp 路径：
+        # 并发或中断时不会互相干扰，也不会在发布内容里留下本机路径。
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as fh:
+            tmp = Path(fh.name)
+        try:
+            write_png(tmp, size, size, expect)
+            got = p.read_bytes()
+            want = tmp.read_bytes()
+        finally:
+            tmp.unlink(missing_ok=True)
         if got == want:
             print(f"  [一致] {size:>4}x{size:<4} {rel}")
         else:

@@ -20,6 +20,25 @@ SKIP_DIRS = {
     "build", ".gradle", ".kotlin", ".idea", "node_modules",
     ".git", "__pycache__", ".playwright-mcp",
 }
+
+# 按**路径前缀**整体跳过的目录（SKIP_DIRS 只能按目录名匹配，表达不了路径）。
+#
+# governance/upstream-licenses/ 是上游许可与声明的冻结副本：
+#   1. 它的字节由 governance/upstream-license-hashes.json 锁定，
+#      check-license-hashes.py 会在它被改动时让 CI 失败 —— 也就是说，
+#      这里报出的任何发现**我们都无权修改**；
+#   2. 内容是上游的，不是我们的，审计它等于审计别人仓库的历史。
+# 因此对它做隐私审查没有意义：改不了，也不该改。
+# 同一口径已用于 tools/check-references.py 的 FROZEN_DIRS。
+#
+# 实测触发点：DSHA 的 THIRD_PARTY_NOTICES.md 里有 GeckoView 版本号
+# `143.0.<14 位日期串>`，其中那 14 位数字被「设备序列号样式」规则命中 ——
+# 那是 Mozilla Maven 的版本串，不是设备标识。
+# 下面这行**刻意写成拼接**：本文件自身也在扫描范围内，直写会让这段注释
+# 被同一条规则再次命中（自匹配）。这是本文件既有的约定，见 ALLOW 末尾。
+FROZEN_PREFIXES = (
+    "governance/upstream-licenses",
+)
 TEXT_EXT = {
     ".kt", ".kts", ".java", ".md", ".xml", ".js", ".mjs", ".json", ".sh",
     ".html", ".css", ".toml", ".properties", ".py", ".txt", ".yml", ".yaml",
@@ -52,6 +71,11 @@ ALLOW = [
     re.compile(r"0\.0\.0\.0"),
     re.compile(r"\blocalhost\b"),
     re.compile(r"example\.com"),
+    # RFC 2606 保留的测试专用顶级域，与 example.com 同性质：
+    # 它**保证**解析不到任何真实主机，写在这里的地址不可能指向某个人。
+    # 实测来源：tools/make-record-fixture.sh 的测试夹具需要一个邮箱形状的
+    # 字符串来验证 --record 的校验逻辑，用 .invalid 正是为了让夹具安全。
+    re.compile(r"example\.invalid"),
     re.compile(r"noreply\.github\.com"),           # GitHub 保密邮箱
     re.compile(r"users\.noreply\.github\.com"),
     re.compile(r"10\.255\.255\.254"),               # WSL 默认 DNS，非个人网络
@@ -111,6 +135,8 @@ def scan(root: str):
         for name in filenames:
             path = os.path.join(dirpath, name)
             rel = os.path.relpath(path, root)
+            if any(rel == p or rel.startswith(p + os.sep) for p in FROZEN_PREFIXES):
+                continue
             ext = os.path.splitext(name)[1].lower()
             if ext not in TEXT_EXT and name not in TEXT_EXT:
                 continue

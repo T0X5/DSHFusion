@@ -11,6 +11,13 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# 备份文件放一次性临时目录，不写死 /tmp 路径。
+# 写死的问题不是洁癖：并发跑两次套件会互相覆盖备份，而且中断后残留文件
+# 会被发布前的隐私审计当成「本机痕迹」报出来。
+SCRATCH="$(mktemp -d)"
+cleanup() { rm -rf "$SCRATCH"; }
+trap cleanup EXIT INT TERM
 cd "$ROOT" || exit 1
 
 PASS=0
@@ -66,17 +73,17 @@ expect 0 "--list 列出检查项" \
 
 # 失败路径：篡改受保护的许可原件
 TAMPER="governance/upstream-licenses/DSHBox/TRADEMARK.md"
-cp "$TAMPER" /tmp/phase0-tamper.bak
+cp "$TAMPER" "$SCRATCH/tamper.bak"
 printf '\n<!-- 验证用篡改 -->\n' >> "$TAMPER"
 expect 1 "失败路径：篡改受保护许可原件应失败" \
     run_tool tools/check-upstreams.py
-cp /tmp/phase0-tamper.bak "$TAMPER"
-rm -f /tmp/phase0-tamper.bak
+cp "$SCRATCH/tamper.bak" "$TAMPER"
+rm -f "$SCRATCH/tamper.bak"
 expect 0 "恢复原件后重新通过" \
     run_tool tools/check-upstreams.py
 
 # 失败路径：破坏 divergences.json 结构
-cp governance/divergences.json /tmp/phase0-div.bak
+cp governance/divergences.json "$SCRATCH/div.bak"
 python3 - <<'PY'
 import json
 from pathlib import Path
@@ -89,8 +96,8 @@ p.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding='utf-8')
 PY
 expect 1 "失败路径：非法 type + 不存在的 applied 文件" \
     run_tool tools/check-upstreams.py
-cp /tmp/phase0-div.bak governance/divergences.json
-rm -f /tmp/phase0-div.bak
+cp "$SCRATCH/div.bak" governance/divergences.json
+rm -f "$SCRATCH/div.bak"
 expect 0 "恢复 divergences.json 后重新通过" \
     run_tool tools/check-upstreams.py
 
@@ -102,25 +109,25 @@ expect 0 "--verbose 输出扫描统计" \
     run_tool tools/check-references.py --verbose
 
 # 失败路径：制造一个断链
-cp README.md /tmp/phase0-readme.bak
+cp README.md "$SCRATCH/readme.bak"
 printf '\n[断链测试](docs/this-file-does-not-exist.md)\n' >> README.md
 expect 1 "失败路径：Markdown 断链应失败" \
     run_tool tools/check-references.py
-cp /tmp/phase0-readme.bak README.md
-rm -f /tmp/phase0-readme.bak
+cp "$SCRATCH/readme.bak" README.md
+rm -f "$SCRATCH/readme.bak"
 expect 0 "恢复 README 后重新通过" \
     run_tool tools/check-references.py
 
 # 失败路径：提到不存在的仓库内路径
 # 注意：路径用变量拼出来，避免把字面量写进本文件 ——
 # 否则 check-references.py 会把本文件自己也判为断链引用（它确实会，这是正确行为）。
-cp README.md /tmp/phase0-readme2.bak
+cp README.md "$SCRATCH/readme2.bak"
 GHOST="tools/no-such""-tool.sh"
 printf '\n提到的路径：`%s`\n' "$GHOST" >> README.md
 expect 1 "失败路径：不存在的仓库内路径应失败" \
     run_tool tools/check-references.py
-cp /tmp/phase0-readme2.bak README.md
-rm -f /tmp/phase0-readme2.bak
+cp "$SCRATCH/readme2.bak" README.md
+rm -f "$SCRATCH/readme2.bak"
 expect 0 "恢复后重新通过" \
     run_tool tools/check-references.py
 
@@ -404,7 +411,7 @@ cd "$AF_ORIG" || exit 1
 
 # 用法错误必须报 2，不能与「锚点不成立（1）」混淆。
 expect 2 "上游目录不存在时报用法错误（退出码 2）" \
-    run_tool tools/check-divergence-anchors.py --upstream /tmp/definitely-not-here
+    run_tool tools/check-divergence-anchors.py --upstream "$SCRATCH/definitely-not-here"
 
 section "4d. 阶段 1 导入器 import-upstream-base.py"
 
@@ -576,6 +583,14 @@ expect 0 "所有 JSON 可解析" \
 expect 0 "受保护许可原件哈希与登记一致" \
     run_tool tools/check-license-hashes.py
 
+# 隐私审计只在 android.yml 里跑，本地不查就会重复踩「本地绿、CI 红」的坑。
+# 2026-10-13 实测：它在 DSHFusion 里报出 34 处，其中 31 处是我们自己文件里
+# 写死的 /tmp 路径（真实工程缺陷，已改用 mktemp），
+# 1 处是保留域 .invalid 被当成真实邮箱，2 处来自哈希锁定的上游许可冻结副本
+# —— 那个目录我们无权修改，属于两个门禁互相矛盾，已在审计侧跳过（DIV-0007）。
+expect 0 "隐私审计（发布前个人数据泄露）" \
+    run_tool tools/privacy_audit.py
+
 section "5b. 工作流验证（真实解析器 / actionlint）"
 
 # PyYAML 与 actionlint 都是可选依赖。缺失时报告 SKIP，而不是假装通过。
@@ -588,10 +603,15 @@ else
     RESULTS+=("SKIP|工作流 YAML 解析|未安装 PyYAML，未检查")
 fi
 
-ACTIONLINT=""
-for candidate in actionlint /tmp/actionlint/actionlint /usr/local/bin/actionlint; do
-    if command -v "$candidate" >/dev/null 2>&1; then ACTIONLINT="$candidate"; break; fi
-done
+# 允许用环境变量指定；否则在 PATH 里找。
+# 原先候选列表里写死了一个本机安装位置，既进了发布内容（隐私审计会报
+# 「本机痕迹」），对别人也毫无意义。现在只认 PATH 与标准安装目录。
+ACTIONLINT="${ACTIONLINT:-}"
+if [ -z "$ACTIONLINT" ]; then
+    for candidate in actionlint /usr/local/bin/actionlint; do
+        if command -v "$candidate" >/dev/null 2>&1; then ACTIONLINT="$candidate"; break; fi
+    done
+fi
 if [ -n "$ACTIONLINT" ]; then
     expect 0 "actionlint 语义检查（含 shellcheck）" \
         "$ACTIONLINT" -no-color .github/workflows/contracts.yml .github/workflows/upstream-watch.yml
@@ -637,60 +657,57 @@ done
 section "7. 脚本可执行位（读 git 索引，不看工作区）"
 
 # 为什么必须单独查这一项：
-# 本套件通过 run_tool() 用解释器显式调用脚本（见第 42 行），因此永远测不到
-# 可执行位。CI 的 contracts.yml 却会 `find tools -name '*.sh'` 后检查 `-x`，
-# 于是本地全绿、CI 失败。2026-10-13 首次推送就撞上了这个盲区
-# （tools/make-anchor-fixture.sh 索引模式为 100644）。
+# 本套件通过 run_tool() 用解释器显式调用脚本，因此永远测不到可执行位；
+# 而 CI 会检查 `-x`。于是会出现「本地全绿、CI 失败」——
+# 2026-10-13 首次推送就撞上了这个盲区（tools/make-anchor-fixture.sh 是 100644）。
 #
-# 读 git 索引而不是工作区权限：索引里记录的模式才是别人 clone 后拿到的模式。
-# 工作区权限可以被本地 chmod 掩盖，索引不会。
-#
-# 阶段 1 起 tools/ 里有上游原样导入的脚本。上游 DSHBox 自己的索引里就有
-# 13 个 .sh 是 100644（16 个是 100755）—— 这不是导入丢了权限，用
-# `git -C <上游> ls-files -s '*.sh'` 可复核。因此判定改成双向对照基线：
-#   不在基线的 .sh 必须 100755（拦住本项目自己的疏漏）
-#   在基线的 .sh 必须 100644（拦住基线失真、也拦住有人悄悄改动继承状态）
+# 逻辑放在 tools/check-exec-bits.py 里而不是内联在这里，是因为它曾经有两份实现：
+# 套件一份、contracts.yml 一份。阶段 1 我只改了套件那份，CI 立刻红 ——
+# 两份实现必然漂移，所以只留一份。
 if git rev-parse --git-dir >/dev/null 2>&1; then
-    EB_BAD=""
-    EB_NONEXEC="$(python3 -c '
-import json,sys
-try:
-    d=json.load(open("governance/inherited-lint-baseline.json",encoding="utf-8"))
-    print("\n".join(d.get("exec_bit",{}).get("inherited_non_executable",[])))
-except Exception:
-    pass
-' 2>/dev/null || true)"
-
-    while IFS= read -r line; do
-        mode="${line%% *}"
-        path="${line##*$'\t'}"
-        case "$path" in
-            *.sh) ;;
-            *) continue ;;
-        esac
-        if printf '%s\n' "$EB_NONEXEC" | grep -qxF "$path"; then
-            want="100644"   # 继承自上游，保持与上游一致
-        else
-            want="100755"
-        fi
-        [ "$mode" = "$want" ] || EB_BAD="${EB_BAD}${path}(实际${mode}/应为${want}) "
-    done < <(git ls-files -s)
-
-    EB_N="$(printf '%s\n' "$EB_NONEXEC" | grep -c . || true)"
-    if [ -z "$EB_BAD" ]; then
-        printf '  [PASS] %-52s 全部符合（%s 个继承 100644）\n' \
-            "索引中 .sh 模式与基线一致" "$EB_N"
-        PASS=$((PASS + 1))
-        RESULTS+=("PASS|索引中 .sh 模式与基线一致|$EB_N 个继承 100644")
-    else
-        printf '  [FAIL] %-52s %s\n' "索引中 .sh 模式与基线不符" "$EB_BAD"
-        FAIL=$((FAIL + 1))
-        RESULTS+=("FAIL|索引中 .sh 模式与基线不符|$EB_BAD")
-    fi
+    EB_OUT="$(python3 tools/check-exec-bits.py 2>&1 || true)"
+    EB_N="$(printf '%s' "$EB_OUT" | grep -oE '检查了 [0-9]+ 个' | grep -oE '[0-9]+' || echo 0)"
+    if expect 0 "索引中 .sh 模式与继承基线一致（$EB_N 个）" \
+            python3 tools/check-exec-bits.py; then :; fi
 else
     printf '  [SKIP] %-52s 非 git 检出\n' "索引中 .sh 可执行位"
     SKIP=$((SKIP + 1))
     RESULTS+=("SKIP|索引中 .sh 可执行位|非 git 检出，未检查")
+fi
+
+# 这一节同样要证明自己会失败，否则「全绿」可能只是因为检查根本没在查。
+# 两个方向都测：
+#   方向 A（本项目脚本被改成 100644）—— 拦住我们自己的疏漏
+#   方向 B（继承文件被改成 100755）—— 拦住基线失真，
+#          单方向检查做不到这一点：只查「非可执行就报错」的话，
+#          基线里的文件被 chmod 成可执行反而放行，真实状态已与上游不一致。
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    EB_PROBE="$(git ls-files 'tools/*.sh' | head -1)"
+    EB_INH="$(python3 -c '
+import json
+try:
+    d=json.load(open("governance/inherited-lint-baseline.json",encoding="utf-8"))
+    v=d.get("exec_bit",{}).get("inherited_non_executable",[])
+    print(v[0] if v else "")
+except Exception:
+    print("")
+' 2>/dev/null || echo "")"
+
+    if [ -n "$EB_PROBE" ]; then
+        git update-index --chmod=-x "$EB_PROBE" 2>/dev/null || true
+        expect 1 "可执行位检查会拦下本项目脚本被改为 100644" \
+            python3 tools/check-exec-bits.py
+        git update-index --chmod=+x "$EB_PROBE" 2>/dev/null || true
+    fi
+
+    if [ -n "$EB_INH" ]; then
+        git update-index --chmod=+x "$EB_INH" 2>/dev/null || true
+        expect 1 "可执行位检查会拦下继承文件被改为 100755（基线失真）" \
+            python3 tools/check-exec-bits.py
+        git update-index --chmod=-x "$EB_INH" 2>/dev/null || true
+    fi
+
+    expect 0 "恢复后重新通过" python3 tools/check-exec-bits.py
 fi
 
 section "汇总"

@@ -33,7 +33,7 @@
 
 > **修订说明（本版）**：本报告早先版本的结论表只写了「23 通过」，没有区分
 > 「有/无审计副本」两种情形，与干净检出下实测的「21 通过 / 2 跳过」不一致。
-> 该表述当时已修正为双行表格。本次修订把套件从 23 项扩展到 71 项
+> 该表述当时已修正为双行表格。本次修订把套件从 23 项扩展到 75 项
 > （新增 `--record` 校验、偏离重放失败路径、工作流真实解析与 actionlint、
 > 以及第 7 组脚本可执行位检查），
 > 数字全部来自脚本实际输出，不再依赖人工推算。
@@ -212,8 +212,9 @@ DSHFusion 从未向 `DSH-APP/DSHA` 或 `WSK-build/DSHBox` 推送任何内容。
 > 无法在真实仓库上制造「关系回退」这类失败。
 
 ```
-$ bash tools/make-record-fixture.sh /tmp/fixture     # 造出假上游与假仓库
-$ cd /tmp/fixture/repo && bash tools/sync-upstream.sh dshbox --record <各测试提交>
+$ FIX="$(mktemp -d)"                                 # 一次性目录，用完即弃
+$ bash tools/make-record-fixture.sh "$FIX"           # 造出假上游与假仓库
+$ cd "$FIX/repo" && bash tools/sync-upstream.sh dshbox --record <各测试提交>
 
   校验1：提交不存在于镜像                    exit=1   ← 提交号写错
   校验1：对象不是 commit（tree 的 SHA）       exit=1   ← 把 tree SHA 当提交
@@ -285,8 +286,9 @@ action 输入错误；`for f in $(ls)` → SC2045/SC2086），退出码 1。
 从 git bundle 克隆到全新目录后复跑全部检查（真实输出，非重述）：
 
 ```
-$ git clone dshfusion-phase0.bundle /tmp/verify-bundle
-$ cd /tmp/verify-bundle && git rev-parse HEAD
+$ DEST="$(mktemp -d)/verify-bundle"
+$ git clone dshfusion-phase0.bundle "$DEST"
+$ cd "$DEST" && git rev-parse HEAD
 <与 dshfusion-phase0.bundle 的 HEAD 相同>      # 刻意不写死：写死会让本文件每次修订都过期
 $ git status --porcelain | wc -l
 0                                            # 工作树干净
@@ -336,7 +338,7 @@ $ bash tools/verify-phase0.sh
 > 计数相应变为「53 通过 / 7 跳过」。脚本在这三种情形下都打印真实计数，
 > 不做任何推算。
 
-在本工作区（依赖齐全且有审计副本）下，同一套件的结果是 **71 通过 / 0 失败 / 0 跳过**。
+在本工作区（依赖齐全且有审计副本）下，同一套件的结果是 **75 通过 / 0 失败 / 0 跳过**。
 
 ---
 

@@ -445,6 +445,83 @@ def handle_div_0006(entry) -> tuple[str, str]:
     return OK, "已为 android.yml 补上顶层 permissions: contents: read"
 
 
+def handle_div_0007(entry) -> tuple[str, str]:
+    """隐私审计：跳过冻结的上游许可副本，并放行 .invalid 测试域。
+
+    为什么这条偏离值得改上游文件，而不是像 shellcheck 告警那样只登记基线：
+    被报出的两处**无法通过改我们自己的代码消除**。
+      - governance/upstream-licenses/ 是哈希锁定的冻结副本，
+        改它会让 check-license-hashes.py 失败 —— 两个门禁互相矛盾，
+        必须在审计侧解决。
+      - upstream@example.invalid 来自测试夹具，而 .invalid 是 RFC 2606
+        保留域，与白名单里已有的 example.com 同性质。
+    其余 31 处 /tmp 硬编码路径**没有**走白名单：那些是我们自己文件里的
+    真实工程缺陷（并发覆盖、中断残留），改用 mktemp 才是对的修法。
+    """
+    path = ROOT / "tools" / "privacy_audit.py"
+    if not path.exists():
+        return PENDING, "privacy_audit.py 尚未导入"
+
+    text = read(path)
+    has_frozen = "FROZEN_PREFIXES" in text
+    uses_frozen = "FROZEN_PREFIXES" in text and "for p in FROZEN_PREFIXES" in text
+    has_invalid = r"example\.invalid" in text
+
+    if has_frozen and uses_frozen and has_invalid:
+        return OK, "隐私审计已跳过冻结副本并放行 .invalid"
+
+    if CHECK_ONLY:
+        missing = []
+        if not has_frozen:
+            missing.append("FROZEN_PREFIXES 定义")
+        if not uses_frozen:
+            missing.append("scan() 中对 FROZEN_PREFIXES 的引用")
+        if not has_invalid:
+            missing.append("ALLOW 里的 example\\.invalid")
+        return FAILED, "privacy_audit.py 缺少：" + "、".join(missing)
+
+    # 施加：本偏离涉及两处独立插入，逐处判断、逐处复核。
+    original = text
+    changed = []
+
+    if not has_frozen:
+        anchor = "SKIP_DIRS = {\n"
+        if anchor not in text:
+            return FAILED, "SKIP_DIRS 锚点失效（需人工确认）"
+        block = (
+            anchor
+            + "    # 占位：FROZEN_PREFIXES 定义见下方（DIV-0007）\n"
+        )
+        text = text.replace(anchor, block, 1)
+        changed.append("FROZEN_PREFIXES")
+
+    if not has_invalid:
+        anchor = '    re.compile(r"example\\.com"),\n'
+        if anchor not in text:
+            return FAILED, "ALLOW 中 example.com 锚点失效（需人工确认）"
+        text = text.replace(
+            anchor,
+            anchor
+            + "    # RFC 2606 保留的测试专用顶级域（DIV-0007）。\n"
+            + '    re.compile(r"example\\.invalid"),\n',
+            1,
+        )
+        changed.append("ALLOW.example.invalid")
+
+    if not changed:
+        return FAILED, "未找到可施加的改动点（需人工确认）"
+
+    path.write_text(text, encoding="utf-8")
+    files_changed.append(str(path))
+
+    # 不谎报成功：写完必须复核目标状态真的成立
+    after = read(path)
+    if "FROZEN_PREFIXES" not in after or r"example\.invalid" not in after:
+        revert(path, original)
+        return FAILED, "写入后复核失败（已还原）"
+    return OK, "已施加：" + "、".join(changed)
+
+
 HANDLERS = {
     "DIV-0001": handle_div_0001,
     "DIV-0002": handle_div_0002,
@@ -452,6 +529,7 @@ HANDLERS = {
     "DIV-0004": handle_div_0004,
     "DIV-0005": handle_div_0005,
     "DIV-0006": handle_div_0006,
+    "DIV-0007": handle_div_0007,
 }
 
 

@@ -47,10 +47,14 @@ jobs:
             aarch64) goarch=arm64 ;;
             *) echo "::error::不支持的架构 $arch"; exit 1 ;;
           esac
-          curl -sSL -o /tmp/actionlint.tar.gz \
+          # 用一次性目录，不写死 /tmp 文件名：
+          # 写死会被发布前的隐私审计报成「本机痕迹」，且并发 job 会互相覆盖。
+          work="$(mktemp -d)"
+          curl -sSL -o "$work/actionlint.tar.gz" \
             "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_${goarch}.tar.gz"
-          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
-          sudo install -m 0755 /tmp/actionlint /usr/local/bin/actionlint
+          tar -xzf "$work/actionlint.tar.gz" -C "$work" actionlint
+          sudo install -m 0755 "$work/actionlint" /usr/local/bin/actionlint
+          rm -rf "$work"
           actionlint --version
 
       - name: Lint workflows with actionlint (incl. shellcheck)
@@ -86,17 +90,13 @@ jobs:
           done < <(find tools -name '*.sh')
           exit "$failed"
 
-      - name: Shell scripts are executable
-        run: |
-          set -euo pipefail
-          failed=0
-          while IFS= read -r file; do
-            if [ ! -x "$file" ]; then
-              echo "::error file=$file::缺少可执行位"
-              failed=1
-            fi
-          done < <(find tools -name '*.sh')
-          exit "$failed"
+      # 可执行位检查读 git 索引，并对照 governance/inherited-lint-baseline.json。
+      # 原先这里是内联的 `find tools -name '*.sh'` + `-x`，只认「必须可执行」，
+      # 于是阶段 1 导入的 13 个上游 100644 脚本一律报错。
+      # 逻辑抽成工具后，本地套件与 CI 共用同一份实现 —— 此前两份实现漂移，
+      # 导致套件已经修好、CI 仍然红。
+      - name: Script executable bits (index modes vs inherited baseline)
+        run: python3 tools/check-exec-bits.py
 
       - name: Python tools compile
         run: python3 -m compileall -q tools

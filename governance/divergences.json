@@ -108,6 +108,20 @@
       "rationale": "上游未声明顶层 permissions，GITHUB_TOKEN 会拿到仓库默认的宽权限；构建任务只需要读源码。该工作流要在 DSHFusion 里真实运行，因此不适合像其他上游文件那样走『不改、只登记基线』的路子。",
       "reapply": "tools/apply-divergences.sh 会在锚点 name: Android CI 之后插入该块；锚点失效则报错而不是猜。",
       "conflict_risk": "low —— 单文件、单处、插入式改动；上游若自己加了 permissions 则本偏离自动判定为已生效。"
+    },
+    {
+      "id": "DIV-0007",
+      "title": "隐私审计：跳过冻结的上游许可副本，并放行 .invalid 测试域",
+      "upstream": "dshbox",
+      "type": "config",
+      "phase": 1,
+      "target_files": [
+        "tools/privacy_audit.py"
+      ],
+      "change": "两处改动。(1) 新增 FROZEN_PREFIXES，scan() 跳过 governance/upstream-licenses/ 下的文件；(2) ALLOW 增加 example\\.invalid 一条。",
+      "rationale": "上游的隐私审计在 DSHFusion 里报出 34 处，其中两类需要区别对待。第一类是**门禁互相矛盾**：governance/upstream-licenses/ 是上游许可与声明的冻结副本，字节由 upstream-license-hashes.json 锁定，改动会让 check-license-hashes.py 失败 —— 也就是说那里报出的发现我们无权修改。审计一个改不了、也不属于我们的目录没有意义。同一口径已用于 tools/check-references.py 的 FROZEN_DIRS。实测触发点是 DSHA 的 THIRD_PARTY_NOTICES.md 里 GeckoView 版本号 143.0.<14位日期串>，被「设备序列号样式」规则误判。第二类是**保留域误报**：make-record-fixture.sh 用 upstream@example.invalid 造测试夹具，而 .invalid 是 RFC 2606 保留的测试专用顶级域，与已在白名单里的 example.com 同性质，保证解析不到任何真实主机。其余 31 处（/tmp 硬编码路径）没有走白名单，而是在我们自己的文件里改掉了 —— 那些是真实的工程缺陷：并发会互相覆盖、中断会留残留，用 mktemp 本来就更对。",
+      "reapply": "tools/apply-divergences.sh 的 handle_div_0007：确认 FROZEN_PREFIXES 存在、scan() 里引用了它、ALLOW 含 example\\.invalid；缺任一项即报失败。",
+      "conflict_risk": "low-medium —— 单文件两处。上游若自己改了 SKIP 逻辑或 ALLOW，锚点检查会先失败而不是静默覆盖。"
     }
   ]
 }

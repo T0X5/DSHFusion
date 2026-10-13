@@ -10,6 +10,39 @@
 
 ---
 
+### `check-import-fidelity.py` — 导入保真度
+
+逐 blob 对照上游审计副本的 git 索引，确认「原样导入」这个承诺成立。
+
+比对索引 blob 而不是工作区内容：工作区会被 `.gitattributes` 的换行转换和本地
+`chmod` 影响，blob 才是别人 clone 之后真正拿到的东西。
+
+差异必须能对上 `governance/divergences.json` 的登记，否则报错。
+
+> 它在 2026-10-13 首次运行时就抓到一个真问题：本项目 `.gitattributes` 的
+> `* text=auto eol=lf` 把 `gradlew.bat` 从 CRLF 规范化成了 LF，blob 与上游不同。
+> 改成 `text eol=crlf` **仍然不对**（那只影响检出），最终要用 `-text`。
+
+用法：`python3 tools/check-import-fidelity.py [--list-diffs]`
+退出码：0 一致或上游未导入；1 有未登记的差异；2 配置错误。
+
+### `check-exec-bits.py` — 脚本可执行位
+
+读 git 索引里的模式，对照 `governance/inherited-lint-baseline.json` 双向检查：
+
+- 不在继承基线的 `.sh` → 必须 `100755`（拦住本项目自己的疏漏）
+- 在继承基线的 `.sh` → 必须 `100644`（拦住基线失真）
+
+单方向检查做不到第二点：只查「非可执行就报错」的话，基线里的文件被 `chmod`
+成可执行反而放行，而真实状态已经和上游不一致。
+
+> 这个逻辑原先内联在 `verify-phase0.sh` 里，CI 另有一份更旧的实现。
+> 两份实现漂移的后果就是套件修好了、CI 仍红 —— 所以只留一份。
+
+用法：`python3 tools/check-exec-bits.py [--list]`
+退出码：0 全部符合；1 有不符项；2 不在 git 仓库里。
+
+
 ## 检查类（CI 会跑）
 
 ### `check-upstreams.py`
@@ -196,7 +229,7 @@ bash tools/verify-phase0.sh 2>&1 | tee verification.log
 
 **退出码**：`0` 全部通过；`1` 有失败项。
 
-覆盖 15 组检查。项数随环境伸缩：依赖齐全、有审计副本与上游镜像时 **71 项**；
+覆盖 15 组检查。项数随环境伸缩：依赖齐全、有审计副本与上游镜像时 **75 项**；
 干净克隆里 **60 项**。其中 **3 项**依赖可选依赖
 （PyYAML、actionlint、shellcheck），其余依赖上游审计副本或镜像存在：
 
@@ -210,10 +243,12 @@ bash tools/verify-phase0.sh 2>&1 | tee verification.log
 | 4b | 偏离重放的成功路径 + 7 种失败场景（夹具） | 无条件（隔离夹具） |
 | 4c | 锚点预检：真实上游 1 项 + 夹具 6 项 | 真实上游项依赖审计副本；夹具项无条件 |
 | 4d | 阶段 1 导入器：分支保护、上游校验、完整导入、导入后自洽 | 整段依赖审计副本 |
-| 5 | 静态检查：shell 语法、Python 编译、JSON 解析、许可哈希 | 无条件 |
+| 4e | 继承 lint 基线的两种失败模式（新增告警 / 基线过期） | 无条件 |
+| 4f | 导入保真度：逐 blob 对照上游，差异必须已登记 | 需审计副本 |
+| 5 | 静态检查：shell 语法、Python 编译、JSON 解析、许可哈希、隐私审计 | 无条件 |
 | 5b | 工作流验证：PyYAML 解析 + actionlint + shellcheck | 需对应工具 |
 | 6 | 上游仓库工作树仍干净（只读审计承诺） | 需审计副本 |
-| 7 | 所有 `.sh` 在 git 索引里是 `100755` | 非 git 检出时 SKIP |
+| 7 | `.sh` 索引模式对照继承基线（双向），并验证检查本身会失败 | 非 git 检出时 SKIP |
 
 > **第 7 组为什么存在**：本套件通过 `run_tool()` 用解释器显式调用脚本，
 > 因此**永远测不到可执行位**。CI 的 `contracts.yml` 却会查 `-x`，
@@ -225,7 +260,7 @@ bash tools/verify-phase0.sh 2>&1 | tee verification.log
 只代表这次没验证。脚本会打印「通过 / 失败 / 跳过 / 合计」四项计数，
 并在有跳过项时提示 **"本次运行并未验证全部 N 项"**（N 按本次实际项数算），避免把跳过误读成通过。
 
-因此结果有多种，都是正确的：依赖齐全且有审计副本时 **71 通过 / 0 失败 / 0 跳过**；
+因此结果有多种，都是正确的：依赖齐全且有审计副本时 **75 通过 / 0 失败 / 0 跳过**；
 无审计副本、无 PyYAML 时约 **53 通过 / 0 失败 / 7 跳过**。
 
 **3b 与 4b 为什么在夹具里跑**：`--record` 是唯一会改 `upstreams.json` 的动作，
@@ -241,7 +276,7 @@ bash tools/verify-phase0.sh 2>&1 | tee verification.log
 为 `--record` 的四项校验构造隔离测试夹具。
 
 ```bash
-tools/make-record-fixture.sh /tmp/fixture
+tools/make-record-fixture.sh "$(mktemp -d)"
 ```
 
 产出 `mirrors/DSHBox.git`（假上游：main 有推进、side 是旁支、orphan 无共同祖先、
@@ -255,7 +290,7 @@ rewound 在 main 上但非锁定提交后代）与 `repo/`（假 DSHFusion 仓�
 为偏离重放构造「上游已导入」的测试夹具，按场景制造偏差。
 
 ```bash
-tools/make-divergence-fixture.sh /tmp/fixture <场景>
+tools/make-divergence-fixture.sh "$(mktemp -d)" <场景>
 ```
 
 场景：`normal`（全部可施加）、`drift`（上游改了 `applicationId` 写法）、
