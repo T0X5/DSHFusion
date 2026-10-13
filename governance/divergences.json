@@ -94,6 +94,20 @@
       "rationale": "官网内容与品牌属于上游；本项目不需要对外站点。",
       "reapply": "同步时整目录忽略。",
       "conflict_risk": "none"
+    },
+    {
+      "id": "DIV-0006",
+      "title": "为上游 android.yml 补顶层 permissions",
+      "upstream": "dshbox",
+      "type": "config",
+      "phase": 1,
+      "target_files": [
+        ".github/workflows/android.yml"
+      ],
+      "change": "在 android.yml 顶部加 permissions: contents: read。",
+      "rationale": "上游未声明顶层 permissions，GITHUB_TOKEN 会拿到仓库默认的宽权限；构建任务只需要读源码。该工作流要在 DSHFusion 里真实运行，因此不适合像其他上游文件那样走『不改、只登记基线』的路子。",
+      "reapply": "tools/apply-divergences.sh 会在锚点 name: Android CI 之后插入该块；锚点失效则报错而不是猜。",
+      "conflict_risk": "low —— 单文件、单处、插入式改动；上游若自己加了 permissions 则本偏离自动判定为已生效。"
     }
   ]
 }

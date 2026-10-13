@@ -12,6 +12,17 @@
 *.yaml text eol=lf
 *.md   text eol=lf
 
+# Windows 批处理脚本：**完全不做换行转换**（-text，按二进制处理）。
+# 上游 DSHBox 没有 .gitattributes，gradlew.bat 在它那里原样存着 CRLF。
+# 本文件上方的 `* text=auto eol=lf` 会把它规范化，后果有两条：
+#   1. 导入的 blob 与上游不一致 —— 「逐字节忠实导入」这个承诺就不成立了；
+#   2. Windows 上执行 gradlew.bat 可能出错（批处理对行尾敏感）。
+# 注意：写成 `text eol=crlf` **不够** —— 那只是检出时转成 CRLF，
+# 仓库里存的仍是 LF，blob 依旧与上游不同。必须用 `-text`。
+# 2026-10-13 阶段 1 导入时靠逐 blob 比对才发现，此前一直没暴露。
+*.bat  -text
+*.cmd  -text
+
 # 二进制资产不参与换行转换
 *.png  binary
 *.jpg  binary

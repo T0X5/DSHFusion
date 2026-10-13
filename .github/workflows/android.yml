@@ -1,0 +1,108 @@
+name: Android CI
+
+# DIV-0006：上游 android.yml 没有声明顶层 permissions，GITHUB_TOKEN 会拿到
+# 仓库默认的宽权限。构建任务只需要读源码，因此显式收窄。
+# 与契约检查 check-workflows.py 的要求一致（所有工作流必须显式声明权限）。
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # setup-android@v3 的 packages 默认值是 `tools platform-tools`，
+      # 而 `tools` 早已从 SDK 仓库移除：新版 runner（cmdline-tools 16）上
+      # `sdkmanager tools` 会直接失败退出，CI 连门禁都跑不到。
+      # 这里只让它装仍存在的 platform-tools，其余 SDK 包由下一步手动安装。
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Accept licenses & install SDK packages
+        run: |
+          sdkmanager --update >/dev/null 2>&1 || true
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - name: Grant execute permission to scripts
+        run: chmod +x gradlew tools/*.sh runtime-bundle/scripts/*.sh runtime-bundle/build_rootfs.sh
+
+      # 需要 python3 跑隐私审计
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # 1.2.1 (P6)：多语言资源键位/占位符 parity + 源码硬编码 CJK 扫描
+      - name: Run i18n consistency check
+        run: bash tools/i18n_check.sh
+
+      # v1.3.1：官网资源查询串须与 versionName 同步
+      # （GitHub Pages 静态资源 max-age=600，漏改会出现「新 HTML + 旧 JS」）
+      #
+      # DSHFusion 不导入 website/（见 DIV-0005），因此本步骤正常路径下什么都不检查。
+      # 上游版本在这里会打印「官网资源版本号已同步」，而实际上 for 循环里
+      # 两个文件都被 `[ -f ] || continue` 跳过了 —— 那是一句谎报。
+      # 保留检查逻辑（万一将来重新引入官网仍有门禁），但把跳过说清楚。
+      - name: Check website asset version string
+        run: |
+          if [ ! -d website ]; then
+            echo "website/ 未导入 DSHFusion（DIV-0005），本步骤未做任何检查。"
+            exit 0
+          fi
+          APP_VER=$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          echo "versionName=$APP_VER"
+          for f in website/index.html website/404.html; do
+            [ -f "$f" ] || continue
+            vers=$(grep -o 'assets/[^"]*?v=[0-9][^"&]*' "$f" | sed 's/.*?v=//' | sort -u)
+            if [ -z "$vers" ]; then
+              echo "::error file=$f::未发现 ?v= 版本查询串"
+              exit 1
+            fi
+            for v in $vers; do
+              if [ "$v" != "$APP_VER" ]; then
+                echo "::error file=$f::?v=$v 与 versionName=$APP_VER 不一致"
+                exit 1
+              fi
+            done
+          done
+          echo "官网资源版本号已同步"
+
+      # 阻断「本机路径/用户名/凭据」随仓库公开
+      # （构建文档曾带着开发机 JDK 路径并进入公开仓库）
+      - name: Run privacy audit
+        run: python3 tools/privacy_audit.py
+
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Run lint
+        run: ./gradlew lintDebug --stacktrace
+
+      - name: Assemble debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dshapp-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk

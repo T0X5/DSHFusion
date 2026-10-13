@@ -101,6 +101,16 @@ jobs:
       - name: Python tools compile
         run: python3 -m compileall -q tools
 
+      - name: No new shellcheck findings beyond inherited baseline
+        run: python3 tools/check-lint-baseline.py
+
+      - name: Import fidelity vs upstream (only in this workspace)
+        run: |
+          set -euo pipefail
+          # 逐 blob 对照上游需要上游审计副本，CI 里没有，因此自动跳过。
+          # 本工作区（有 ../audit/DSHBox）里会真正比对。
+          python3 tools/check-import-fidelity.py
+
       - name: Verify upstream mirrors are NOT tracked
         run: |
           set -euo pipefail
@@ -119,14 +129,16 @@ jobs:
       - name: Phase 0 verification suite (success and failure paths)
         run: bash tools/verify-phase0.sh
 
-      - name: No upstream brand assets reused
+      - name: Brand assets are our own, not upstream's
         run: |
           set -euo pipefail
-          # DSHBox 的 TRADEMARK.md 保留其品牌图形全部权利。
-          # 阶段 1 导入上游源码后，自有图标必须替换 brand_icon。
-          # 阶段 0 不该存在任何图片资产。
-          if find . -name '*.png' -o -name '*.jpg' -o -name '*.webp' | grep -q .; then
-            echo "NOTE: 仓库中出现图片资产。阶段 1 起需确认不是 DSHBox 的品牌图形："
-            find . \( -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) -not -path './.git/*'
+          # DSHBox 的 TRADEMARK.md 保留其品牌图形全部权利，并禁止使用其设计构造方法。
+          # 阶段 1 起仓库里有 8 个自有品牌图形，必须证明它们出自本项目生成器。
+          #
+          # 这里不是「找找有没有图片」那种只会打印的弱检查 —— 它重跑生成器，
+          # 与磁盘上的文件逐字节比对。上游图形不可能通过。
+          if ! find app/src/main/res -name '*.png' | grep -q .; then
+            echo "阶段 1 尚未导入上游源码，跳过品牌图形核验。"
+            exit 0
           fi
-          echo "无品牌资产复用风险。"
+          python3 tools/make-brand-assets.py --check

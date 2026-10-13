@@ -435,10 +435,17 @@ if [ -d ../audit/DSHBox ]; then
         run_tool tools/import-upstream-base.py --upstream "$IMP_WRONG"
 
     # 完整流程在一次性克隆里跑：dry-run 报告 + apply + 安全网 + 导入后自洽
+    #
+    # 分支处理要注意：套件既可能在 main 上跑（分支不存在，需要 -c 新建），
+    # 也可能正好在 phase-1/import-dshbox-base 上跑（克隆里该分支已存在，
+    # `switch -c` 会失败）。两种情况都必须能用 —— 早先只写了 `switch -c`，
+    # 于是「在阶段 1 分支上跑套件」会报成「无法建立一次性克隆」，
+    # 把一个测试自身的缺陷伪装成环境故障。
     IMP_CLONE="$(mktemp -d)"
     rm -rf "$IMP_CLONE"
     if git clone -q . "$IMP_CLONE" 2>/dev/null &&
-       git -C "$IMP_CLONE" switch -q -c phase-1/import-dshbox-base 2>/dev/null; then
+       { git -C "$IMP_CLONE" switch -q phase-1/import-dshbox-base 2>/dev/null ||
+         git -C "$IMP_CLONE" switch -q -c phase-1/import-dshbox-base 2>/dev/null; }; then
 
         # dry-run 必须在克隆里跑 —— run_tool 用的是套件自身的工作目录，
         # 而套件通常跑在 main 上，会被导入器的分支保护直接拒绝。
@@ -483,6 +490,68 @@ else
     SKIP=$((SKIP + 1)); RESULTS+=("SKIP|阶段 1 导入器|无审计副本，未检查")
 fi
 
+section "4e. 继承 lint 基线的两种失败模式（隔离测试）"
+
+# 这个门禁的价值全在于「它不是橡皮章」。所以不能只测它放行，
+# 必须证明它**会拦**：新引入的告警要拦，基线自身过期也要拦。
+# 没有这一节，基线就退化成一张永久忽略列表。
+if command -v shellcheck >/dev/null 2>&1 && [ -f tools/check-lint-baseline.py ]; then
+    LB_BAK="$(mktemp)"
+    cp governance/inherited-lint-baseline.json "$LB_BAK"
+
+    # 失败模式 1：新引入一条告警 —— 必须被拦
+    cat > tools/_tmp_lb_violation.sh <<'EOF'
+#!/usr/bin/env bash
+f() {
+    local out=$(echo hi)
+    echo "$out"
+}
+f
+EOF
+    expect 1 "基线门禁：拦下新引入的告警" \
+        run_tool tools/check-lint-baseline.py
+    rm -f tools/_tmp_lb_violation.sh
+
+    # 失败模式 2：基线里登记一条不存在的条目 —— 必须被拦（防基线失真）
+    python3 - <<'PYEOF'
+import json
+p = 'governance/inherited-lint-baseline.json'
+d = json.load(open(p, encoding='utf-8'))
+d['shellcheck']['findings'].append({
+    "file": "tools/build_apk.sh", "line": 99999, "column": 1, "code": "SC9999",
+    "level": "warning", "summary": "套件临时注入的过期条目",
+    "inherited_from": "test", "functional_impact": "无"})
+json.dump(d, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+PYEOF
+    expect 1 "基线门禁：拦下过期（不存在的）基线条目" \
+        run_tool tools/check-lint-baseline.py
+
+    # 恢复原基线，并确认恢复后确实放行
+    cp "$LB_BAK" governance/inherited-lint-baseline.json
+    rm -f "$LB_BAK"
+    expect 0 "基线门禁：恢复后放行真实状态" \
+        run_tool tools/check-lint-baseline.py
+else
+    printf '  [SKIP] %-52s 缺 shellcheck 或检查器\n' "继承 lint 基线"
+    SKIP=$((SKIP + 3))
+    RESULTS+=("SKIP|继承 lint 基线|缺 shellcheck 或检查器，未检查")
+fi
+
+section "4f. 导入保真度（逐 blob 对照上游）"
+
+# 「原样导入上游基线」是本阶段的核心承诺，必须可验证，不能只信导入器自己的话。
+# 比对的是 git 索引里的 blob 哈希（不是工作区内容）—— 那才是别人 clone 后拿到的。
+# 已知差异必须全部能对上 divergences.json / import-exclusions.json 的登记。
+# 首次运行就是靠这一项发现 gradlew.bat 被 .gitattributes 改了行尾。
+if [ -d "$ROOT/../audit/DSHBox/.git" ]; then
+    expect 0 "导入文件与上游逐字节一致（差异均已登记）" \
+        run_tool tools/check-import-fidelity.py
+else
+    printf '  [SKIP] %-52s 无上游审计副本\n' "导入保真度"
+    SKIP=$((SKIP + 1))
+    RESULTS+=("SKIP|导入保真度|无上游审计副本，未检查")
+fi
+
 section "5. 静态检查"
 
 expect 0 "所有 shell 脚本语法正确（bash -n）" \
@@ -520,8 +589,11 @@ else
 fi
 
 if command -v shellcheck >/dev/null 2>&1; then
-    expect 0 "tools/*.sh 通过 shellcheck" \
-        bash -c 'shellcheck -S warning tools/*.sh'
+    # 阶段 1 起 tools/ 里有上游原样导入的脚本，带着 9 条上游既有告警。
+    # 门禁因此改成「对照继承基线」：只拦新引入的，同时检测基线是否过期。
+    # 基线本身的两种失败模式在 4e 节有隔离测试。
+    expect 0 "tools/*.sh 无新增 shellcheck 告警（对照继承基线）" \
+        run_tool tools/check-lint-baseline.py
 else
     printf '  [SKIP] %-52s 未找到 shellcheck\n' "tools/*.sh shellcheck"
     SKIP=$((SKIP + 1))
@@ -559,28 +631,48 @@ section "7. 脚本可执行位（读 git 索引，不看工作区）"
 #
 # 读 git 索引而不是工作区权限：索引里记录的模式才是别人 clone 后拿到的模式。
 # 工作区权限可以被本地 chmod 掩盖，索引不会。
+#
+# 阶段 1 起 tools/ 里有上游原样导入的脚本。上游 DSHBox 自己的索引里就有
+# 13 个 .sh 是 100644（16 个是 100755）—— 这不是导入丢了权限，用
+# `git -C <上游> ls-files -s '*.sh'` 可复核。因此判定改成双向对照基线：
+#   不在基线的 .sh 必须 100755（拦住本项目自己的疏漏）
+#   在基线的 .sh 必须 100644（拦住基线失真、也拦住有人悄悄改动继承状态）
 if git rev-parse --git-dir >/dev/null 2>&1; then
-    BADMODE=""
+    EB_BAD=""
+    EB_NONEXEC="$(python3 -c '
+import json,sys
+try:
+    d=json.load(open("governance/inherited-lint-baseline.json",encoding="utf-8"))
+    print("\n".join(d.get("exec_bit",{}).get("inherited_non_executable",[])))
+except Exception:
+    pass
+' 2>/dev/null || true)"
+
     while IFS= read -r line; do
         mode="${line%% *}"
         path="${line##*$'\t'}"
         case "$path" in
-            *.sh)
-                if [ "$mode" != "100755" ]; then
-                    BADMODE="${BADMODE}${path}($mode) "
-                fi
-                ;;
+            *.sh) ;;
+            *) continue ;;
         esac
+        if printf '%s\n' "$EB_NONEXEC" | grep -qxF "$path"; then
+            want="100644"   # 继承自上游，保持与上游一致
+        else
+            want="100755"
+        fi
+        [ "$mode" = "$want" ] || EB_BAD="${EB_BAD}${path}(实际${mode}/应为${want}) "
     done < <(git ls-files -s)
 
-    if [ -z "$BADMODE" ]; then
-        printf '  [PASS] %-52s 全部 100755\n' "索引中所有 .sh 都有可执行位"
+    EB_N="$(printf '%s\n' "$EB_NONEXEC" | grep -c . || true)"
+    if [ -z "$EB_BAD" ]; then
+        printf '  [PASS] %-52s 全部符合（%s 个继承 100644）\n' \
+            "索引中 .sh 模式与基线一致" "$EB_N"
         PASS=$((PASS + 1))
-        RESULTS+=("PASS|索引中所有 .sh 都有可执行位|全部 100755")
+        RESULTS+=("PASS|索引中 .sh 模式与基线一致|$EB_N 个继承 100644")
     else
-        printf '  [FAIL] %-52s %s\n' "索引中有 .sh 缺可执行位" "$BADMODE"
+        printf '  [FAIL] %-52s %s\n' "索引中 .sh 模式与基线不符" "$EB_BAD"
         FAIL=$((FAIL + 1))
-        RESULTS+=("FAIL|索引中有 .sh 缺可执行位|$BADMODE")
+        RESULTS+=("FAIL|索引中 .sh 模式与基线不符|$EB_BAD")
     fi
 else
     printf '  [SKIP] %-52s 非 git 检出\n' "索引中 .sh 可执行位"

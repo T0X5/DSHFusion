@@ -401,12 +401,57 @@ def handle_div_0005(entry) -> tuple[str, str]:
     return FAILED, "website/ 存在且需人工删除（本脚本不自动执行破坏性操作）"
 
 
+def handle_div_0006(entry) -> tuple[str, str]:
+    """给上游 android.yml 补顶层 permissions。
+
+    上游没声明顶层 permissions，GITHUB_TOKEN 会拿到仓库默认的宽权限，
+    而构建任务只需要读源码。这条偏离**值得改上游文件**，因为该工作流要在
+    DSHFusion 里真实运行 —— 豁免它就等于豁免了唯一真正跑构建的那个。
+
+    其余上游文件的 shellcheck 告警**不改**，登记在
+    governance/inherited-lint-baseline.json，理由见该文件。
+    """
+    path = ROOT / ".github" / "workflows" / "android.yml"
+    if not path.exists():
+        return PENDING, "android.yml 尚未导入"
+
+    original = read(path)
+    # 顶层 permissions：行首无缩进，避免误匹配 job 级的 permissions
+    if re.search(r"^permissions:", original, re.M):
+        return OK, "android.yml 已声明顶层 permissions"
+
+    if CHECK_ONLY:
+        return FAILED, "android.yml 缺少顶层 permissions"
+
+    marker = "name: Android CI\n"
+    if not original.startswith(marker):
+        return FAILED, "android.yml 首行不是预期的 name，锚点失效（需人工确认）"
+
+    block = (
+        marker
+        + "\n"
+        + "# DIV-0006：上游未声明顶层 permissions，GITHUB_TOKEN 会拿到仓库默认的宽权限。\n"
+        + "# 构建任务只需要读源码，因此显式收窄。\n"
+        + "permissions:\n"
+        + "  contents: read\n"
+    )
+    path.write_text(block + original[len(marker):], encoding="utf-8")
+    files_changed.append(str(path))
+
+    # 不谎报成功：写完必须复核目标状态真的成立
+    if not re.search(r"^permissions:", read(path), re.M):
+        revert(path, original)
+        return FAILED, "写入后仍未发现顶层 permissions（已还原）"
+    return OK, "已为 android.yml 补上顶层 permissions: contents: read"
+
+
 HANDLERS = {
     "DIV-0001": handle_div_0001,
     "DIV-0002": handle_div_0002,
     "DIV-0003": handle_div_0003,
     "DIV-0004": handle_div_0004,
     "DIV-0005": handle_div_0005,
+    "DIV-0006": handle_div_0006,
 }
 
 

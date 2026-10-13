@@ -15,12 +15,32 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 ## 这个仓库当前处于什么阶段
 
-**阶段 0：骨架。** 目前只有项目规范、双上游清单和 CI，**还没有合并任何上游代码**。
-下一阶段（阶段 1）是把 DSHBox 的源码作为基线导入主干。见
-[docs/FUSION-PLAN.md](docs/FUSION-PLAN.md) 的实施优先级。
+**阶段 1：DSHBox 基线已导入分支 `phase-1/import-dshbox-base`（PR 待审，main 未动）。**
 
-> ⚠️ 在阶段 1 完成之前，本仓库**不是可构建的 Android 项目**。
-> 不要在这里跑 Gradle 然后报告"构建失败"—— 那是预期状态。
+上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
+（`README.md`、`.gitignore`）→ **实际导入 765 个文件、25.4 MB**。
+6 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
+
+**「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
+逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
+17 处差异全部能对上已登记的偏离。
+
+> ⚠️ **本仓库仍不是「已验证可构建」的 Android 项目。**
+> 至今**没有执行过任何 Android 构建、单元测试或真机验证** ——
+> 本环境没有 JDK、Android SDK/NDK 与 Gradle。
+> 所有构建结论都来自仓库配置与上游 CI 历史，不来自实际运行。
+> 不要把这个状态读成「已经能跑」。见
+> [docs/PHASE0-VERIFICATION.md](docs/PHASE0-VERIFICATION.md) 的诚实性声明。
+
+阶段 1 的未完成项（**不要误认为已完成**）：
+
+| 项 | 状态 |
+|---|---|
+| 自有品牌图形 8 个 | ✅ 已自绘；`tools/make-brand-assets.py` 可复现，CI 逐字节核验 |
+| 独立签名密钥库 | ❌ 未创建 |
+| `tools/build-dsh-layer.sh`（补运行环境风险 R1） | ❌ 未编写 |
+| Android 构建 / 单元测试 / 真机验证 | ❌ **一次都没跑过** |
+| 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ❌ 未验证 |
 
 ## 决策依据（不要重新推翻）
 
@@ -94,9 +114,14 @@ dshfusion/
 │   ├── check-divergence-anchors.py 偏离锚点预检（对照真实上游）
 │   ├── make-anchor-fixture.sh   锚点预检的隔离测试夹具
 │   ├── import-upstream-base.py  阶段 1 导入器（拒绝在 main 上运行）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 67 项）
+│   ├── check-import-fidelity.py 导入保真度：逐 blob 对照上游，差异必须已登记
+│   ├── check-lint-baseline.py   对照继承基线检查 shellcheck（只拦新增 + 检测基线过期）
+│   ├── make-brand-assets.py     生成自有品牌图形 8 个（--check 逐字节核验）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 71 项）
+├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）
+    ├── android.yml              上游的 Android CI（已补 permissions，DIV-0006）
     └── upstream-watch.yml       上游变更监测，产出摘要（每周）
 ```
 
