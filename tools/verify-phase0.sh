@@ -572,6 +572,22 @@ else
     RESULTS+=("SKIP|导入保真度|无上游审计副本，未检查")
 fi
 
+# 「没有上游副本」必须优雅跳过，而不是崩溃。
+# 这一条是被 CI 打脸后补的：工具里曾写死一个本机绝对路径，本地有那个目录
+# 所以一切正常，CI 上没有 —— 于是 PermissionError 让脚本直接退出 1。
+# 我测过这个工具，但只测了「能找到上游」这一条路径。
+# 现在把三条降级路径都测：找不到、无权访问、不是 git 检出。
+expect 0 "无上游副本时优雅跳过（不崩溃）" \
+    env DSHFUSION_UPSTREAM_DSHBOX=/root/nonexistent/DSHBox \
+        python3 tools/check-import-fidelity.py
+FID_TMP="$(mktemp -d)"
+tar -c --exclude=.git -C "$ROOT" . 2>/dev/null | tar -x -C "$FID_TMP" 2>/dev/null || true
+if [ -f "$FID_TMP/tools/check-import-fidelity.py" ]; then
+    expect 0 "非 git 检出时优雅跳过（不崩溃）" \
+        bash -c "cd '$FID_TMP' && python3 tools/check-import-fidelity.py"
+fi
+rm -rf "$FID_TMP"
+
 section "5. 静态检查"
 
 expect 0 "所有 shell 脚本语法正确（bash -n）" \

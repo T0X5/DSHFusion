@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import re
 import subprocess
 import sys
@@ -50,9 +51,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 EXCLUSIONS = ROOT / "governance" / "import-exclusions.json"
 DIVERGENCES = ROOT / "governance" / "divergences.json"
+# 上游审计副本的位置。
+# 只认相对路径 —— 早先这里还写死过一个本机绝对路径，在 CI 上既不存在，
+# 又会因为 PermissionError 让整个脚本崩溃（而不是优雅跳过）。
+# 允许用环境变量覆盖，便于别人放在别处。
 UPSTREAM_HINTS = [
-    ROOT.parent / "audit" / "DSHBox",
-    Path("/root/Documents/deepseek-harness/default-workspace/audit/DSHBox"),
+    Path(os.environ["DSHFUSION_UPSTREAM_DSHBOX"])
+    if os.environ.get("DSHFUSION_UPSTREAM_DSHBOX")
+    else ROOT.parent / "audit" / "DSHBox",
 ]
 
 
@@ -85,11 +91,19 @@ def matches_any(path: str, patterns: list[str]) -> bool:
     return False
 
 
-def git_index(root: Path) -> dict[str, tuple[str, str]]:
-    out = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-s"],
-        capture_output=True, text=True, check=True,
-    ).stdout
+def git_index(root: Path) -> dict[str, tuple[str, str]] | None:
+    """读取 git 索引；不是 git 检出时返回 None。
+
+    调用方据此跳过而不是崩溃 —— 导出成 tarball 的副本就没有 .git，
+    那不是错误状态，只是这次没法核对。
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-s"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
     d: dict[str, tuple[str, str]] = {}
     for line in out.splitlines():
         meta, path = line.split("\t", 1)
@@ -99,9 +113,18 @@ def git_index(root: Path) -> dict[str, tuple[str, str]]:
 
 
 def find_upstream() -> Path | None:
+    """找到上游审计副本；找不到就返回 None（调用方据此跳过，而不是报错）。
+
+    每个探测都要吞掉 OSError：路径可能存在但当前用户无权 stat
+    （CI 上 /root/... 就是这种情况）。「无权访问」与「不存在」对调用方
+    是一回事 —— 都意味着这次没法核对保真度，应当跳过而不是崩溃。
+    """
     for p in UPSTREAM_HINTS:
-        if (p / ".git").exists() or (p / "HEAD").exists():
-            return p
+        try:
+            if (p / ".git").exists() or (p / "HEAD").exists():
+                return p
+        except OSError:
+            continue
     return None
 
 
@@ -139,6 +162,9 @@ def main() -> int:
 
     up = git_index(up_root)
     me = git_index(ROOT)
+    if up is None or me is None:
+        print("本仓库或上游副本不是 git 检出 —— 跳过保真度核对。")
+        return 0
 
     content_diff, mode_diff, missing = [], [], []
     checked = 0

@@ -118,7 +118,7 @@ dshfusion/
 │   ├── check-lint-baseline.py   对照继承基线检查 shellcheck（只拦新增 + 检测基线过期）
 │   ├── check-exec-bits.py       .sh 索引模式双向对照继承基线
 │   ├── make-brand-assets.py     生成自有品牌图形 8 个（--check 逐字节核验）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 75 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 77 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）
