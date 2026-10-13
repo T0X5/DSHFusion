@@ -310,7 +310,7 @@ SharedPreferences：`dshapp_prefs`（`Constants.PREFS_NAME`）、
 | 5 | 施加 `DIV-0002`：`app_name` → DSHFusion + **自绘图标** | 独立标识 | 脚本改名字，**图标必须人工绘制** |
 | 6 | 施加 `DIV-0003`：`assets.srcDirs` 可被 `DSHFUSION_RUNTIME_ASSETS` 覆盖 | 无资产也能跑单测/lint | `apply-divergences.sh` |
 | 7 | 施加 `DIV-0004` / `DIV-0005`：监测地址指向自身；不导入 `website/` | 去除上游硬引用 | 脚本 + 清单排除 |
-| 8 | 改写 `.github/workflows/android.yml` 中依赖 `website/` 的步骤 | 可用构建 CI | 见 §4.5 陷阱 2 |
+| 8 | 改写 `.github/workflows/android.yml`<!-- future: .github/workflows/android.yml --> 中依赖 `website/` 的步骤 | 可用构建 CI | 见 §4.5 陷阱 2 |
 | 9 | 自建 dsh 层打包脚本（补 R1） | `tools/build-dsh-layer.sh` <!-- future: tools/build-dsh-layer.sh --> | 尚未编写 |
 | 10 | 自建 keystore（不复用任何上游证书） | 独立签名 | 尚未创建 |
 | 11 | 跑 `./gradlew testDebugUnitTest lintDebug`，记录真实输出与退出码 | 验证证据 | **本机无 JDK/SDK，只能在 CI 跑** |
@@ -337,8 +337,9 @@ DSHFusion 的 `.gitignore` 写的是 `runtime/` 与 `dist/`，**没有前导斜�
 
 **坑 2：`website/` 的连带依赖。**
 上游 `website/` 22 个文件属 `TRADEMARK.md` §4 保留范围，不导入。但
-`.github/workflows/pages.yml` 第 28 行写死 `path: website`，必须一并排除；
-`android.yml` 第 55-57 行还有一句「Check website asset version string」读取
+`.github/workflows/pages.yml`<!-- ignore-ref: .github/workflows/pages.yml --> 第 28 行写死
+`path: website`，必须一并排除；
+`android.yml`<!-- future: .github/workflows/android.yml --> 第 55-57 行还有一句「Check website asset version string」读取
 `website/` 下的版本串，导入后必然失败，需人工改写。
 
 **坑 3：同名文件会覆盖 DSHFusion 自己的治理文档。**
