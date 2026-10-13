@@ -40,13 +40,14 @@
 
 **这个报告能证明的**：阶段 0 的骨架自洽、检查器有效、每个工具的成功与失败路径都按预期工作。
 
-**这个报告不能证明的**：**没有任何 Android 构建被执行过**。
-本环境没有 JDK、Android SDK、NDK 与 Gradle，阶段 0 也不含上游源码，
-因此**不存在 APK 产物，也不存在构建结论**。任何关于"能构建出可用的 App"的说法
-在本阶段都不成立。
+**这个报告不能证明的（原文写于阶段 0，2026-10-13 部分更新）**：
 
-**也没有任何真机验证。** 本报告全部结论来自静态检查、脚本执行与配置阅读，
-没有在 Android 设备上运行过任何东西。
+- ~~没有任何 Android 构建被执行过~~ → **已不成立**。阶段 1 的
+  `phase-1/import-dshbox-base` 分支已在 GitHub Actions 上真实跑过 Android 构建，
+  见 §2.12。本环境仍然没有 JDK/SDK/NDK/Gradle，构建是在 CI 上执行的。
+- ~~不存在 APK 产物~~ → **已不成立**。CI 产出了 `dshapp-debug-apk`（39.0 MB 压缩）。
+- **仍然成立**：**没有任何真机验证**。CI 产出的 APK 从未装到设备上运行过。
+  而且它**不含运行环境层**，所以即便装上，也起不了 DSH（见 §2.12 的说明）。
 
 ---
 
@@ -342,14 +343,82 @@ $ bash tools/verify-phase0.sh
 
 ---
 
+### 2.12 Android 构建：首次真实 CI 运行（阶段 1，2026-10-13）
+
+阶段 0 的这一节原本写「不存在 APK，不存在构建结论」。阶段 1 导入 DSHBox 基线后，
+上游 `android.yml` 在 DSHFusion 下**真实运行并全部通过**，因此这一条必须更正。
+
+**运行记录**（`Android CI`，run `38478523535`）：
+
+| 项 | 值 |
+|---|---|
+| 触发提交 | `8af68f8`（`phase-1/import-dshbox-base`） |
+| 起止 | 2026-10-13T22:32:54Z → 22:46:06Z（约 13 分钟） |
+| 结果 | ✅ success，`build` 作业 20 个步骤全部成功 |
+| 产物 | `dshapp-debug-apk` = **39.0 MB**（压缩）/ 94.0 MB（解压）/ 777 个条目 |
+
+**各步骤的真实耗时与结果**：
+
+| 步骤 | 结果 |
+|---|---|
+| `Set up JDK 21` / `Set up Gradle` / `Set up Android SDK` | ✅ |
+| `Accept licenses & install SDK packages` | ✅ |
+| `Grant execute permission to scripts` | ✅ |
+| `Set up Python` | ✅ |
+| `Run i18n consistency check` | ✅ |
+| `Check website asset version string` | ✅（`website/` 未导入，按 DIV-0005 短路退出） |
+| `Run privacy audit` | ✅ |
+| `Run unit tests` | ✅ `BUILD SUCCESSFUL in 5m 22s` |
+| `Run lint` | ✅ `BUILD SUCCESSFUL in 3m 48s` |
+| `Assemble debug APK` | ✅ `BUILD SUCCESSFUL in 3m 20s` |
+| `Upload debug APK` | ✅ |
+
+**跑过单元测试的模块**：bridge、common、plugin-manager、sandbox-manager、
+terminal-emulator、terminal-session、`pilot:dshbox-adapter`、
+`pilot:interlock-relay-core`、app。
+`terminal-view:testDebugUnitTest` 报 `NO-SOURCE`（该模块没有测试源），不是失败。
+
+**这是怎么变成可能的**：`DIV-0003` 把 `assets.srcDirs` 改成可由
+`DSHFUSION_RUNTIME_ASSETS` 覆盖，因此 `testDebugUnitTest` 与 `lintDebug`
+不需要任何运行环境资产。`assembleDebug` 在没有资产时也能产出 APK，
+只是这个 APK **不含运行环境层**。
+
+**这个结果证明了什么**：上游 `android.yml` 的步骤序列在 DSHFusion 的
+`applicationId` / 版本号 / 品牌资源改动下**能跑通**；1058 个 `@Test` 在
+我们的改动下全部通过；`lintDebug` 不报错。
+
+**这个结果不证明什么**：
+
+1. **没装到真机上过。** 没有设备连接，从未安装运行。
+2. **APK 起不了 DSH。** 解包核对过：里面没有 `base.tar.zst` / `node.tar.zst` /
+   `android-side.tar.zst` / `dsh/*.tar.zst`，只有 `assets/runtime-online/`
+   （在线获取的引导与 dpkg 元数据）和 `assets/terminal-packages/`（24 个 `.deb`）。
+   所以它能安装，但需要先通过「运行环境在线获取」或离线整包导入补上运行环境。
+3. **CI 只覆盖 `x86_64` 上的编译与单测。** 真机是 `arm64-v8a`，
+   NDK 相关产物与设备行为不在 CI 覆盖范围内。
+4. **`lintDebug` 通过 ≠ 零告警。** 构建日志里有一条 manifest 告警
+   （`app/src/main/AndroidManifest.xml:51:9-41`），未阻塞构建。
+
+**顺带一个教训**：这次运行之前，本报告对「能不能编译」的判断全部来自静态阅读。
+第一次真跑就抓到了 36 个 `Unresolved reference 'R'`（`namespace` 被误改），
+以及 CI 发现不了的、会在**运行时**崩的 3 处 manifest 相对类名。
+「不要仅凭配置推断构建结果」这条规则是被这次失败验证的，不是凭空写的。
+
+---
+
 ## 3. 已知限制（诚实记录）
 
-1. **未执行 Android 构建。** 环境无 JDK / Android SDK / NDK / Gradle；
-   阶段 0 也不含上游源码。**不存在 APK，不存在构建结论。**
-2. **未做真机验证。** 阶段 0 没有可安装的产物。
+1. ~~未执行 Android 构建~~ → **已执行**，见 §2.12。本机仍无 JDK / Android SDK /
+   NDK / Gradle，构建在 GitHub Actions 上完成；本机**无法复现该构建**。
+2. **未做真机验证。** 已有 APK 产物（39.0 MB），但从未安装到设备上运行过，
+   而且它不含运行环境层，装上也无法启动 DSH。见 §2.12。
 3. **未推送 GitHub、未创建 PR。** 本环境无 GitHub 写入凭据。
    交付形式为本地 git 仓库 + bundle + ZIP，推送步骤由用户执行。
-4. **工作流仍未在 GitHub 上真实运行过。** 本版已用**真实 YAML 解析器**（PyYAML）
+4. ~~工作流仍未在 GitHub 上真实运行过~~ → `contracts.yml` 与 `android.yml`
+   **均已真实运行并多次通过**（最近一次见 §2.12）。
+   **`upstream-watch.yml` 仍未运行过**——它只在每周定时与手动触发时执行。
+   以下是当时的验证方式，保留作为「推送前能验到哪一步」的记录：
+   本版已用**真实 YAML 解析器**（PyYAML）
    与 **actionlint 1.7.7 + shellcheck 0.10.0** 验证，且 actionlint 的能力经过
    负向测试确认（故意造的错误工作流被正确拦下）。但这只证明
    「工作流定义本身合法且语义正确」，**不证明它在 GitHub 的 runner 上能跑通**——
