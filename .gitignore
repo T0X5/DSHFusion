@@ -2,10 +2,13 @@
 upstream-mirrors/
 *.git/
 
-# 运行环境资产：分层 bundle，从公开来源获取或离线导入，不入库
-runtime/
-runtime/android-assets/
-dist/
+# 运行环境资产：分层 bundle，从公开来源获取或离线导入，不入库。
+# 前导斜杠是必须的：不带斜杠的 runtime/ 会匹配任意层级的同名目录，
+# 而上游有 4 个名为 runtime 的源码包（app/src/main/java/com/dshbox/app/runtime/
+# 等，共 22 个文件），会被静默吞掉、不进提交、克隆后构建失败。
+/runtime/
+/runtime/android-assets/
+/dist/
 *.tar.zst
 *.tar.gz
 *.tar.xz
@@ -23,8 +26,12 @@ app/build/
 */build/
 captures/
 *.apk
-*.aar
 *.ap_
+# *.aar 排除的是构建产物；但上游刻意 vendored 了 libs/zstd-jni-1.5.7-15.aar
+# 作为构建依赖（app/build.gradle.kts 引用），必须放行，否则克隆后无法构建。
+*.aar
+!/libs/*.aar
+!/libs/**/*.aar
 *.dex
 local.properties
 .cxx/

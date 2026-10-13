@@ -23,8 +23,8 @@
   "preserved_files": [
     {
       "path": "README.md",
-      "archive_as": "docs/upstream/DSHBox-README.md",
-      "reason": "双方都有 README.md。DSHFusion 的 README 是本项目入口，必须保留；上游 README 含构建手册与运行说明，有参考价值，改名归档保留出处，不丢弃也不覆盖。"
+      "archive_as": "README.upstream.md",
+      "reason": "双方都有 README.md。DSHFusion 的 README 是本项目入口，必须保留；上游 README 含构建手册与运行说明，有参考价值，改名归档保留出处，不丢弃也不覆盖。归档位置刻意选在仓库根而不是 docs/ 下 —— 上游 README 里有 README.en.md、CHANGES.md、LICENSE、TRADEMARK.md 四处相对链接，放在根目录它们才继续成立；挪到子目录会立刻产生 4 个断链（已实测）。"
     },
     {
       "path": ".gitignore",

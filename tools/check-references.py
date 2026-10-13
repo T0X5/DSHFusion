@@ -78,6 +78,21 @@ def glob_has_match(path: str) -> bool:
     return any(ROOT.glob(path))
 
 
+def path_resolves(candidate: str, rel_dir: Path) -> bool:
+    """行内路径是否真实存在。
+
+    依次尝试两种基准，任一成立即算通过：
+      1. 相对本文档所在目录 —— Markdown 里写目录名时通常就是这个意思
+      2. 相对仓库根 —— DSHFusion 自己文档的惯用写法
+
+    只认第 2 种会误报上游嵌套文档里的相对引用；只认第 1 种会误报根相对引用。
+    """
+    for base in (rel_dir, ROOT):
+        if (base / candidate).exists():
+            return True
+    return any(ROOT.glob(candidate)) or any(rel_dir.glob(candidate))
+
+
 def is_frozen(relative: Path) -> bool:
     return any(str(relative).startswith(d) for d in FROZEN_DIRS)
 
@@ -121,6 +136,7 @@ def check_backtick_paths(path: Path) -> None:
     global checked_paths
     text = path.read_text(encoding="utf-8")
     future = collect_skipped_paths(text)
+    rel_dir = path.parent
 
     for match in BACKTICK_PATH.finditer(text):
         candidate = match.group("path")
@@ -144,7 +160,11 @@ def check_backtick_paths(path: Path) -> None:
                 )
             continue
 
-        if not (ROOT / candidate).exists():
+        # 行内路径按两种基准解析：先相对本文档所在目录，再相对仓库根。
+        # 只按仓库根解析是错的：上游嵌套文档里的相对路径指的是它自己所在目录，
+        # 按根解析会把有效引用误报成断链（导入阶段实测到 2 处）。
+        # Markdown 链接（check_markdown_links）本来就是文件相对，这里与之一致。
+        if not path_resolves(candidate, rel_dir):
             failures.append(
                 f"{path.relative_to(ROOT)}: 提到的仓库内路径不存在 -> `{candidate}`"
             )

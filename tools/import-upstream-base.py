@@ -187,6 +187,48 @@ def main() -> int:
 
     n = len(imported) + len(preserved)
     print(f"{GREEN}✓ 已写入 {n} 个文件{RESET}")
+
+    # ---- 安全网：检出被 .gitignore 吞掉的文件 ----
+    # 这一步是必需的，不是锦上添花。实测过一次：DSHFusion 的 .gitignore 里
+    # 写的是 `runtime/` 而不是 `/runtime/`，于是匹配了任意层级的同名目录，
+    # 把上游 4 个名为 runtime 的源码包（22 个文件）和刻意 vendored 的
+    # libs/*.aar 一起吞掉 —— 文件确实复制到了磁盘，却永远不会进提交，
+    # 克隆下来直接构建失败。没有这道检查就只能靠人偶然发现。
+    ignored = subprocess.run(
+        ["git", "status", "--ignored", "--porcelain"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    ignored_paths = [ln[3:].strip().strip('"') for ln in ignored if ln.startswith("!!")]
+
+    # 展开目录，只关心确实来自上游的文件
+    imported_set = set(imported)
+    swallowed: list[str] = []
+    for entry in ignored_paths:
+        p = ROOT / entry
+        if p.is_dir():
+            swallowed.extend(
+                f.relative_to(ROOT).as_posix()
+                for f in p.rglob("*")
+                if f.is_file() and f.relative_to(ROOT).as_posix() in imported_set
+            )
+        elif entry in imported_set:
+            swallowed.append(entry)
+
+    if swallowed:
+        print()
+        print(f"{RED}✗ {len(swallowed)} 个导入的文件被 .gitignore 吞掉了{RESET}")
+        print(f"{RED}  它们已在磁盘上，但不会进提交 —— 克隆后构建会失败。{RESET}")
+        print("  必须修 .gitignore 后才能提交：")
+        for rel in sorted(swallowed)[:12]:
+            print(f"    {rel}")
+        if len(swallowed) > 12:
+            print(f"    … 另有 {len(swallowed) - 12} 个")
+        print()
+        print("  常见原因：.gitignore 里写了 `runtime/` 而不是 `/runtime/` ——")
+        print("  不带前导斜杠的模式会匹配任意层级的同名目录。")
+        return 1
+
+    print(f"{GREEN}✓ 没有被 .gitignore 吞掉的文件{RESET}")
     print()
     print("下一步（按顺序）：")
     print("  1. tools/apply-divergences.sh --check    # 看哪些偏离需要重放")
