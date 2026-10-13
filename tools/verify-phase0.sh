@@ -406,6 +406,81 @@ cd "$AF_ORIG" || exit 1
 expect 2 "上游目录不存在时报用法错误（退出码 2）" \
     run_tool tools/check-divergence-anchors.py --upstream /tmp/definitely-not-here
 
+section "4d. 阶段 1 导入器 import-upstream-base.py"
+
+if [ -d ../audit/DSHBox ]; then
+    IMP_UP="$(cd ../audit/DSHBox && pwd)"
+
+    # 正路径 1：在 main 上必须拒绝（强制走分支 + PR）。
+    # 必须在专门的 main 克隆里测 —— 套件自身可能就跑在 phase-1 分支上。
+    IMP_MAIN="$(mktemp -d)"
+    rm -rf "$IMP_MAIN"
+    if git clone -q . "$IMP_MAIN" 2>/dev/null &&
+       git -C "$IMP_MAIN" switch -q main 2>/dev/null; then
+        expect 1 "在 main 分支上拒绝执行（阶段 1 必须走 PR）" \
+            bash -c "cd '$IMP_MAIN' && python3 tools/import-upstream-base.py --upstream '$IMP_UP'"
+    else
+        printf '  [FAIL] %-52s\n' "无法建立 main 克隆"
+        FAIL=$((FAIL + 1)); RESULTS+=("FAIL|导入器 main 拒绝|克隆失败")
+    fi
+    rm -rf "$IMP_MAIN"
+
+    # 正路径 2：上游提交不符必须拒绝
+    IMP_WRONG="$(mktemp -d)"
+    rm -rf "$IMP_WRONG"
+    cp -a "$IMP_UP" "$IMP_WRONG"
+    git -C "$IMP_WRONG" -c user.name=x -c user.email=x@x \
+        commit -q --allow-empty -m "夹具：上游又动了一笔"
+    expect 1 "上游提交与锁定值不符时拒绝执行" \
+        run_tool tools/import-upstream-base.py --upstream "$IMP_WRONG"
+
+    # 完整流程在一次性克隆里跑：dry-run 报告 + apply + 安全网 + 导入后自洽
+    IMP_CLONE="$(mktemp -d)"
+    rm -rf "$IMP_CLONE"
+    if git clone -q . "$IMP_CLONE" 2>/dev/null &&
+       git -C "$IMP_CLONE" switch -q -c phase-1/import-dshbox-base 2>/dev/null; then
+
+        expect 0 "分支上 dry-run 通过且与清单预期一致" \
+            run_tool tools/import-upstream-base.py --upstream "$IMP_UP"
+
+        IMP_OUT="$(cd "$IMP_CLONE" && python3 tools/import-upstream-base.py \
+                       --upstream "$IMP_UP" --apply 2>&1 || true)"
+        if printf '%s' "$IMP_OUT" | grep -q "没有被 .gitignore 吞掉的文件"; then
+            printf '  [PASS] %-52s\n' "导入 767 个文件且无文件被 .gitignore 吞掉"
+            PASS=$((PASS + 1)); RESULTS+=("PASS|导入安全网|无文件被吞")
+        else
+            printf '  [FAIL] %-52s\n' "导入安全网"
+            FAIL=$((FAIL + 1)); RESULTS+=("FAIL|导入安全网|有文件被 .gitignore 吞掉")
+        fi
+
+        # 导入后仓库必须仍然自洽 —— 这是「导入是否真的可用」的关键证据
+        expect 0 "导入后引用检查仍通过" \
+            bash -c "cd '$IMP_CLONE' && python3 tools/check-references.py"
+        expect 0 "导入后契约检查仍通过" \
+            bash -c "cd '$IMP_CLONE' && python3 tools/check-upstreams.py"
+        expect 0 "导入后许可原件哈希仍一致" \
+            bash -c "cd '$IMP_CLONE' && python3 tools/check-license-hashes.py"
+
+        # 偏离重放此时应报「4 项失败、1 项已生效」—— 这是设计如此，不是缺陷
+        IMP_DIV="$(cd "$IMP_CLONE" && bash tools/apply-divergences.sh --check 2>&1 || true)"
+        if printf '%s' "$IMP_DIV" | grep -q "4 项失败" &&
+           printf '%s' "$IMP_DIV" | grep -q "DIV-0005"; then
+            printf '  [PASS] %-52s\n' "导入后偏离重放正确报出 4 项待处理"
+            PASS=$((PASS + 1)); RESULTS+=("PASS|导入后偏离重放|4 项失败 1 项已生效")
+        else
+            printf '  [FAIL] %-52s\n' "导入后偏离重放未报出预期的 4 项失败"
+            FAIL=$((FAIL + 1)); RESULTS+=("FAIL|导入后偏离重放|未报出预期失败项")
+        fi
+    else
+        printf '  [FAIL] %-52s\n' "无法建立一次性克隆"
+        FAIL=$((FAIL + 1)); RESULTS+=("FAIL|导入器一次性克隆|建立失败")
+    fi
+    rm -rf "$IMP_CLONE" "$IMP_WRONG"
+else
+    printf '  [SKIP] %-52s 无审计副本\n' "阶段 1 导入器"
+    SKIP=$((SKIP + 1)); RESULTS+=("SKIP|阶段 1 导入器|无审计副本，未检查")
+fi
+
 section "5. 静态检查"
 
 expect 0 "所有 shell 脚本语法正确（bash -n）" \

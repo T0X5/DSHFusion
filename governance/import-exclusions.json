@@ -1,10 +1,8 @@
 {
   "schema": 1,
   "_comment": "阶段 1 导入 DSHBox 基线时的取舍清单。tools/import-upstream-base.sh 读这份文件决定导入什么、排除什么、哪些同名文件保留我方版本。每一条排除都必须有理由和对应的偏离登记号 —— 没有登记的排除等于下次同步时静默丢失。",
-
   "upstream": "dshbox",
   "locked_commit": "266290a6d16fa1ea08b3b734cbfe726437a75fb2",
-
   "excluded_paths": [
     {
       "path": "website/",
@@ -19,7 +17,6 @@
       "reason": "只服务 website/ 的 GitHub Pages 发布流程（第 28 行 path: website）。website/ 已排除，保留它会得到一个永远失败或发布上游品牌站点的 workflow。随 DIV-0005 一并排除。"
     }
   ],
-
   "preserved_files": [
     {
       "path": "README.md",
@@ -32,8 +29,13 @@
       "reason": "DSHFusion 的 .gitignore 是为此仓库定制的（排除运行环境资产、密钥库、上游镜像），必须保留。上游版本改名归档，供比对是否遗漏了需要忽略的路径。"
     }
   ],
-
   "requires_adaptation": [
+    {
+      "path": ".gitignore",
+      "divergence": null,
+      "reason": "**导入前必须修正，否则 23 个文件静默丢失。** DSHFusion 的 .gitignore 写的是 `runtime/` 与 `dist/`，没有前导斜杠 —— 这种模式匹配任意层级的同名目录。实测后果：上游 4 个名为 runtime 的源码包（app/src/main/java/com/dshbox/app/runtime/ 6 个、app/src/test/... 4 个、pilot/interlock-relay-core 的 main/test 各 6 个，共 22 个文件）全部被吞；另有 libs/zstd-jni-1.5.7-15.aar 命中 `*.aar` 被吞 —— 该 aar 是上游刻意 vendored 的构建依赖（app/build.gradle.kts:129 引用），不是构建产物。文件会复制到磁盘但不进提交，克隆后直接构建失败。",
+      "action": "已修正：runtime/ 与 dist/ 加前导斜杠；*.aar 后加 !/libs/*.aar 与 !/libs/**/*.aar 放行 vendored 依赖。tools/import-upstream-base.py --apply 结尾会重新检出被忽略的导入文件并以非零码退出。"
+    },
     {
       "path": ".github/workflows/android.yml",
       "divergence": null,
@@ -51,9 +53,14 @@
       "divergence": "DIV-0002",
       "reason": "app_name 与 8 个受保护品牌图形必须替换为 DSHFusion 自有资产。app_name 可由脚本重放，图形必须人工自绘 —— 脚本会核验哈希并拒绝通过。",
       "action": "导入后运行 apply-divergences.sh；品牌图形需人工绘制"
+    },
+    {
+      "path": "README.upstream.md（归档的上游 README）",
+      "divergence": null,
+      "reason": "上游 README 含 README.en.md、CHANGES.md、LICENSE、TRADEMARK.md 四处相对链接。归档位置必须在仓库根，挪到 docs/ 子目录会立刻产生 4 个断链（已实测）。",
+      "action": "归档路径定为 README.upstream.md（仓库根）"
     }
   ],
-
   "expected_counts": {
     "_comment": "基于锁定提交 266290a6 的实测值。import-upstream-base.sh --dry-run 会重新计算并与此比对，不一致即报警 —— 上游若在锁定提交之外被动过，这里会先发现。",
     "upstream_tracked_files": 790,
@@ -61,5 +68,35 @@
     "preserved": 2,
     "imported": 765,
     "imported_bytes_approx": 26633830
+  },
+  "_post_import_checks": {
+    "_comment": "导入完成后必须依次跑这些检查；任一失败都说明导入不完整，不要提交。这些在 /tmp 的一次性克隆里全部实测过。",
+    "checks": [
+      {
+        "tool": "tools/check-references.py",
+        "expect": 0,
+        "note": "实测：导入后 39 个链接、64 个路径全部有效。此前会误报 2 处上游嵌套文档的相对引用，已修 path_resolves 双基准解析。"
+      },
+      {
+        "tool": "tools/check-upstreams.py",
+        "expect": 0,
+        "note": "契约 4 项通过"
+      },
+      {
+        "tool": "tools/check-license-hashes.py",
+        "expect": 0,
+        "note": "5 个受保护许可原件哈希一致"
+      },
+      {
+        "tool": "tools/check-divergence-anchors.py --upstream <上游检出>",
+        "expect": 0,
+        "note": "16 个锚点全部成立"
+      },
+      {
+        "tool": "tools/apply-divergences.sh --check",
+        "expect": 1,
+        "note": "预期失败：DIV-0001/0002/0003/0004 待重放，DIV-0005 已生效。这是设计如此，不是缺陷。"
+      }
+    ]
   }
 }
