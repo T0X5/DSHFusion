@@ -89,9 +89,9 @@ OUT_FILE="$OUT_DIR/${LAYER_NAME}.${EXT}"     # 文件名跟随实际格式
 
 | # | 风险 | 严重度 | 处置 |
 |---|---|---|---|
-| R1 | **dsh 层没有仓库内构建脚本**。`build_arm64_runtime_bundle.sh:45,108,112` 明确只做 base/node/android-side 三层并打印「no DSH」「DSH is a SEPARATE product」；`install_dsh.sh` 是**guest 内**安装脚本，不是打包脚本 | 中 | DSHFusion 需自建一个打包步骤（见 1.6） |
+| R1 | **dsh 层没有仓库内构建脚本**。`build_arm64_runtime_bundle.sh:45,108,112` 明确只做 base/node/android-side 三层并打印「no DSH」「DSH is a SEPARATE product」；`install_dsh.sh` 是**guest 内**安装脚本，不是打包脚本 | 中 | ✅ **已解决**：`tools/build-dsh-layer.sh`，已真跑通（见 1.6） |
 | R2 | **PRoot 二进制是预编译 vendored**，构建来源未在仓库内记录。`THIRD_PARTY_NOTICES.md` 写「二进制来自 termux-packages 构建」，但没有可核对的版本号或校验和 | 中 | 记录来源假设；不声称已核验 |
-| R3 | **`install_dsh.sh:8` 默认版本 `0.1.0-rc.6`** 与实际内嵌的 `0.2.0-rc.2` 不一致 | 低 | 已在 `docs/FUSION-PLAN.md` 登记为「不继承的上游缺陷」 |
+| R3 | **`install_dsh.sh:8` 默认版本 `0.1.0-rc.6`** 与实际内嵌的 `0.2.0-rc.2` 不一致 | 低 | ✅ **已从结构上消除**：新脚本的版本只来自 `governance/upstreams.json`，脚本正文里不含任何版本字面量（套件有断言拦这件事） |
 
 ### 1.6 阶段 1 的处置
 
@@ -99,9 +99,34 @@ OUT_FILE="$OUT_DIR/${LAYER_NAME}.${EXT}"     # 文件名跟随实际格式
    保留 `../../runtime/android-assets` 作为默认值。
    → 这样 `testDebugUnitTest` 与 `lintDebug` **不需要任何运行时资产**即可运行。
 2. **保留两条获取途径**：在线获取（Debian 官方源）与离线整包导入，都不改动。
-3. **自建 dsh 层打包步骤**（补 R1）：
-   `npm install --prefix <staging> npm:@deepseek-ai/dsh@<pin>` → `tar` → `.sha256`，
-   落到 `<assets>/dsh/<version>.tar.zst`。版本**必须显式 pin**，不用 `latest`。
+3. **自建 dsh 层打包步骤**（补 R1）—— ✅ **已完成并实测**：`tools/build-dsh-layer.sh`。
+
+   ```bash
+   tools/build-dsh-layer.sh [输出目录]     # 默认 ./runtime/android-assets
+   ```
+
+   版本不写死在脚本里，而是从 `governance/upstreams.json` 的
+   `transitive_upstreams[id=deepseek-harness].tracked_version` 读 —— 这正是
+   **R3 的根治办法**：`install_dsh.sh:8` 那个 `0.1.0-rc.6` 默认值之所以会漂移，
+   就是因为版本号在两处各写了一份。单一事实来源让它们不可能再分歧。
+
+   脚本会：核对装出来的版本与 pin 一致（不一致直接失败，否则「已适配 X」变成假话）；
+   跑 `node lib/bin.js --version` 冒烟测试；有 `zstd` 用 zstd、否则退回 gzip
+   并明确告知（不静默改后缀，否则文件名与格式不符会让解包方失败）；
+   产出 `<version>.tar.zst` 与同目录 `<version>.tar.zst.sha256`。
+
+   **实测证据**（2026-10-13，本机 aarch64）：
+   `added 538 packages in 2m`、层 **118.6 MB**（gzip）、
+   sha256 `747c0b619b2b52bb5b73f98357efb51452da3116cb1f36588274cbd3cae67b9`、
+   冒烟测试输出 `0.2.0-rc.2`。
+
+   **不需要 Debian 沙箱，也不需要 arm64 主机**：`@deepseek-ai/dsh` 是纯 JavaScript
+   的 npm 包，`optionalDependencies` 为空、无 `os`/`cpu` 约束，所以在 x86 开发机上
+   也能构建同一个层。这一点是审计时实测确认的，不是推断。
+
+   > 层内布局必须与 `DefaultSandboxManager.dshLayerDir()` 的期望一致：
+   > 解包后得到 `node_modules/@deepseek-ai/dsh/lib/bin.js`，运行时整层被 bind
+   > 到 guest 的 `/opt/dshapp/runtime`。脚本按此布局安装。
 4. **`assembleDebug` 作为可选的慢通道**：需要资产，缺失时给出可读错误而不是晦涩的 Gradle 失败。
 
 ---
@@ -311,7 +336,7 @@ SharedPreferences：`dshapp_prefs`（`Constants.PREFS_NAME`）、
 | 6 | 施加 `DIV-0003`：`assets.srcDirs` 可被 `DSHFUSION_RUNTIME_ASSETS` 覆盖 | 无资产也能跑单测/lint | `apply-divergences.sh` |
 | 7 | 施加 `DIV-0004` / `DIV-0005`：监测地址指向自身；不导入 `website/` | 去除上游硬引用 | 脚本 + 清单排除 |
 | 8 | 改写 `.github/workflows/android.yml`<!-- future: .github/workflows/android.yml --> 中依赖 `website/` 的步骤 | 可用构建 CI | 见 §4.5 陷阱 2 |
-| 9 | 自建 dsh 层打包脚本（补 R1） | `tools/build-dsh-layer.sh` <!-- future: tools/build-dsh-layer.sh --> | 尚未编写 |
+| 9 | 自建 dsh 层打包脚本（补 R1） | `tools/build-dsh-layer.sh` | ✅ 已编写并实测（538 包 / 118.6 MB / 冒烟通过） |
 | 10 | 自建 keystore（不复用任何上游证书） | 独立签名 | 尚未创建 |
 | 11 | 跑 `./gradlew testDebugUnitTest lintDebug`，记录真实输出与退出码 | 验证证据 | **本机无 JDK/SDK，只能在 CI 跑** |
 
