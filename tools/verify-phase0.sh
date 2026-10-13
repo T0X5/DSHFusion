@@ -344,6 +344,68 @@ else
 fi
 rm -rf "$DV_DIR"
 
+section "4c. 偏离锚点预检 check-divergence-anchors.py"
+
+# 正路径：对真实上游检出跑一次（有审计副本时）。
+if [ -d ../audit/DSHBox ]; then
+    expect 0 "真实上游检出：16 个锚点全部成立" \
+        run_tool tools/check-divergence-anchors.py --upstream ../audit/DSHBox
+else
+    printf '  [SKIP] %-52s 无审计副本\n' "真实上游检出：锚点全部成立"
+    SKIP=$((SKIP + 1)); RESULTS+=("SKIP|锚点预检真实上游|无审计副本，未检查")
+fi
+
+# 失败路径：在隔离夹具上制造各类漂移。
+# 夹具自带 divergences.json（品牌哈希按夹具自身图形登记），
+# 因此不依赖真实上游资产，在干净克隆里也能跑。
+AF_ORIG="$PWD"
+for scenario in ok drift-appid drift-url drift-brand no-website; do
+    AF_DIR="$(mktemp -d)"
+    if bash tools/make-anchor-fixture.sh "$AF_DIR" "$scenario" >/dev/null 2>&1; then
+        case "$scenario" in
+            ok)
+                expect 0 "场景 ok：锚点全部成立" \
+                    run_tool tools/check-divergence-anchors.py \
+                        --upstream "$AF_DIR/upstream" \
+                        --divergences "$AF_DIR/divergences.json"
+                ;;
+            drift-appid)
+                expect 1 "场景 drift-appid：applicationId 写法变化应报失败" \
+                    run_tool tools/check-divergence-anchors.py \
+                        --upstream "$AF_DIR/upstream" \
+                        --divergences "$AF_DIR/divergences.json"
+                ;;
+            drift-url)
+                expect 1 "场景 drift-url：上游地址消失应报失败" \
+                    run_tool tools/check-divergence-anchors.py \
+                        --upstream "$AF_DIR/upstream" \
+                        --divergences "$AF_DIR/divergences.json"
+                ;;
+            drift-brand)
+                expect 1 "场景 drift-brand：品牌图形哈希变化应报失败" \
+                    run_tool tools/check-divergence-anchors.py \
+                        --upstream "$AF_DIR/upstream" \
+                        --divergences "$AF_DIR/divergences.json"
+                ;;
+            no-website)
+                expect 1 "场景 no-website：website/ 消失应报失败" \
+                    run_tool tools/check-divergence-anchors.py \
+                        --upstream "$AF_DIR/upstream" \
+                        --divergences "$AF_DIR/divergences.json"
+                ;;
+        esac
+    else
+        printf '  [FAIL] %-52s\n' "无法建立锚点夹具（$scenario）"
+        FAIL=$((FAIL + 1)); RESULTS+=("FAIL|锚点夹具 $scenario|建立失败")
+    fi
+    rm -rf "$AF_DIR"
+done
+cd "$AF_ORIG" || exit 1
+
+# 用法错误必须报 2，不能与「锚点不成立（1）」混淆。
+expect 2 "上游目录不存在时报用法错误（退出码 2）" \
+    run_tool tools/check-divergence-anchors.py --upstream /tmp/definitely-not-here
+
 section "5. 静态检查"
 
 expect 0 "所有 shell 脚本语法正确（bash -n）" \
