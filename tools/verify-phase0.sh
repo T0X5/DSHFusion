@@ -549,6 +549,45 @@ for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do
     fi
 done
 
+section "7. 脚本可执行位（读 git 索引，不看工作区）"
+
+# 为什么必须单独查这一项：
+# 本套件通过 run_tool() 用解释器显式调用脚本（见第 42 行），因此永远测不到
+# 可执行位。CI 的 contracts.yml 却会 `find tools -name '*.sh'` 后检查 `-x`，
+# 于是本地全绿、CI 失败。2026-10-13 首次推送就撞上了这个盲区
+# （tools/make-anchor-fixture.sh 索引模式为 100644）。
+#
+# 读 git 索引而不是工作区权限：索引里记录的模式才是别人 clone 后拿到的模式。
+# 工作区权限可以被本地 chmod 掩盖，索引不会。
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    BADMODE=""
+    while IFS= read -r line; do
+        mode="${line%% *}"
+        path="${line##*$'\t'}"
+        case "$path" in
+            *.sh)
+                if [ "$mode" != "100755" ]; then
+                    BADMODE="${BADMODE}${path}($mode) "
+                fi
+                ;;
+        esac
+    done < <(git ls-files -s)
+
+    if [ -z "$BADMODE" ]; then
+        printf '  [PASS] %-52s 全部 100755\n' "索引中所有 .sh 都有可执行位"
+        PASS=$((PASS + 1))
+        RESULTS+=("PASS|索引中所有 .sh 都有可执行位|全部 100755")
+    else
+        printf '  [FAIL] %-52s %s\n' "索引中有 .sh 缺可执行位" "$BADMODE"
+        FAIL=$((FAIL + 1))
+        RESULTS+=("FAIL|索引中有 .sh 缺可执行位|$BADMODE")
+    fi
+else
+    printf '  [SKIP] %-52s 非 git 检出\n' "索引中 .sh 可执行位"
+    SKIP=$((SKIP + 1))
+    RESULTS+=("SKIP|索引中 .sh 可执行位|非 git 检出，未检查")
+fi
+
 section "汇总"
 TOTAL=$((PASS + FAIL + SKIP))
 printf '  通过: %d\n' "$PASS"
