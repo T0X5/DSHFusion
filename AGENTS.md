@@ -90,7 +90,7 @@ dshfusion/
 │   ├── check-workflows.py       工作流 YAML 验证（真实解析器 + 结构断言）
 │   ├── make-record-fixture.sh   --record 校验的隔离测试夹具
 │   ├── make-divergence-fixture.sh  偏离重放的隔离测试夹具
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；47 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；51 项）
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）
     └── upstream-watch.yml       上游变更监测，产出摘要（每周）

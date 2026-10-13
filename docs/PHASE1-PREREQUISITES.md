@@ -174,6 +174,25 @@ Shizuku (MIT)、AndroidX/Compose/Kotlin (Apache-2.0)、JUnit (EPL-2.0) 等。
 > 幸运的是：`TRADEMARK.md:36` 明确「设计源文件（原始 SVG、画板、方案包）**不在本仓库内**」，
 > 所以即便想误用也拿不到设计源。DSHFusion 必须**从零设计**自己的图标。
 
+#### 2.4.1 受保护的图形共 8 个文件（实测）
+
+`DIV-0002` 最初的登记**只列了 `brand_icon.png` 一个**，漏掉 7 个。逐个查证后的完整清单：
+
+| 文件 | 份数 | 引用点 |
+|---|---:|---|
+| `DSHBox:app/src/main/res/mipmap-xxxhdpi/brand_icon.png` | 1 | `AndroidManifest.xml:54,55` 的 `android:icon` 与 `android:roundIcon` |
+| `DSHBox:app/src/main/res/drawable-{hdpi,mdpi,xhdpi,xxhdpi,xxxhdpi}/ic_pilot_brand.png` | 5 | `HomeScreen.kt:305` |
+| `DSHBox:app/src/main/res/drawable-{xxhdpi,xxxhdpi}/ic_splash_mark.png` | 2 | `LaunchScreen.kt:93,101` |
+
+上游没有自适应图标（无 `mipmap-anydpi*`），应用图标只存在于 xxxhdpi 一档。
+`drawable-nodpi/ic_launcher_fg_empty.png` 无任何代码或布局引用，判定为通用占位图，不在保护范围。
+
+**同时修掉了一个假性通过。** 原先的偏离重放只改 `app_name`、完全不看图形，
+于是会报告「DIV-0002 已生效」，而 8 个受保护的品牌资产原样留在包里。
+现在 `tools/apply-divergences.sh` 按登记的上游 SHA-256 **正向核验**这 8 个文件 ——
+只要任一仍与上游一致，就报 FAILED 并点名具体文件。
+三种状态（已替换 / 仍为上游 / 文件缺失）都有隔离夹具覆盖，见 [tools/README.md](../tools/README.md)。
+
 ### 2.5 DSHFusion 的义务
 
 **私有自用（当前状态）**：

@@ -254,7 +254,7 @@ section "4b. 偏离重放：施加逻辑与失败路径（隔离夹具）"
 
 # 这些场景在真实仓库上无法制造（会污染主干或根本不存在），因此在夹具上测。
 DV_ORIG="$PWD"
-for scenario in normal drift asset-missing strings-moved unknown-div; do
+for scenario in normal drift asset-missing strings-moved brand-intact brand-missing unknown-div; do
     DV_DIR="$(mktemp -d)"
     if bash tools/make-divergence-fixture.sh "$DV_DIR" "$scenario" >/dev/null 2>&1; then
         cd "$DV_DIR" || exit 1
@@ -275,6 +275,15 @@ for scenario in normal drift asset-missing strings-moved unknown-div; do
                     printf '  [FAIL] %-52s\n' "场景 normal：改动确实写入文件"
                     FAIL=$((FAIL + 1)); RESULTS+=("FAIL|normal 改动落盘|未生效")
                 fi
+                # 品牌图形核验必须真的跑过并给出结论（不能只改 app_name 就报成功）
+                NORMAL_OUT="$(bash tools/apply-divergences.sh --check 2>&1 || true)"
+                if printf '%s' "$NORMAL_OUT" | grep -q '品牌图形 8 个均已替换'; then
+                    printf '  [PASS] %-52s\n' "场景 normal：品牌图形 8 个核验通过"
+                    PASS=$((PASS + 1)); RESULTS+=("PASS|normal 品牌图形|ok")
+                else
+                    printf '  [FAIL] %-52s\n' "场景 normal：品牌图形 8 个核验通过"
+                    FAIL=$((FAIL + 1)); RESULTS+=("FAIL|normal 品牌图形|未核验")
+                fi
                 ;;
             drift)
                 expect 1 "场景 drift：applicationId 写法变化应报失败" \
@@ -286,6 +295,26 @@ for scenario in normal drift asset-missing strings-moved unknown-div; do
                 ;;
             strings-moved)
                 expect 1 "场景 strings-moved：目标条目消失应报失败（非静默通过）" \
+                    bash tools/apply-divergences.sh
+                ;;
+            brand-intact)
+                expect 1 "场景 brand-intact：品牌图形仍为上游资产应报失败" \
+                    bash tools/apply-divergences.sh
+                # 报错必须点名具体文件，否则无法据以人工替换。
+                # 注意：这里必须先把输出捕获下来再匹配 —— 套件开了 pipefail，
+                # 而本场景脚本本来就以 1 退出，直接 `脚本 | grep` 会让整条管道
+                # 返回非零，即使 grep 命中也会判假。
+                BRAND_OUT="$(bash tools/apply-divergences.sh 2>&1 || true)"
+                if printf '%s' "$BRAND_OUT" | grep -q '品牌图形仍为上游资产 8/8 个'; then
+                    printf '  [PASS] %-52s\n' "场景 brand-intact：报错点名了具体文件"
+                    PASS=$((PASS + 1)); RESULTS+=("PASS|brand-intact 报错明细|ok")
+                else
+                    printf '  [FAIL] %-52s\n' "场景 brand-intact：报错点名了具体文件"
+                    FAIL=$((FAIL + 1)); RESULTS+=("FAIL|brand-intact 报错明细|无明细")
+                fi
+                ;;
+            brand-missing)
+                expect 1 "场景 brand-missing：品牌图形缺失应报失败" \
                     bash tools/apply-divergences.sh
                 ;;
             unknown-div)

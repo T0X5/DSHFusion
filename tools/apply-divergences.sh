@@ -102,6 +102,7 @@ python3 - "$CHECK_ONLY" <<'PY'
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -239,8 +240,10 @@ def handle_div_0002(entry) -> tuple[str, str]:
     has_target = any(new in read(p) for p in targets)
     offenders = [p for p in targets if old in read(p)]
 
+    # 注意：这条"已就绪"的捷径也必须走品牌图形核验。
+    # app_name 改对了不代表本项完成 —— 图形可能还是上游的。
     if has_target and not offenders:
-        return OK, f"app_name = {APP_NAME}（{len(targets)} 个文件）"
+        return brand_asset_status(entry, f"app_name = {APP_NAME}（{len(targets)} 个文件）")
 
     if not has_target and not offenders:
         return FAILED, (
@@ -266,7 +269,49 @@ def handle_div_0002(entry) -> tuple[str, str]:
         return FAILED, f"{len(still_old)} 个文件未能改好（已还原）"
     if not any(new in read(p) for p in targets):
         return FAILED, "替换后仍找不到目标 app_name 值"
-    return OK, f"app_name = {APP_NAME}（修改 {fixed} 个文件）"
+
+    # app_name 改完 **不等于** 本项完成：还有 8 个受 TRADEMARK.md §4 保护的品牌图形。
+    # 它们是二进制自有资产，脚本生成不了，但必须核验 ——
+    # 否则「脚本没有旧值可改」会被当成成功，把受保护的品牌资产原样留在发布包里。
+    return brand_asset_status(entry, f"app_name = {APP_NAME}（修改 {fixed} 个文件）")
+
+
+def brand_asset_status(entry, ok_detail: str) -> tuple[str, str]:
+    """核验品牌图形是否已替换为自有资产。
+
+    判据是**正向**的：逐个比对上游登记的 SHA-256。
+    只要任一图形仍与上游一致，就说明它还是 DSHBox 的品牌资产，本项未完成。
+    """
+    upstream = entry.get("upstream_sha256") or {}
+    if not upstream:
+        return FAILED, (
+            "divergences.json 未登记 upstream_sha256，无法核验品牌图形 —— "
+            "请先补全登记，不要跳过这项检查"
+        )
+
+    missing: list[str] = []
+    unchanged: list[str] = []
+    for rel, want in upstream.items():
+        path = ROOT / rel
+        if not path.is_file():
+            missing.append(rel)
+        elif hashlib.sha256(path.read_bytes()).hexdigest() == want:
+            unchanged.append(rel)
+
+    if missing:
+        return FAILED, (
+            f"品牌图形缺失 {len(missing)}/{len(upstream)} 个："
+            + "、".join(sorted(missing)[:3])
+            + ("…" if len(missing) > 3 else "")
+        )
+    if unchanged:
+        return FAILED, (
+            f"品牌图形仍为上游资产 {len(unchanged)}/{len(upstream)} 个，"
+            "必须替换为自绘图标（TRADEMARK.md §4 禁止复用）："
+            + "、".join(sorted(unchanged)[:3])
+            + ("…" if len(unchanged) > 3 else "")
+        )
+    return OK, ok_detail + f"；品牌图形 {len(upstream)} 个均已替换"
 
 
 def handle_div_0003(entry) -> tuple[str, str]:

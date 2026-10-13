@@ -9,10 +9,12 @@
 #   tools/make-divergence-fixture.sh <目标目录> [场景]
 #
 # 场景：
-#   normal        全部偏离可正常施加（默认）
+#   normal        全部偏离可正常施加（默认）。品牌图形已替换为自有资产
 #   drift         上游把 applicationId 写法改了 -> DIV-0001 固定字符串未匹配
 #   asset-missing app/build.gradle.kts 里没有 assets.srcDirs(...) -> DIV-0003 未匹配
 #   strings-moved strings.xml 里没有 app_name 条目 -> DIV-0002 失败
+#   brand-intact  品牌图形仍是上游原样（哈希一致）-> DIV-0002 失败
+#   brand-missing 品牌图形文件缺失 -> DIV-0002 失败
 #   unknown-div   divergences.json 里混入一个没有实现的偏离 id
 #   applied-nonempty  阶段 0 场景下 applied 非空（一致性检查应失败）
 
@@ -68,6 +70,24 @@ object AppVersion {
 }
 EOF
 
+# ---------- 品牌图形（DIV-0002 核验用）----------
+# 先按「上游原样」创建。哈希由下面的 Python 段计算并写进 divergences.json，
+# 之后按场景决定是保留（仍为上游资产）还是替换成自有资产。
+BRAND_ASSETS=(
+    app/src/main/res/mipmap-xxxhdpi/brand_icon.png
+    app/src/main/res/drawable-hdpi/ic_pilot_brand.png
+    app/src/main/res/drawable-mdpi/ic_pilot_brand.png
+    app/src/main/res/drawable-xhdpi/ic_pilot_brand.png
+    app/src/main/res/drawable-xxhdpi/ic_pilot_brand.png
+    app/src/main/res/drawable-xxxhdpi/ic_pilot_brand.png
+    app/src/main/res/drawable-xxhdpi/ic_splash_mark.png
+    app/src/main/res/drawable-xxxhdpi/ic_splash_mark.png
+)
+for rel in "${BRAND_ASSETS[@]}"; do
+    mkdir -p "$TARGET/$(dirname "$rel")"
+    printf 'UPSTREAM-BRAND-ASSET:%s' "$rel" > "$TARGET/$rel"
+done
+
 # ---------- 按场景制造偏差 ----------
 case "$SCENARIO" in
     drift)
@@ -96,10 +116,20 @@ esac
 
 # ---------- divergences.json ----------
 python3 - "$TARGET" "$SCENARIO" <<'PY'
-import json, sys
+import hashlib, json, sys
 from pathlib import Path
 
 target, scenario = Path(sys.argv[1]), sys.argv[2]
+
+# 品牌图形的「上游」哈希：按当前内容计算，写进登记。
+# 随后按场景决定是否把它们换成自有资产。
+brand = {
+    rel: hashlib.sha256((target / rel).read_bytes()).hexdigest()
+    for rel in sorted(
+        p.relative_to(target).as_posix()
+        for p in (target / "app/src/main/res").rglob("*.png")
+    )
+}
 
 planned = [
     {"id": "DIV-0001", "type": "identity", "phase": 1,
@@ -108,10 +138,11 @@ planned = [
      "change": "applicationId/namespace -> com.dshfusion.app",
      "rationale": "fixture", "reapply": "替换 applicationId/namespace"},
     {"id": "DIV-0002", "type": "identity", "phase": 1,
-     "title": "独立应用名",
+     "title": "独立应用名与自有品牌图形",
      "target_files": ["app/src/main/res/values/strings.xml"],
-     "change": "app_name -> DSHFusion",
-     "rationale": "fixture", "reapply": "替换 app_name"},
+     "change": "app_name -> DSHFusion；品牌图形换自有资产",
+     "rationale": "fixture", "reapply": "替换 app_name + 按 upstream_sha256 核验图形",
+     "upstream_sha256": brand},
     {"id": "DIV-0003", "type": "adaptation", "phase": 1,
      "title": "运行环境资产路径可配置",
      "target_files": ["app/build.gradle.kts"],
@@ -145,6 +176,17 @@ if scenario == "applied-nonempty":
 doc = {"schema": 1, "applied": applied, "planned": planned}
 (target / "governance/divergences.json").write_text(
     json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+# ---------- 品牌图形按场景落定 ----------
+# 默认（含 normal）替换为自有资产，使其它场景的 DIV-0002 不会因图形而失败。
+if scenario == "brand-intact":
+    pass                                   # 保持上游原样 -> 应报 FAILED
+elif scenario == "brand-missing":
+    for rel in brand:
+        (target / rel).unlink()            # 图形缺失 -> 应报 FAILED
+else:
+    for rel in brand:
+        (target / rel).write_bytes(b"SELF-DRAWN-ASSET:" + rel.encode())
 PY
 
 mkdir -p "$TARGET/tools"

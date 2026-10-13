@@ -16,7 +16,9 @@
       "upstream": "dshbox",
       "type": "identity",
       "phase": 1,
-      "target_files": ["app/build.gradle.kts"],
+      "target_files": [
+        "app/build.gradle.kts"
+      ],
       "change": "applicationId 与 namespace 由 com.dshbox.app 改为 com.dshfusion.app；versionCode/versionName 改用独立版本线。",
       "rationale": "必须能与 com.dshbox.app、com.dsh.client 并存安装，否则无法在真机上与上游对照测试。",
       "reapply": "同步后由 tools/apply-divergences.sh 按规则重写 app/build.gradle.kts 中的这三行。",
@@ -24,18 +26,31 @@
     },
     {
       "id": "DIV-0002",
-      "title": "独立应用名与自有图标",
+      "title": "独立应用名与自有品牌图形",
       "upstream": "dshbox",
       "type": "identity",
       "phase": 1,
       "target_files": [
         "app/src/main/res/values/strings.xml",
         "app/src/main/res/values-*/strings.xml",
-        "app/src/main/res/mipmap-*/brand_icon.png"
+        "app/src/main/res/mipmap-xxxhdpi/brand_icon.png",
+        "app/src/main/res/drawable-{hdpi,mdpi,xhdpi,xxhdpi,xxxhdpi}/ic_pilot_brand.png",
+        "app/src/main/res/drawable-{xxhdpi,xxxhdpi}/ic_splash_mark.png"
       ],
-      "change": "app_name 改为 DSHFusion；替换 brand_icon 为自绘图标。",
-      "rationale": "DSHBox 的 TRADEMARK.md §4 保留其名称与品牌图形全部权利，并禁止复用。",
-      "reapply": "图标为二进制自有资产，同步时不覆盖（登记为 keep-ours）。app_name 由脚本重写。",
+      "change": "app_name 由 DSHBox 改为 DSHFusion（实测共 6 个 strings.xml：values/ 与 values-{ar,es,fr,ru,zh}/）。品牌图形共 8 个文件必须替换为自有资产，引用点为：brand_icon.png 是清单的 android:icon 与 android:roundIcon（AndroidManifest.xml:54,55）；ic_pilot_brand.png ×5 用于 HomeScreen.kt:305；ic_splash_mark.png ×2 用于 LaunchScreen.kt:93,101。",
+      "rationale": "DSHBox 的 TRADEMARK.md §4 保留其名称与品牌图形全部权利并禁止复用，且禁止使用其标识的构造方法开发近似标识。",
+      "reapply": "app_name 由 tools/apply-divergences.sh 重写。品牌图形是二进制自有资产，同步时不覆盖（keep-ours），但脚本会按 upstream_sha256 正向核验：只要任一图形仍与上游哈希一致，本项即报 FAILED 并列出具体文件，强制人工替换 —— 不能因为「脚本没有旧值可改」就报告已生效。",
+      "upstream_sha256": {
+        "app/src/main/res/mipmap-xxxhdpi/brand_icon.png": "a1cd4db4eea9391150ab1342acf267064ec848036036e1367920f2528f880f71",
+        "app/src/main/res/drawable-hdpi/ic_pilot_brand.png": "85f38a6dc86e5a4679da8bc39f857a2034541221ba4fa9044924cf8f565b65df",
+        "app/src/main/res/drawable-mdpi/ic_pilot_brand.png": "8e1cbe08c04ef7e21a307f6a4cecc82b0cebaa536aa113acdc352ae0c6e822ee",
+        "app/src/main/res/drawable-xhdpi/ic_pilot_brand.png": "66350850552f0bcdda731799bf9b089d5a488046ba74485979d20f571ac5bd68",
+        "app/src/main/res/drawable-xxhdpi/ic_pilot_brand.png": "38d647c2384f8dc18ae36150d7c8ec90bc2c297532c22cac3177312d5cffa6af",
+        "app/src/main/res/drawable-xxxhdpi/ic_pilot_brand.png": "cc106b540013203a6165e266dbe5a118002e337f48c40b70440408758505c35c",
+        "app/src/main/res/drawable-xxhdpi/ic_splash_mark.png": "83d8d317d2dd6c3dde5e31362b8f4168260261d68614261510a2a81a38fea10f",
+        "app/src/main/res/drawable-xxxhdpi/ic_splash_mark.png": "06171a743889a87dc34327406501b826b8e89ea4dac866de7a1e1f315941b5e6"
+      },
+      "notes": "本项在 2026-10-13 的阶段 1 前置审计中补全。原登记只列了 brand_icon.png 一个文件，漏掉 7 个 ic_pilot_brand.png / ic_splash_mark.png；且当时的处理逻辑只改 app_name、完全不检查图形，会报告「已生效」而把受保护的品牌资产原样留在包里。app/src/main/res/drawable-nodpi/ic_launcher_fg_empty.png 无任何代码或布局引用，判定为通用占位图，不列入品牌保护。",
       "conflict_risk": "low"
     },
     {
@@ -44,7 +59,9 @@
       "upstream": "dshbox",
       "type": "adaptation",
       "phase": 1,
-      "target_files": ["app/build.gradle.kts"],
+      "target_files": [
+        "app/build.gradle.kts"
+      ],
       "change": "assets.srcDirs(\"../../runtime/android-assets\") 改为可由环境变量 DSHFUSION_RUNTIME_ASSETS 覆盖，缺省仍为该相对路径。",
       "rationale": "原路径要求仓库外必须存在一个同级 runtime/ 目录，且默认值依赖原作者的目录布局；独立仓库需要自持。",
       "reapply": "由 tools/apply-divergences.sh 重写该行。",
@@ -56,7 +73,9 @@
       "upstream": "dshbox",
       "type": "config",
       "phase": 1,
-      "target_files": ["app/src/main/java/com/dshbox/app/util/AppVersion.kt"],
+      "target_files": [
+        "app/src/main/java/com/dshbox/app/util/AppVersion.kt"
+      ],
       "change": "SITE_URL / REPO_URL / 更新检查 API_URL 改为 DSHFusion 自己的地址，或改为可配置并默认关闭检查。",
       "rationale": "不能把用户导向 DSHBox 的发布页；也不能让本应用去拉取 DSHBox 的 Release 作为自身更新源。",
       "reapply": "由 tools/apply-divergences.sh 重写这三个常量。",
@@ -68,7 +87,9 @@
       "upstream": "dshbox",
       "type": "config",
       "phase": 1,
-      "target_files": ["website/"],
+      "target_files": [
+        "website/"
+      ],
       "change": "website/ 不导入主干，或导入后改写为自有页面。",
       "rationale": "官网内容与品牌属于上游；本项目不需要对外站点。",
       "reapply": "同步时整目录忽略。",
