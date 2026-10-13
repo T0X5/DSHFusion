@@ -46,7 +46,6 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 自有品牌图形 8 个 | ✅ 已自绘；`tools/make-brand-assets.py` 可复现，CI 逐字节核验 |
 | 独立签名密钥库 | ❌ 未创建 |
 | 运行环境层构建脚本 <!-- future: tools/build-dsh-layer.sh -->`tools/build-dsh-layer.sh`（补运行环境风险 R1） | ❌ 未编写 |
-| Android 构建 / 单元测试 / 真机验证 | ❌ **一次都没跑过** |
 | 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ✅ **通过**（run 38478523535，含单元测试 / lint / APK 组装） |
 | 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
 | 生成的 APK 装到真机上验证 | ❌ **未做**（无设备连接、无 adb） |
