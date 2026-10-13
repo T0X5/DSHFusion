@@ -94,7 +94,7 @@ dshfusion/
 │   ├── check-divergence-anchors.py 偏离锚点预检（对照真实上游）
 │   ├── make-anchor-fixture.sh   锚点预检的隔离测试夹具
 │   ├── import-upstream-base.py  阶段 1 导入器（拒绝在 main 上运行）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 66 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 67 项）
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）
     └── upstream-watch.yml       上游变更监测，产出摘要（每周）
