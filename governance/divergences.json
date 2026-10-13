@@ -12,17 +12,17 @@
   "planned": [
     {
       "id": "DIV-0001",
-      "title": "独立应用标识 com.dshfusion.app",
+      "title": "独立 applicationId com.dshfusion.app（namespace 不动）",
       "upstream": "dshbox",
       "type": "identity",
       "phase": 1,
       "target_files": [
         "app/build.gradle.kts"
       ],
-      "change": "applicationId 与 namespace 由 com.dshbox.app 改为 com.dshfusion.app；versionCode/versionName 改用独立版本线。",
-      "rationale": "必须能与 com.dshbox.app、com.dsh.client 并存安装，否则无法在真机上与上游对照测试。",
-      "reapply": "同步后由 tools/apply-divergences.sh 按规则重写 app/build.gradle.kts 中的这三行。",
-      "conflict_risk": "medium — 上游每次改 build.gradle.kts 都可能冲突；冲突时以本项为准。"
+      "change": "applicationId 由 com.dshbox.app 改为 com.dshfusion.app。**namespace 保持上游值 com.dshbox.app 不变。**",
+      "rationale": "applicationId 决定安装身份 —— 必须能与 com.dshbox.app、com.dsh.client 并存安装，否则无法在真机上与上游对照测试。namespace 则决定生成的 R/BuildConfig 类所在包，也决定 AndroidManifest 中相对类名（.DshApp、.MainActivity、.service.SandboxService）的解析基准。改 namespace 就必须同时改 36 处 `import com.dshbox.app.R`、4 处 `import com.dshbox.app.BuildConfig` 与全部相对类名 —— 那正是被刻意推迟到阶段 4 的全量重命名。2026-10-13 的首次真实 CI 运行验证了这个判断：把 namespace 一起改掉后报出 36 个 Unresolved reference 'R'。",
+      "reapply": "tools/apply-divergences.sh 的 handle_div_0001：把 applicationId 改写为应用标识，并在发现 namespace 被误改时回退为 com.dshbox.app。",
+      "conflict_risk": "low —— 单文件单行。上游若改 applicationId 的写法，锚点检查会先失败而不是静默覆盖。"
     },
     {
       "id": "DIV-0002",

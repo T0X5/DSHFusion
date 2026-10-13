@@ -40,7 +40,22 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 独立签名密钥库 | ❌ 未创建 |
 | 运行环境层构建脚本 <!-- future: tools/build-dsh-layer.sh -->`tools/build-dsh-layer.sh`（补运行环境风险 R1） | ❌ 未编写 |
 | Android 构建 / 单元测试 / 真机验证 | ❌ **一次都没跑过** |
-| 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ❌ 未验证 |
+| 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ⚠️ 已运行，**失败**，原因已定位并修复 |
+| 该工作流在修复后重跑通过 | ❌ 未验证（修复尚未推送到 CI） |
+
+### 首次真实 CI 运行（2026-10-13）暴露的问题
+
+`phase-1/import-dshbox-base` 的第一次真实运行里，上游 `android.yml` 在
+`compileDebugKotlin` 阶段失败，报 **36 个 `Unresolved reference 'R'`**。
+
+原因是 DIV-0001 一开始把 `namespace` 也一起改了。这是错的：
+`applicationId` 才决定安装身份，`namespace` 决定 R/BuildConfig 的包名与
+manifest 相对类名的解析基准。改 namespace 等于启动被推迟到阶段 4 的全量重命名。
+已回退，并补了 `tools/check-android-identity.py` 在本地拦住这一类错误 ——
+它还能发现 CI 发现不了的那个后果：3 处 manifest 相对类名会在**运行时**崩。
+
+> 这个失败是有价值的：它验证了「不要仅凭配置推断构建结果」这条规则。
+> 在此之前，本仓库对「能不能编译」的判断全部来自静态阅读。
 
 ## 决策依据（不要重新推翻）
 
@@ -117,8 +132,9 @@ dshfusion/
 │   ├── check-import-fidelity.py 导入保真度：逐 blob 对照上游，差异必须已登记
 │   ├── check-lint-baseline.py   对照继承基线检查 shellcheck（只拦新增 + 检测基线过期）
 │   ├── check-exec-bits.py       .sh 索引模式双向对照继承基线
+│   ├── check-android-identity.py  namespace 对得上 R 引用与 manifest 相对类名
 │   ├── make-brand-assets.py     生成自有品牌图形 8 个（--check 逐字节核验）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 77 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 80 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）

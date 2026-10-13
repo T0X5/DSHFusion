@@ -57,6 +57,11 @@ jobs:
           rm -rf "$work"
           actionlint --version
 
+      - name: Check Android app identity consistency
+        # namespace 决定 R/BuildConfig 的包名与 manifest 相对类名的解析基准。
+        # 改错会让源码编译失败、或让应用装上就崩 —— 两者都不需要编译就能查。
+        run: python3 tools/check-android-identity.py
+
       - name: Lint workflows with actionlint (incl. shellcheck)
         run: actionlint -no-color .github/workflows/*.yml
 

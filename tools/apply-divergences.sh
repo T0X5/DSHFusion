@@ -177,7 +177,19 @@ def revert(path: Path, original: str) -> None:
 # ---------------- 各偏离的施加与校验 ----------------
 
 def handle_div_0001(entry) -> tuple[str, str]:
-    """applicationId / namespace -> com.dshfusion.app"""
+    """applicationId -> com.dshfusion.app，**namespace 保持不变**。
+
+    只改 applicationId，不改 namespace。这条曾经改错过，代价是 CI 报出
+    36 个 `Unresolved reference 'R'`：
+
+      - applicationId 决定安装身份（能否与上游并存安装），是阶段 1 真正要的。
+      - namespace 决定生成的 R / BuildConfig 类所在包，也决定 AndroidManifest
+        里相对类名（.DshApp、.MainActivity、.service.SandboxService）的解析基准。
+        改它就必须同时改 36 处 `import com.dshbox.app.R` 与全部相对类名 ——
+        那正是被刻意推迟到阶段 4 的全量重命名。
+
+    换句话说：改 namespace 是**超出阶段 1 范围**的，而且不这么做就不该做。
+    """
     path = ROOT / "app/build.gradle.kts"
     if not path.is_file():
         return PENDING, "app/build.gradle.kts 尚未导入"
@@ -185,31 +197,36 @@ def handle_div_0001(entry) -> tuple[str, str]:
     text = read(path)
 
     def satisfied(t: str) -> bool:
-        # namespace 是否也必须改，取决于上游是否声明了它。
-        has_namespace = bool(re.search(r'namespace\s*=?\s*"', t))
         id_ok = re.search(rf'applicationId\s*=?\s*"{re.escape(APPLICATION_ID)}"', t) is not None
-        ns_ok = (not has_namespace) or (
-            re.search(rf'namespace\s*=?\s*"{re.escape(APPLICATION_ID)}"', t) is not None)
-        return id_ok and ns_ok
+        # namespace 必须仍是上游原值：被改成 APPLICATION_ID 反而是错的。
+        ns_bad = re.search(rf'namespace\s*=?\s*"{re.escape(APPLICATION_ID)}"', t) is not None
+        return id_ok and not ns_bad
 
     if satisfied(text):
-        return OK, f"applicationId = {APPLICATION_ID}"
+        return OK, f"applicationId = {APPLICATION_ID}（namespace 保持上游值）"
 
     if CHECK_ONLY:
+        if re.search(rf'namespace\s*=?\s*"{re.escape(APPLICATION_ID)}"', text):
+            return FAILED, "namespace 被误改为应用标识（会让 R 引用与相对类名失效）"
         return FAILED, f"applicationId 尚未改为 {APPLICATION_ID}"
 
     original = text
-    changed = False
-    for key in ("applicationId", "namespace"):
-        pattern = rf'({key}\s*=?\s*)"com\.dshbox\.app"'
-        if re.search(pattern, text):
-            text = re.sub(pattern, rf'\1"{APPLICATION_ID}"', text)
-            changed = True
+    # 先纠正历史误改：namespace 回到上游值
+    text = re.sub(
+        rf'(namespace\s*=?\s*)"{re.escape(APPLICATION_ID)}"',
+        r'\1"com.dshbox.app"',
+        text,
+    )
+    changed = text != original
+
+    pattern = r'(applicationId\s*=?\s*)"com\.dshbox\.app"'
+    if re.search(pattern, text):
+        text = re.sub(pattern, rf'\1"{APPLICATION_ID}"', text)
+        changed = True
 
     if not changed:
         return FAILED, (
-            '既没有 applicationId 也没有 namespace 声明 "com.dshbox.app" —— '
-            "上游写法可能已变，需人工确认"
+            'applicationId 未声明 "com.dshbox.app" —— 上游写法可能已变，需人工确认'
         )
 
     write(path, text)

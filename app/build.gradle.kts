@@ -15,7 +15,7 @@ if (hasReleaseKeystore) {
 }
 
 android {
-    namespace = "com.dshfusion.app"
+    namespace = "com.dshbox.app"
     compileSdk = 36
 
     signingConfigs {

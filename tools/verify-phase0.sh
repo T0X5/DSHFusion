@@ -607,6 +607,22 @@ expect 0 "受保护许可原件哈希与登记一致" \
 expect 0 "隐私审计（发布前个人数据泄露）" \
     run_tool tools/privacy_audit.py
 
+# 应用标识一致性。这一条是 CI 打脸后补的：namespace 改错会让 36 个
+# `import com.dshbox.app.R` 编译失败，而且 manifest 的相对类名会在**运行时**
+# 崩 —— 后者编译期不一定报错。本环境跑不了 gradle，但这类错误纯静态可判。
+expect 0 "应用标识一致（namespace 对得上 R 引用与 manifest 相对类名）" \
+    run_tool tools/check-android-identity.py
+# 光有检查不够：得证明它真的会失败，否则和没检查一样。
+IDENT_BAK="$(mktemp)"
+cp app/build.gradle.kts "$IDENT_BAK"
+sed -i 's/namespace = "com.dshbox.app"/namespace = "com.dshfusion.app"/' app/build.gradle.kts
+expect 1 "故障注入：namespace 被改错时必须报错" \
+    run_tool tools/check-android-identity.py
+cp "$IDENT_BAK" app/build.gradle.kts
+rm -f "$IDENT_BAK"
+expect 0 "恢复 namespace 后重新通过" \
+    run_tool tools/check-android-identity.py
+
 section "5b. 工作流验证（真实解析器 / actionlint）"
 
 # PyYAML 与 actionlint 都是可选依赖。缺失时报告 SKIP，而不是假装通过。
