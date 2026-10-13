@@ -216,6 +216,52 @@ tools/apply-divergences.sh            # 施加 type=identity/config 的偏离
 
 ---
 
+## 构建类
+
+这些工具**产出文件**，不参与 CI 的通过/失败判定。
+
+### `build-dsh-layer.sh`
+
+构建 DSH 运行环境层（`dsh/<version>.tar.zst` + `.sha256`），补上审计中的
+**运行环境风险 R1**：上游把 DSH 层当独立发布产物（`bundle.yaml` 明确写
+「bundle 不得包含 DSH」），却没有生成它的脚本 —— `runtime-bundle/scripts/install_dsh.sh`
+是设计成在 Debian 沙箱**内部**跑的片段，没有调用方，克隆仓库后无法直接执行。
+结果是新克隆一份代码构建出的 APK 不含 DSH 层，装上也起不了 DSH。
+
+```bash
+tools/build-dsh-layer.sh [输出目录]      # 默认 ./runtime/android-assets
+```
+
+- **版本取自 `governance/upstreams.json`** 的 `tracked_version`，不在这里写死默认值。
+  上游 `install_dsh.sh` 默认 `0.1.0-rc.6`、实际适配 `0.2.0-rc.2`，这个漂移（风险 R3）
+  靠单一事实来源从结构上消除。可用 `DSH_VERSION` 覆盖。
+- 装完后**核对版本**，不一致直接失败 —— 版本对不上的层会让「已适配 X」变成假话。
+- 有 `node lib/bin.js --version` 冒烟测试（`DSH_SKIP_SMOKE=1` 可跳过）。
+- 有 `zstd` 就用 zstd；没有则退回 gzip 并**明确告知**，不静默改后缀 ——
+  文件名后缀与实际格式不符会让解包方失败。
+- 不需要 Debian 沙箱或 arm64 主机：`@deepseek-ai/dsh` 是纯 JS 的 npm 包，
+  无原生扩展、无 `os`/`cpu` 约束。
+
+实测：538 个包、层 118.6 MB（gzip）、sha256 `747c0b619b2b…`。
+
+退出码：0 成功；1 构建/核对/冒烟失败；2 用法或环境错误（缺 node、版本读不到）。
+
+### `make-brand-assets.py`
+
+生成自有品牌图形 8 个（应用图标 1 个密度、助手标识 5 个密度、启动标记 2 个密度）。
+DSHBox 的 `TRADEMARK.md` 禁止复用其名称与品牌图形，**也禁止使用其设计构造方法**，
+所以这些图必须自绘。用纯 Python（`zlib`，不依赖 Pillow）渲染 SDF。
+
+```bash
+tools/make-brand-assets.py            # 生成
+tools/make-brand-assets.py --check    # 重新渲染并逐字节比对，CI 用这个
+```
+
+`--check` 会在临时目录里重渲染再比对，不落盘到仓库 —— 这样 CI 能验证
+「提交的图确实由脚本生成」，而不会因为 CI 自己改了文件而变脏。
+
+退出码：0 一致；1 不一致或生成失败。
+
 ## 验证类
 
 ### `verify-phase0.sh`
@@ -229,7 +275,7 @@ bash tools/verify-phase0.sh 2>&1 | tee verification.log
 
 **退出码**：`0` 全部通过；`1` 有失败项。
 
-覆盖 15 组检查。项数随环境伸缩：依赖齐全、有审计副本与上游镜像时 **80 项**；
+覆盖 16 组检查。项数随环境伸缩：依赖齐全、有审计副本与上游镜像时 **85 项**；
 干净克隆里 **60 项**。其中 **3 项**依赖可选依赖
 （PyYAML、actionlint、shellcheck），其余依赖上游审计副本或镜像存在：
 

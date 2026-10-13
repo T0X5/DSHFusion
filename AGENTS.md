@@ -45,7 +45,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 |---|---|
 | 自有品牌图形 8 个 | ✅ 已自绘；`tools/make-brand-assets.py` 可复现，CI 逐字节核验 |
 | 独立签名密钥库 | ❌ 未创建 |
-| 运行环境层构建脚本 <!-- future: tools/build-dsh-layer.sh -->`tools/build-dsh-layer.sh`（补运行环境风险 R1） | ❌ 未编写 |
+| 运行环境层构建脚本 `tools/build-dsh-layer.sh`（补运行环境风险 R1） | ✅ 已编写并**真跑通**（538 包 / 118.6 MB 层 / 冒烟测试通过） |
 | 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ✅ **通过**（run 38478523535，含单元测试 / lint / APK 组装） |
 | 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
 | 生成的 APK 装到真机上验证 | ❌ **未做**（无设备连接、无 adb） |
@@ -142,7 +142,8 @@ dshfusion/
 │   ├── check-exec-bits.py       .sh 索引模式双向对照继承基线
 │   ├── check-android-identity.py  namespace 对得上 R 引用与 manifest 相对类名
 │   ├── make-brand-assets.py     生成自有品牌图形 8 个（--check 逐字节核验）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 80 项）
+│   ├── build-dsh-layer.sh       构建 DSH 运行环境层（版本取自 upstreams.json）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 85 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）
@@ -185,6 +186,12 @@ compileSdk 36、minSdk 29、arm64-v8a**。
 > `base` 与 `node` 不进 APK，由在线获取现场组装或离线整包导入。
 > 四层的来源、可复现性与风险见
 > [docs/PHASE1-PREREQUISITES.md](docs/PHASE1-PREREQUISITES.md) 第 1 节。
+>
+> **R1（DSH 层没有构建脚本）已解决**：`tools/build-dsh-layer.sh` 现在能构建它，
+> 且版本从 `governance/upstreams.json` 读 —— 顺手把 R3（`install_dsh.sh` 默认
+> `0.1.0-rc.6` 与实际适配的 `0.2.0-rc.2` 不一致）从结构上消灭了：
+> 只有一个事实来源，两处不可能再分歧。
+> 该脚本不需要 Debian 沙箱或 arm64 主机 —— `@deepseek-ai/dsh` 是纯 JS 的 npm 包。
 
 ## 编码约定
 

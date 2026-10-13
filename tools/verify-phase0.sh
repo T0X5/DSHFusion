@@ -665,6 +665,84 @@ else
     RESULTS+=("SKIP|tools/*.sh shellcheck|未安装 shellcheck，未检查")
 fi
 
+section "5c. DSH 层构建脚本 build-dsh-layer.sh"
+
+# 这个脚本要真的能拦住错误，否则「层可复现」只是句口号。
+# 完整的 npm 安装要 3 分钟、500 MB，不适合放进每次提交都跑的套件，
+# 所以这里只测**参数校验与失败路径**，装包本身由人工按需运行。
+
+expect 0 "脚本存在且语法正确" \
+    bash -n tools/build-dsh-layer.sh
+
+# 版本必须来自 governance/upstreams.json，而不是脚本里写死的默认值。
+# 上游 install_dsh.sh 默认 0.1.0-rc.6、实际适配 0.2.0-rc.2 —— 那个漂移（R3）
+# 就是写死默认值造成的。这里验证脚本报出的版本确实等于 upstreams.json 里的值。
+EXPECTED_VER="$(python3 -c "
+import json
+d = json.load(open('governance/upstreams.json', encoding='utf-8'))
+print(next(e['tracked_version'] for e in d['transitive_upstreams']
+           if e.get('id') == 'deepseek-harness'))
+")"
+[ -n "$EXPECTED_VER" ] || fail "upstreams.json 里读不到 deepseek-harness 的版本"
+
+# 给一个能通过校验的假 node，但不给 npm —— 脚本会先报出版本再死在 npm 检查上。
+FAKEBIN="$(mktemp -d)"
+printf '#!/bin/sh\necho v24.19.0\n' > "$FAKEBIN/node"
+chmod +x "$FAKEBIN/node"
+VER_OUT="$(env PATH="$FAKEBIN:/usr/bin:/bin" bash tools/build-dsh-layer.sh "$SCRATCH/layer" 2>&1 || true)"
+case "$VER_OUT" in
+    *"$EXPECTED_VER"*) ok "版本取自 upstreams.json（$EXPECTED_VER），不是写死的默认值" ;;
+    *) fail "脚本报出的版本与 upstreams.json 不一致；输出：$VER_OUT" ;;
+esac
+case "$VER_OUT" in
+    *"找不到 npm"*) ok "缺 npm 时明确失败" ;;
+    *) fail "缺 npm 时未给出明确错误；输出：$VER_OUT" ;;
+esac
+
+# 上面那条断言有个盲区：如果脚本里写死了一个恰好等于当前上游的默认版本，
+# 它照样会通过。所以再加一条 —— 脚本正文里不得出现 DSH 版本字面量。
+# 上游 install_dsh.sh 的 0.1.0-rc.6 漂移就是这么来的。
+if grep -qE '"[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?"' tools/build-dsh-layer.sh; then
+    fail "build-dsh-layer.sh 里出现版本字面量，应只从 upstreams.json 读：$(grep -nE '"[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?"' tools/build-dsh-layer.sh | head -3)"
+else
+    ok "脚本正文不含 DSH 版本字面量（版本只来自 upstreams.json）"
+fi
+
+# 失败路径：没有 node
+expect 2 "失败路径：找不到 node 时退出码 2" \
+    env PATH=/usr/bin:/bin bash tools/build-dsh-layer.sh "$SCRATCH/layer2"
+
+# 失败路径：node 报告的版本不是数字。
+# `[ "$X" -lt 20 ]` 在 X 非整数时会报错并**返回假**，从而把低版本当成通过 ——
+# 曾经就是这个缺陷让报错位置跑到冒烟测试去，离真正原因很远。
+printf '#!/bin/sh\necho garbage\n' > "$FAKEBIN/node"
+chmod +x "$FAKEBIN/node"
+expect 2 "失败路径：node 版本无法解析时退出码 2（不能当通过）" \
+    env PATH="$FAKEBIN:/usr/bin:/bin" bash tools/build-dsh-layer.sh "$SCRATCH/layer3"
+rm -rf "$FAKEBIN"
+
+# 失败路径：upstreams.json 里没有 deepseek-harness 条目
+UPSTREAMS_BAK="$(mktemp)"
+cp governance/upstreams.json "$UPSTREAMS_BAK"
+python3 - <<'PYEOF'
+import json
+p = "governance/upstreams.json"
+d = json.load(open(p, encoding="utf-8"))
+d["transitive_upstreams"] = [e for e in d["transitive_upstreams"]
+                             if e.get("id") != "deepseek-harness"]
+json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+PYEOF
+expect 2 "失败路径：upstreams.json 读不到版本时退出码 2" \
+    env PATH=/usr/local/bin:/usr/bin:/bin DSH_VERSION= bash tools/build-dsh-layer.sh "$SCRATCH/layer4"
+cp "$UPSTREAMS_BAK" governance/upstreams.json
+rm -f "$UPSTREAMS_BAK"
+expect 0 "恢复 upstreams.json 后版本可读" \
+    bash -c 'python3 -c "
+import json
+d = json.load(open(\"governance/upstreams.json\", encoding=\"utf-8\"))
+assert any(e.get(\"id\") == \"deepseek-harness\" for e in d[\"transitive_upstreams\"])
+"'
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do
