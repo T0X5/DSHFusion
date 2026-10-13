@@ -28,6 +28,9 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install Python dependencies
+        run: python3 -m pip install --disable-pip-version-check PyYAML
+
       - name: Governance contract checks
         run: python3 tools/check-upstreams.py
 
