@@ -178,7 +178,7 @@ class V5ArchiveTest {
             archive(
                 listOf(
                     directory("dsh", "", "application") to null,
-                    unreadable("dsh", "sessions/locked.jsonl", "application"),
+                    unreadable("dsh", "sessions/locked.jsonl", "application") to null,
                 ),
                 integrity = "PARTIAL",
             )
@@ -252,7 +252,7 @@ class V5ArchiveTest {
             forge(
                 listOf(
                     directory("dsh", "", "application") to null,
-                    unreadable("dsh", "sessions/locked.jsonl", "application"),
+                    unreadable("dsh", "sessions/locked.jsonl", "application") to null,
                 ),
                 integrity = "QUIESCENT",
             )

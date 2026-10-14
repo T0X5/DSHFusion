@@ -930,3 +930,36 @@ DSH 已经在跑时「启动」是误导，没在跑时「打开」无处可开�
 
 **这条没有对应的「修复」，只有一条方法论**，已写进 AGENTS.md 的硬约束：
 **每一个新断言都要用一个真实注入的故障证明它真的会红 —— 而注入必须先自证它真的注入了。**
+
+### 第一次真实编译阶段 2.1：测试文件有类型错误（2026-10-14，CI run 38623849715）
+
+**现象**：Android CI 在第 12 步 `Run unit tests` 失败：
+
+```
+e: V5ArchiveTest.kt:179:17 Argument type mismatch: actual type is
+   'kotlin.collections.List<kotlin.Any!>', but
+   'kotlin.collections.List<kotlin.Pair<BackupArchive.Record, kotlin.ByteArray?>>' was expected.
+e: V5ArchiveTest.kt:253:17 （同一处，另一条用例）
+> Task :backup:compileDebugUnitTestKotlin FAILED
+```
+
+**根因**：`listOf(record to null, anotherRecord)` —— 第一个元素是 `Pair`，
+第二个漏了 `to null`，于是 `listOf` 推断成 `List<Any>`。
+
+**为什么本机所有检查都没发现**：本机没有 JDK / Android SDK / Gradle，**Kotlin 编译不了**。
+`verify-phase0.sh` 的 5j 节查的是「文件在不在、错误码字符串在不在」，
+`check-dsha-imports.py` 查的是「字节有没有变」—— **没有一条能看类型**。
+这正是硬约束 4（没有实际执行的构建不得标记为成功）存在的理由，不是形式主义。
+
+**注意主模块是编译通过的**：`:backup:compileDebugKotlin` 与
+`compileDebugJavaWithJavac` 都成功，导入的 4 个 Java 文件与 `V5Archive.kt` 都没问题。
+**失败面比想象的小，但只有真跑才知道小在哪。**
+
+**修正**：两处补 `to null`。同时把整个测试文件按类型重读一遍（`listOf` / `mapOf` /
+`ByteArray` 赋值逐处核对），确认没有第二类问题 —— 因为一轮 CI 约 5 分钟，
+盲改后重推的代价比读一遍高。
+
+**方法论**：这与第 13 条（需要仓库外副本的断言在 CI 里走跳过分支）是一对 ——
+那条是「检查跑了但没真查」，这条是「检查真查了但查不到这个维度」。
+**本机检查的覆盖面必须如实声明**：阶段 2.1 的「本机 155 项通过」只覆盖
+脚本与字节层面，**编译层面的结论只能由 CI 给出**。
