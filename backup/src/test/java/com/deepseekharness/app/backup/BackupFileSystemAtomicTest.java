@@ -158,7 +158,7 @@ public class BackupFileSystemAtomicTest {
         };
     assertThrows(IOException.class, () -> collision.atomic(directory, "record", "new".getBytes()));
     assertNotNull(unowned[0]);
-    assertEquals("unknown original", java.nio.file.new String(Files.readAllBytes(unowned[0].toPath()), java.nio.charset.StandardCharsets.UTF_8));
+    assertEquals("unknown original", new String(java.nio.file.Files.readAllBytes(unowned[0].toPath()), java.nio.charset.StandardCharsets.UTF_8));
     assertFalse(new File(directory, "record").exists());
   }
 }

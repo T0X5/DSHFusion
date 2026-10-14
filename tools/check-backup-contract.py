@@ -183,12 +183,36 @@ def check_no_jdk_only_apis() -> int:
     return count
 
 
+# 「机械替换留下的悬空限定名」这一类错。
+#
+# 真实发生过：把 `java.nio.file.Files.readString(p)` 里的 `Files.readString(p)`
+# 替换成 `new String(Files.readAllBytes(p), UTF_8)` 之后，前面那句 `java.nio.file.`
+# 留了下来，变成 `java.nio.file.new String(...)` —— 而它在**本机静态检查里长得完全正常**
+# （`Files.readString(` 已经消失了），只有真实编译器会报 `symbol: class nio`。
+#
+# 这一条专治那个形态：**限定名后面直接跟 `new`**。合法的 `outer.new Inner()` 不会被误伤，
+# 因为我锚定在 `new String(Files.readAllBytes(` 这个替换产物上。
+DANGLING_QUALIFIER = re.compile(r"[A-Za-z0-9_.]\s*new\s+String\(\s*(?:java\.nio\.file\.)?Files\.readAllBytes\(")
+
+
+def check_no_dangling_qualifier() -> int:
+    hits = 0
+    for path in sorted((ROOT / "backup" / "src").rglob("*.java")):
+        for number, line in enumerate(read(path).splitlines(), 1):
+            if DANGLING_QUALIFIER.search(line):
+                fail(f"{path.relative_to(ROOT)}:{number} 限定名后直接跟 new —— "
+                     "机械替换留下了悬空限定名（如 java.nio.file.new String(…))")
+                hits += 1
+    return hits
+
+
 def main() -> int:
     real = check_magic_size()
     check_no_hardcoded_magic(real)
     known = codes_the_source_can_throw()
     check_asserted_codes(known)
     check_no_jdk_only_apis()
+    check_no_dangling_qualifier()
 
     if FAILURES:
         print("备份模块契约核验失败：", file=sys.stderr)
@@ -199,7 +223,8 @@ def main() -> int:
         f"备份模块契约核验通过：魔数 {real.decode('utf-8', 'replace')!r}"
         f"（{len(real)} 字节）三处一致；测试未手抄魔数；"
         f"断言的错误码均在容器可抛出的 {len(known)} 个码之内；"
-        f"未使用 android.jar 缺失的 {len(JAVA11_ONLY_FILES_APIS)} 个 Files API。"
+        f"未使用 android.jar 缺失的 {len(JAVA11_ONLY_FILES_APIS)} 个 Files API；"
+        f"替换未留下悬空限定名。"
     )
     return 0
 

@@ -1132,3 +1132,28 @@ JDK/SDK/Gradle，这类错平时只能等 CI 告**，而 CI 一轮十几分钟�
 
 **教训**：**「我的代码写错了」和「两个上游的工具链不同」是两个完全不同的结论，
 而它们的报错长得一模一样。** 先说清是哪一种，再决定改什么 —— 否则会去改一份本来正确的代码。
+
+#### 补记：机械替换自己留了个尾巴（第三次 CI，run 38631318980）
+
+16 处只剩 **1 处**错，而且是**我自己造成的**：
+
+```java
+// 原行（DSHA 原文，用了全限定名）
+assertEquals("unknown original", java.nio.file.Files.readString(unowned[0].toPath()));
+// 我的替换后 —— 正则只吃掉了 Files.readString(...)，前面的 java.nio.file. 留了下来
+assertEquals("unknown original", java.nio.file.new String(Files.readAllBytes(unowned[0].toPath()), ...));
+```
+
+编译器：`symbol: class nio, location: package java`。
+
+**为什么本机没发现**：我的 `check-backup-contract.py` 断言 4 查的是
+「还有没有 `Files.readString(`」—— 而那一行里它**确实已经没有了**。
+断言 4 只能说「替换发生了」，说不了「替换的结果是合法 Java」。
+
+**新增断言 5**：限定名后面直接跟 `new`（锚定在 `new String(Files.readAllBytes(` 这个
+替换产物上，所以合法的 `outer.new Inner()` 不会被误伤）。注入验证过会红。
+
+**这一条值得单独记的教训**：**「替换发生了」与「替换的结果对」是两件事。**
+断言 4 与断言 5 的差别，正是这个仓库反复踩的那个坑的又一次显形 ——
+前面是「有文件」vs「文件对」、「步骤通过」vs「产物对」，
+这里是「替换执行了」vs「替换后的代码是合法 Java」。
