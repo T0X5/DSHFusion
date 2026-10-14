@@ -19,11 +19,11 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
 （`README.md`、`.gitignore`）→ **实际导入 765 个文件、25.4 MB**。
-14 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
+17 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
 
 **「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
-40 处差异全部能对上已登记的偏离（其中 39 处是代码偏离，1 处是继承 lint 基线）。
+46 处差异全部能对上已登记的偏离（其中 45 处是代码偏离，1 处是继承 lint 基线）。
 
 > 两个方向都要查，缺一不可：`check-import-fidelity.py` 抓「多出来的改动」，
 > `apply-divergences.sh --check` 抓「已登记却没生效的偏离」。实测过 ——
@@ -66,7 +66,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 项 | 状态 |
 |---|---|
 | 自有品牌图形 8 个 | ✅ 已自绘；`tools/make-brand-assets.py` 可复现，CI 逐字节核验 |
-| 独立签名密钥库 | ❌ 未创建 |
+| 独立签名密钥库 | ✅ **已创建并接入 CI**（2026-10-14，DIV-0017）—— 见下方专节 |
 | 运行环境层构建脚本 `tools/build-dsh-layer.sh`（补运行环境风险 R1） | ✅ 已编写并**真跑通**（538 包 / 118.6 MB 层 / 冒烟测试通过） |
 | 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ✅ **通过**（run 38478523535，含单元测试 / lint / APK 组装） |
 | APK **产物**身份核验（DIV-0008） | ✅ **已通过**（run 38483533327 第 15 步）—— 对 CI 真实产物解二进制清单核验 |
@@ -543,6 +543,130 @@ DshWebLaunchParserTest > 解析实测输出：端口与 token 都取到 FAILED
 所以清单里补了一条：**状态结论必须有独立证据** —— 界面说「就绪」时，
 要用进程表与 `/proc/net/tcp` 的 uid 交叉确认那个端口确实是自己的。
 
+### 层进了 APK 也还是起不来 —— 它是 x86_64 的（2026-10-14 发现，DIV-0015 修复）
+
+v4 装到真机上、点启动，界面报 **「DSH 异常」**。这次我直接从应用自己的
+「设置 → 诊断与日志 → 运行日志 → **DSH 进程日志**」里读到了原文
+（`logcat` 只有 5 行，`/data/data` 又被桥接过滤，只有这个入口能看到）：
+
+```
+dsh: fatal uncaught exception: Error: dsh: host preparation failed:
+     No usable native binding found for node-addon-require-builtin-linux-arm64-gnu (auto)
+  attempts: [
+    { source: 'optional-package', request: 'node-addon-require-builtin-linux-arm64-gnu',
+      error: Cannot find module 'node-addon-require-builtin-linux-arm64-gnu' },
+    { source: 'local-build', path: '…/build/napi/napi-v9-linux-arm64-gnu/require_builtin.node',
+      error: Cannot find module … } ]
+```
+
+**注意这次 `node` 真的起来了** —— v3 那版连 `node` 进程都没有（DIV-0014）。
+所以这是「往前走了一步之后才暴露的下一层问题」。
+
+根因：`@deepseek-ai/dsh` 本身确实是纯 JS，但它的依赖树里有 **7 个按平台分发的
+可选包**（`optionalDependencies`，npm 按**宿主**平台自动挑选）：
+
+```
+node-addon-require-builtin-linux-<arch>-gnu   ← dsh-app-boot 启动时必需
+@deepseek-ai/node-addon-system-linux-<arch>
+@img/sharp-linux-<arch> / @img/sharp-libvips-linux-<arch>
+@koromix/koffi-linux-<arch>
+@vscode/ripgrep-linux-<arch>
+sherpa-onnx-linux-<arch>
+```
+
+CI 跑在 x86_64 runner 上，于是 npm 装的是整套 `-linux-x64`。
+
+**判定依据是上游发布产物，不是推断。** 从 `WSK-build/DSHBox` v1.4.0 的 Release
+下载官方 `0.2.0-rc.2.tar.zst`（85893395 B）解包后逐包对照，恰好是 7 个包一一对换。
+这是本项目第二次「以发布产物为准，不以脚本或注释为准」（上一次是 zstd 格式）。
+
+> **`AGENTS.md` 和 `tools/build-dsh-layer.sh` 的头部都写过一句错话**：
+> 「`@deepseek-ai/dsh` 是纯 JavaScript 的 npm 包（无原生扩展、无 os/cpu 约束）」。
+> 就是这句话让整件事看起来不需要考虑架构。**已一并删除。**
+> 写文档时把「包本身是纯 JS」推成了「整棵依赖树都是纯 JS」——
+> 中间那一步没有验证，而它恰好是错的那一步。
+
+修复（DIV-0015）：`npm install` 加 `--os=linux --cpu=arm64 --libc=glibc`；
+装完做平台自检（7 个包必须齐全、且无 x64 混入），不通过就拒绝产出；
+`check-apk-identity.py` 新增**断言 7**，流式解开 APK 里嵌的层再查一遍 ——
+这样即使有人绕过脚本直接塞一个层进 APK，CI 也会拦下。
+
+**这是同一个病的第四次发作，每次都比上一次更浅一层：**
+
+| # | 形态 | 通过了什么 |
+|---|---|---|
+| 1 | 缺运行环境层只记成备注 | 全部检查 |
+| 2 | 断言 6 被 `.sha256` 侧车骗过 | 全部检查 |
+| 3 | AGP 解压 `.gz` 并剥掉扩展名 | 全部检查 |
+| 4 | 层是 x64 的（内容在、格式对、架构错） | **全部检查，包括专为「层能不能用」写的那条** |
+
+四次都是真机发现的。第 4 次的教训是：**「能用」还有一层含义没被覆盖 ——
+在目标设备上能用**。核对产物要一直核到「它在目标设备上能用」，
+而不是停在「它长得对」。
+
+### 无障碍服务名与 DSHBox 撞名（2026-10-14 发现，DIV-0016 修复）
+
+真机截图：系统「无障碍 → 已下载的应用」里出现**两条完全同名的
+「DSHBox 手机助手」** —— 一条是真的 DSHBox，一条是 DSHFusion，用户无法判断该开哪一个。
+
+这不是文案问题，是**功能性**的：开错了，DSHFusion 的手机助手通道就不通，
+而界面上没有任何东西提示这一点。它与 DIV-0011（authority 冲突）是同一类 ——
+都是「并存安装」这个设计目标在**系统可见身份**上的必然后果。
+阶段 1 处理了 applicationId 与 authority，漏掉了无障碍服务名，
+因为它是**资源里的文案**而不是配置里的标识符，前三条身份断言全都查不到它。
+
+修复：`relay_a11y_label` 在 6 个语言里改为 DSHFusion。
+
+> **其余「对用户可见但仍写着 DSHBox」的文案这一次有意不改**（求 star 文案、
+> 后台保活提示、文件只读提示、插件市场小节标题等）。理由是它们**不会让人做错事**，
+> 改了却会在 6 个语言 × 多个模块上产生大量 diff 并让每次上游同步都要重放，
+> 统一归入阶段 4 的全量品牌重命名。
+> 判据是**「会不会让人做错事」**，不是「是不是写着旧名字」。
+
+### 每个构建都是不同的应用（2026-10-14 发现，DIV-0017 修复）
+
+用户按「签名不一致」的提示卸载重装 v4 之后，我测了四个不同 CI 运行的产物签名公钥：
+
+| 构建 | 公钥前缀 |
+|---|---|
+| v3（run 38516880572） | `a575fb04…` |
+| `d009105`（run 38524550705） | `1f189500…` |
+| `30ef440`（run 38526322508） | `08147e1f…` |
+| `d16454e`（run 38529745494） | `4556a65c…` |
+
+**两两不同。** 因为每个 CI runner 都是全新的，`~/.android/debug.keystore`
+现生成，而工作流里没有任何东西缓存它（`gradle/actions/setup-gradle` 只缓存
+`~/.gradle`，不缓存 `~/.android`）。
+
+后果：**每个构建都是一个不同的应用** —— 新构建装不到旧构建上面
+（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），必须卸载重装，而卸载会连带清掉
+应用私有数据，**包括已经下好的几百 MB 运行环境层**。
+对一个「长期自用、持续吸收上游」的项目来说，这个代价不能接受。
+
+这条与阶段 1 的一个早期决策直接相关：当时选的是「先不建密钥库，继续用 debug 签名」，
+理解是「debug 签名足够」。**实测表明那不是「够不够正式」的问题，
+而是「能不能覆盖升级」的问题** —— 那是那句话当时没说出来的代价。
+
+修复（DIV-0017）：
+
+- `app/build.gradle.kts` 的 **`debug` 构建类型**也用固定密钥库（复用 release 那套判断）。
+- CI 新增 `Restore signing keystore` 步骤：从 Actions Secret 还原密钥库到
+  `signing/dshfusion.jks`，并**核验证书 SHA-256 指纹**（`76d588d4…`），不符即失败。
+- **密钥库不提交进仓库。** 上游 `.gitignore` 写着「签名密钥：绝不入库」——
+  那条规定是有道理的，不需要为这件事破例，所以走 Secret。
+
+> Secret 缺失或指纹不符时**直接失败，不静默退回调试密钥**：
+> 静默退回会让「签名稳定」变成一句没人能验证的话，
+> 而下次真机安装失败时会被归因到别处。
+
+**这个密钥库的定位是稳定性，不是安全边界** —— 它的口令与密钥都不比 Android
+标准调试密钥更保密。已导出一份备份到设备的 `Download/dshfusion-keystore-backup/`；
+GitHub 上的 Secret 是唯一的工作副本，而**Secret 的值读不回来**，丢了就找不回。
+
+> **尚未做**：`check-apk-identity.py` 还没有「产物必须由期望证书签名」的断言。
+> 当前指纹检查在 CI 步骤里，覆盖的是「还原的密钥库对不对」；
+> 「APK 实际用的是不是它」还没有产物级断言。已记入待办。
+
 ## 决策依据（不要重新推翻）
 
 主干选择基于 2026-10-13 的只读审计，完整证据见 [docs/AUDIT.md](docs/AUDIT.md)。结论摘要：
@@ -637,7 +761,7 @@ dshfusion/
 │   ├── build-runtime-assets.sh  组装可内嵌 APK 的层（android-side + dsh，产出 sha256 侧车）
 │   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 136 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 143 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）
@@ -652,7 +776,7 @@ dshfusion/
 | 应用标识 | `com.dshfusion.app` | **独立于** `com.dsh.client` 与 `com.dshbox.app`，可与两者并存安装 |
 | 应用名 | DSHFusion | |
 | 版本号 | `versionCode = 1` / `versionName = 0.1.0` | 独立版本线，不复用上游的 8 / 1.4.0 |
-| 签名 | 独立自建密钥库 | 不要求、也不使用任何上游发布证书 |
+| 签名 | 独立自建密钥库（DIV-0017） | 固定身份，密钥库走 Actions Secret，**不入库**；不要求、也不使用任何上游发布证书 |
 
 > **阶段 1 刻意不做全量包名重命名。** DSHBox 内部有 721 处 `com.dshbox.app`
 > 引用，一次性重命名会产生巨大的 diff 并让后续每次上游同步都冲突。
@@ -689,7 +813,13 @@ compileSdk 36、minSdk 29、arm64-v8a**。
 > 现按 DIV-0010 处理：取消默认值，未显式指定 `DSH_VERSION` 就报错退出。
 > 该脚本在 DSHFusion 里**没有任何地方执行它**，所以修的是潜在的坑，不是发作中的 bug。
 >
-> `build-dsh-layer.sh` 不需要 Debian 沙箱或 arm64 主机 —— `@deepseek-ai/dsh` 是纯 JS 的 npm 包。
+> ⚠️ **更正（2026-10-14）**：此处原先写着「`build-dsh-layer.sh` 不需要 Debian 沙箱或
+> arm64 主机 —— `@deepseek-ai/dsh` 是纯 JS 的 npm 包」。**后半句是错的**：
+> `@deepseek-ai/dsh` 包本身确实是纯 JS，但它的依赖树里有 7 个按平台分发的可选包，
+> npm 会按**构建宿主**挑选。在 x86_64 上建层会得到一套 `-linux-x64` 的包，
+> 装到 arm64 手机上会在 host preparation 阶段致命退出。
+> 该脚本现在**不需要** arm64 主机（用 `--os=linux --cpu=arm64` 交叉挑选即可），
+> 但**必须显式声明目标平台**并自检。见下方 DIV-0015 专节。
 
 ## 编码约定
 

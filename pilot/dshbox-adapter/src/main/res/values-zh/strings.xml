@@ -276,7 +276,7 @@
 
     <!-- 这些是核心模块词条的 dshbox 覆写：键名沿用核心的 relay_ 前缀，取值为 dshbox 各语言文案 -->
     <string name="relay_a11y_description">允许助手读取当前屏幕内容，并代你执行手势与输入（点按、长按、滑动、滚动、写入或设置控件值、发送按键）。系统这一层是一次性授予；助手每次调用仍会按能力逐项向你取得许可，且不会操控本应用。</string>
-    <string name="relay_a11y_label">DSHBox手机助手</string>
+    <string name="relay_a11y_label">DSHFusion 手机助手</string>
     <string name="relay_approval_char_count">%1$d 个字符</string>
     <string name="relay_cap_app_install_summary">经 Shizuku 仍可能需经用户确认安装。每次都要确认。</string>
     <string name="relay_cap_app_install_title">安装应用</string>

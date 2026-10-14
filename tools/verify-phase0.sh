@@ -790,12 +790,31 @@ expect 0 "语法检查" bash -n tools/build-runtime-assets.sh
 # 层进了 APK，但应用永远看不见它，等于没建。
 # 一个必然被剥坏的产物，比一个明确的报错危险得多。
 #
-# 本机没有 zstd，所以下面这条在本地跑的是**真实的失败路径**，
-# 不是用假的 PATH 模拟出来的。
-if command -v zstd >/dev/null 2>&1; then
-    skip "缺 zstd 的失败路径（本机有 zstd，无法构造）"
+# 构造一个「有全套工具、独缺 zstd」的 PATH 来跑真实失败路径。
+#
+# ⚠️ 这一条此前**在 CI 上从来没跑过**。CI 的 ubuntu-latest 自带 zstd，
+# 于是 `command -v zstd` 成立，一直走 skip；它只在没有 zstd 的机器上被验证过。
+# 而 CI 恰恰是唯一会真的跑构建的地方 —— 一个只在「本机恰好缺某工具」时才执行的
+# 断言，等于没有覆盖。
+#
+# 做法：把 /usr/local/bin、/usr/bin、/bin 里**除 zstd 之外**的全部命令软链到
+# 一个临时目录，PATH 只指向它。「没有 zstd」因此是真的，不是模拟出来的。
+# 注意不能只把假 zstd 放在 PATH 最前面 —— 后面的 /usr/bin 还是会找到真的那个。
+NOSZSTD="$SCRATCH/nozstd-bin"
+mkdir -p "$NOSZSTD"
+for d in /usr/local/bin /usr/bin /bin; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*; do
+        b="${f##*/}"
+        [ "$b" = "zstd" ] && continue
+        [ -e "$NOSZSTD/$b" ] || ln -s "$f" "$NOSZSTD/$b" 2>/dev/null || true
+    done
+done
+
+if env PATH="$NOSZSTD" /bin/bash -c 'command -v zstd' >/dev/null 2>&1; then
+    skip "缺 zstd 的失败路径（受限 PATH 里仍能找到 zstd，构造失败）"
 else
-    ASIDE_OUT="$(bash tools/build-runtime-assets.sh "$SCRATCH/nozstd" 2>&1)" || ASIDE_RC=$?
+    ASIDE_OUT="$(env PATH="$NOSZSTD" /bin/bash tools/build-runtime-assets.sh "$SCRATCH/nozstd" 2>&1)" || ASIDE_RC=$?
     ASIDE_RC="${ASIDE_RC:-0}"
     if [ "$ASIDE_RC" -ne 2 ]; then
         fail "缺 zstd 时应退出 2，实际 $ASIDE_RC"
@@ -865,7 +884,7 @@ expect 0 "合成 APK：身份正确时应通过" \
              python3 tools/check-apk-identity.py '$SCRATCH/good.apk'"
 
 for scen in upstream-id upstream-ver wrong-ns wrong-label bad-authority \
-            no-layers sidecar-only gz-stripped; do
+            no-layers sidecar-only gz-stripped x64-layer arm64-layer; do
     python3 tools/make-apk-identity-fixture.py "$SCRATCH/$scen.apk" "$scen" >/dev/null
 done
 
@@ -909,6 +928,44 @@ check_scenario sidecar-only  "但没有应用侧会查找的层本体"
 # 在 APK 里变成 `android-side.tar`（裸 tar）。名字少了那个点，应用匹配不上。
 # 这是 run 38513950774 产物的真实形态。
 check_scenario gz-stripped   "但没有应用侧会查找的层本体"
+
+# ---- 断言 7：层的目标架构（DIV-0015）----
+#
+# 这一条是 2026-10-14 真机失败的形态：身份全对、层名与容器格式全对、
+# 上面所有断言全部通过、**node 也真的起来了**，然后 DSH 在 host preparation
+# 阶段致命退出：
+#
+#     dsh: host preparation failed: No usable native binding found for
+#          node-addon-require-builtin-linux-arm64-gnu (auto)
+#
+# 层是 CI 在 x86_64 上建的，npm 按宿主平台装了整套 `-linux-x64` 可选依赖。
+#
+# 两个场景**必须成对**：只测 x64-layer 只能证明「它失败了」，
+# 证明不了失败的原因是架构 —— 它也可能碰巧被别的断言拦下。
+# arm64-layer 与 x64-layer 只差层里那 7 个包，它必须通过。
+check_scenario x64-layer     "dsh 层不是 arm64 架构的"
+
+expect 0 "合成 APK：层里是 arm64 的包时应通过" \
+    run_tool tools/check-apk-identity.py "$SCRATCH/arm64-layer.apk"
+
+# 反向注入：断言 7 必须**活着**。
+#
+# 上面两条只证明「x64 的层会被拦住」，证明不了拦住它的**是**断言 7 ——
+# 也可能是别的断言顺手拦下的。所以把断言 7 的代码路径掐掉
+# （`if dsh:` → `if False:`，只动第一处），同一个夹具必须**变回通过**。
+# 若掐掉之后仍然失败，说明这两条测的根本不是架构。
+#
+# 这个做法本身就是本项目的教训之一：5d/5e 两节曾经有 11 项断言因为
+# `ok()` 函数不存在而静默变成空操作，套件照样报「全部通过」。
+# 所以「断言在场」和「断言在跑」必须分开证明。
+cp tools/check-apk-identity.py "$SCRATCH/checker-no-assert7.py"
+sed -i '0,/^    if dsh:$/s//    if False:/' "$SCRATCH/checker-no-assert7.py"
+if grep -q '^    if False:$' "$SCRATCH/checker-no-assert7.py"; then
+    expect 0 "注入验证：掐掉断言 7 后 x64 夹具变回通过（证明拦住它的就是断言 7）" \
+        run_tool "$SCRATCH/checker-no-assert7.py" "$SCRATCH/x64-layer.apk"
+else
+    fail "注入失败：没能掐掉断言 7，本节的反向验证没有生效"
+fi
 
 # 源码层的同一条检查（构建前就报，不用等 APK）
 python3 tools/check-android-identity.py >/dev/null 2>&1 \
@@ -1148,6 +1205,103 @@ if bash tools/apply-divergences.sh --check >/dev/null 2>&1; then
     ok "恢复后重放重新通过                                exit=0"
 else
     fail "恢复后重放仍失败（备份/还原有问题）"
+fi
+
+section "5h. 无障碍服务名与固定签名密钥库（DIV-0016 / DIV-0017）"
+
+# --- DIV-0016：无障碍服务名不能与 DSHBox 撞名 ---
+#
+# 真机截图（2026-10-14）：系统「无障碍 → 已下载的应用」里出现**两条同名的**
+# 「DSHBox 手机助手」，用户无法判断该开哪一个。开错了，DSHFusion 的手机助手
+# 通道就不通，而界面上没有任何东西提示这一点。
+# 这与 DIV-0011（authority 冲突）是同一类问题 —— 都是「并存安装」这个设计目标
+# 在**系统可见身份**上的必然后果，而它是资源文案，前三条身份断言都查不到。
+#
+# 两个方向都查：残留旧名 = 没改；既无旧名也无新名 = 改成了别的东西。
+# 只查「不含 DSHBox」会放过「改成了手机助手」这类丢掉品牌的值。
+A11Y_BAD=0
+for lang in values values-zh values-ar values-es values-fr values-ru; do
+    f="pilot/dshbox-adapter/src/main/res/$lang/strings.xml"
+    if [ ! -f "$f" ]; then
+        fail "缺少 $f"
+        A11Y_BAD=1
+        continue
+    fi
+    v="$(sed -n 's|.*<string name="relay_a11y_label">\(.*\)</string>.*|\1|p' "$f")"
+    case "$v" in
+        "")          fail "$lang 的 relay_a11y_label 读不出来"; A11Y_BAD=1 ;;
+        *DSHBox*)    fail "$lang 的无障碍服务名仍写着 DSHBox：$v"; A11Y_BAD=1 ;;
+        *DSHFusion*) : ;;
+        *)           fail "$lang 的无障碍服务名既无 DSHBox 也无 DSHFusion：$v"; A11Y_BAD=1 ;;
+    esac
+done
+[ "$A11Y_BAD" = "0" ] \
+    && ok "无障碍服务名已在 6 个语言里改为 DSHFusion（不再与 DSHBox 撞名）"
+
+# --- DIV-0017：固定签名密钥库 ---
+#
+# 真机实测：四个不同 CI 运行的产物签名公钥**两两不同**，于是新构建装不到旧构建
+# 上面（INSTALL_FAILED_UPDATE_INCOMPATIBLE），每次更新都得卸载重装，
+# 连带丢掉已下好的几百 MB 运行环境层。
+#
+# ⚠️ 注意这里查的是 **debug 块内**是否有 signingConfig 覆盖。
+# 只查「文件里有 signingConfig」是不够的 —— release 块本来就有，
+# 那会漏掉「debug 没改」这个真正的缺口（而 CI 构建的正是 debug）。
+if python3 - <<'PYEOF'
+import re, pathlib, sys
+body = pathlib.Path("app/build.gradle.kts").read_text(encoding="utf-8")
+m = re.search(r"debug\s*\{(.*?)\n        \}", body, re.S)
+if not m:
+    print("找不到 debug 构建块", file=sys.stderr); sys.exit(1)
+if "signingConfig = if (hasReleaseKeystore)" not in m.group(1):
+    print("debug 块没有 signingConfig 覆盖（会退回随机调试密钥）", file=sys.stderr)
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+then
+    ok "debug 构建类型使用固定密钥库（不再用每次现生成的调试密钥）"
+else
+    fail "debug 构建类型没有覆盖 signingConfig"
+fi
+
+WF=".github/workflows/android.yml"
+if [ -f "$WF" ]; then
+    WF_BAD=0
+    grep -q 'Restore signing keystore' "$WF" || { fail "CI 缺少还原密钥库的步骤"; WF_BAD=1; }
+    grep -q 'DSHFUSION_KEYSTORE_B64' "$WF" || { fail "CI 未从 Secret 取密钥库"; WF_BAD=1; }
+    grep -q '76d588d44aad12b00aac0a1587738bc91efc182b7c0b00b288a5826058e98126' "$WF" \
+        || { fail "CI 未核验证书指纹（「签名稳定」将无法验证）"; WF_BAD=1; }
+    # 还原步骤必须排在 assemble 之前，否则等于没还原
+    line_restore="$(grep -n 'Restore signing keystore' "$WF" | head -1 | cut -d: -f1)"
+    line_asm="$(grep -n 'Assemble debug APK' "$WF" | head -1 | cut -d: -f1)"
+    if [ -n "$line_restore" ] && [ -n "$line_asm" ] && [ "$line_restore" -gt "$line_asm" ]; then
+        fail "还原密钥库的步骤排在 assemble 之后，等于没生效"
+        WF_BAD=1
+    fi
+    [ "$WF_BAD" = "0" ] && ok "CI 在 assemble 之前从 Secret 还原密钥库并核验指纹"
+else
+    fail "缺少 $WF"
+fi
+
+# 反向：密钥库不得入库。
+# ⚠️ 逐行查且跳过注释行 —— 直接 grep 会被 `# *.jks` 骗过
+# （apply-divergences.sh 里的第一版就是这么被故障注入抓到的）。
+GI_BAD=0
+for pat in '*.jks' 'keystore.properties'; do
+    if grep -qxF "$pat" .gitignore 2>/dev/null; then
+        :
+    else
+        fail ".gitignore 不再忽略 $pat（密钥有入库风险）"
+        GI_BAD=1
+    fi
+done
+if [ "$GI_BAD" = "0" ]; then
+    if git ls-files --error-unmatch signing/dshfusion.jks >/dev/null 2>&1 \
+       || git ls-files --error-unmatch keystore.properties >/dev/null 2>&1; then
+        fail "密钥库或 keystore.properties 已被 git 跟踪（上游约定是绝不入库）"
+    else
+        ok "密钥库与 keystore.properties 都未被 git 跟踪（上游「绝不入库」的约定得以保留）"
+    fi
 fi
 
 section "6. 上游仓库未被修改（只读审计承诺）"

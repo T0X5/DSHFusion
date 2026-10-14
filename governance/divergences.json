@@ -256,6 +256,62 @@
       "conflict_risk": "high —— 这是本次融合里冲突面最大的一处：跨 22 个文件，且改的都是上游**正在演进**的核心运行期代码（进程启动命令行、健康判定、UI 地址展示）。上游若重构健康检查或 DSH 启动方式，会与本条正面冲突。\n刻意避免了两类更脆的写法：不改 DSH 自身源码（仍然零补丁，符合本项目一贯策略）、不引入新的跨模块依赖（`DshWebLaunchParser` 放在 sandbox-manager 内，common 不反向依赖它）。",
       "note": "**这是本项目第一次把「界面显示的状态」与「设备上真实发生的事」对上的修复。** 此前所有验证都停在「产物里有层」「进程起来了」，而这次是「界面说就绪」对不上「进程根本没起」—— 说明此前的验证清单缺了一条：**状态结论必须有独立证据**。真机核验方式已记入 docs/INSTALL-ON-DEVICE.md：界面报就绪时，用进程表与 /proc/net/tcp 的 uid 交叉确认那个端口确实是自己的。\n\n**另一个有意不做的改进**：探测路径目前仍是配置项 `healthPath`（默认 `/`），而不是从 DSH 打印的那一行里派生。既然端口和 token 都从那里学，路径同理 —— 派生能**从结构上**消除「配置与 DSH 不一致」这一类问题。不做的理由是 `healthPath` 是上游配置项，改成派生会扩大偏离面；当前用「两条断言钉住 + KDoc 写明实测数据」把风险降到可接受。若将来上游动了 healthPath 的语义，这条应升级为派生实现。\n\n未做而有意留下的：端口**每次启动都变**（不记忆上次可用端口）。审计报告里 DSHA 的做法是「动态分配并复用上次可用端口」，那对需要固定地址的外部工具有用；但它引入一个新的失败模式（复用的端口恰好被别人占了），而当前阶段的首要目标是「不再互撞、不再误报」。地址在界面上随时可见，先保证正确，再谈稳定。"
     }
-
+,
+    {
+      "id": "DIV-0015",
+      "title": "dsh 运行环境层必须按目标架构（arm64）构建，不能跟随构建宿主",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "tools/build-dsh-layer.sh",
+        "tools/check-apk-identity.py",
+        "tools/README.md"
+      ],
+      "change": "三处一起改，缺一条都会留下同一个 bug 的另一种形态：\n\n1. **构建时显式指定目标平台。** `build-dsh-layer.sh` 的 `npm install` 加上 `--os=linux --cpu=arm64 --libc=glibc`（新增环境变量 `DSH_TARGET_ARCH`，默认 `arm64`）。这三个参数只影响**可选依赖的挑选**，不影响纯 JS 包。\n2. **装完自检，不通过就拒绝产出。** 新增「6.5 平台自检」：7 个按平台分发的包必须存在且是 arm64，且不得混入 x64。断言清单来自上游发布产物的逐包对照，不是想出来的。\n3. **产物级断言。** `check-apk-identity.py` 新增断言 7：流式解开 APK 里嵌的 dsh 层，检查同一组 7 个包。这样即使有人绕过脚本直接塞一个层进 APK，CI 也会拦下。\n\n顺带修正了脚本头部一句**错误的注释**：原文写着「`@deepseek-ai/dsh` 是纯 JavaScript 的 npm 包（无原生扩展、无 os/cpu 约束）」—— 就是这句话让整件事看起来不需要考虑架构。\n\n另外把「找不到 zstd」的处置从「直接退 2」改为「优先系统 zstd CLI，否则用 node 的 `zlib.createZstdCompress`，两者都没有才退 2」。**兜底改变的是「用什么压缩」，不是「要不要压缩」** —— 两条路都只产出 zstd，所以「绝不产出 gzip」这条保证没有被削弱。",
+      "rationale": "**这是真机上实测出来的，而且它是 DSHFusion 至今最深的一层缺陷：层的格式完全正确，内容是错的架构。**\n\n真机证据（2026-10-14，v4 安装后点启动）。界面报「DSH 异常 / 地址待定」，应用自带的「DSH 进程日志」里是：\n\n    dsh: fatal uncaught exception: Error: dsh: host preparation failed:\n         No usable native binding found for\n         node-addon-require-builtin-linux-arm64-gnu (auto)\n      attempts: [\n        { source: 'optional-package', request: 'node-addon-require-builtin-linux-arm64-gnu',\n          error: Cannot find module '…-linux-arm64-gnu' },\n        { source: 'local-build', path: '…/build/napi/napi-v9-linux-arm64-gnu/require_builtin.node',\n          error: Cannot find module … }\n      ]\n\n**注意这一次 Node 真的起来了** —— 上一版连 `node` 进程都没有（见 DIV-0014）。所以这是「往前走了一步之后才暴露出来的下一层问题」。\n\n根因：`@deepseek-ai/dsh` 本身确实是纯 JS，但它的依赖树里有 7 个**按平台分发的可选包**（optionalDependencies，由 npm 按宿主平台自动挑选）：\n\n    node-addon-require-builtin-linux-<arch>-gnu   ← dsh-app-boot 启动时必需\n    @deepseek-ai/node-addon-system-linux-<arch>\n    @img/sharp-linux-<arch> / @img/sharp-libvips-linux-<arch>\n    @koromix/koffi-linux-<arch>\n    @vscode/ripgrep-linux-<arch>\n    sherpa-onnx-linux-<arch>\n\nCI 跑在 x86_64 runner 上，于是 npm 装的是整套 `-linux-x64`。\n\n**判定依据是上游发布产物，不是推断。** 从 `WSK-build/DSHBox` v1.4.0 的 Release 下载官方 `0.2.0-rc.2.tar.zst`（85893395 B，sha256 `4197ec52…`）解包后逐包对照，恰好是 7 个包一一对换（arm64 ↔ x64）。这是本项目第二次「以发布产物为准，不以脚本或注释为准」—— 上一次是 zstd 格式（见 DIV-0013 与 tools/README.md）。\n\n**为什么这是 adaptation 而不是「上游 bug」。** 上游在 x86_64 机器上构建会得到同样的错层；但上游实际发布的是 arm64 层（Release 资产里就是），它的发布流程没有踩到这一点。DSHFusion 把建层这一步搬进了 CI（DIV-0012），于是**继承了上游发布流程里一个没写下来的隐含前提：构建机必须是目标架构**。这条偏离就是把这个前提显式化。",
+      "detection": "**双向产物验证（本项目要求：检查器必须被证明能拦住真实故障）。**\n\n- 对**旧产物**（run 38529745494 打出的那个 APK，层是 x64）跑 `check-apk-identity.py` → 退出 1，报「dsh 层不是 arm64 架构的：缺少 node-addon-require-builtin-linux-arm64-gnu、@deepseek-ai/node-addon-system-linux-arm64、@img/sharp-linux-arm64、@img/sharp-libvips-linux-arm64、@koromix/koffi-linux-arm64、@vscode/ripgrep-linux-arm64、sherpa-onnx-linux-arm64；混入了 …-x64 的同样 7 个」。\n- 把新构建的 arm64 层换进同一个 APK（其余不动），再跑同一个命令 → 退出 0，并打印「dsh 层平台核验：arm64 的 7 个平台包齐全，且无 x64 混入」。\n- 本机实跑 `build-dsh-layer.sh`：平台自检打印「arm64 的 7 个平台包齐全，且无 x64 混入」，冒烟测试通过；随后与上游官方层做包目录集合比较，**520 个真实包完全一致**（差异只有：上游 tar 多 28 个作用域目录条目、我们多一个 `.bin`）。\n- `npm` 平台覆盖参数单独验证过：本机是 aarch64，强制 `--cpu=x64` 确实装出 `node-addon-require-builtin-linux-x64-gnu`，强制 `--cpu=arm64` 装出 arm64 那个。\n\n**fail-closed 也验证过**：在没有 zstd 的机器上跑检查器，断言 7 不跳过、不静默通过，而是判失败并说明「层若是在 x86_64 上建的，npm 会装成 x64 的可选依赖」。\n\n**node 兜底路径的实测副作用（已知且已在脚本里打印警告）**：node 的 `zstdCompressSync` / `createZstdCompress` **忽略 level 参数** —— 同一份 40 MB 样本，level 1/3/9/19/22 输出字节数完全相同（5808545 B，各约 60 ms）。后果只是体积：同一层 CLI -19 是 84973267 B，node 是 111809043 B（+31.6%）。CI 有 zstd CLI，不走这条路。",
+      "reapply": "第 1、2 处（脚本）可以直接重放：同步上游后若 `tools/build-dsh-layer.sh` 被上游版本覆盖，重新在 `npm install` 上加 `--os=linux --cpu=arm64 --libc=glibc` 并恢复「6.5 平台自检」整段即可。第 3 处（`check-apk-identity.py` 断言 7）同理，它是本项目自有文件，上游不会动。\n\n**每次把 `DSH_VERSION` 往上提之后必须重跑一次**：新增依赖可能带来新的按平台分发的包，而那 7 个包的清单会过期。核对方法是拿新版本的上游 Release 资产逐包对照（本项目已做过两次）。",
+      "conflict_risk": "low —— 三处目标文件里有两处（`check-apk-identity.py`、`tools/README.md`）是本项目自有文件，上游不存在。`build-dsh-layer.sh` 也是本项目新增的（上游没有建层脚本，见 DIV-0012），上游不会改它。\n真正的风险不是冲突，而是**过期**：那 7 个平台包的清单绑定在 DSH 0.2.0-rc.2 的依赖树上。",
+      "note": "**这是同一个病的第四次发作，值得单独记下来，因为它每次都停在比「能不能用」更浅的一层：**\n\n1. 「缺运行环境层」只记成备注、不判失败 → 缺层的 APK 一路走到真机。\n2. 断言 6 第一版被 `.sha256` 侧车骗过（名字长得像）。\n3. AGP 解压 `.gz` 资源并剥掉扩展名（格式看着对，应用却找不到）。\n4. 层是 x64 的（内容存在、格式正确、架构错）。\n\n四次都通过了 CI，四次都是真机发现的。第 4 次尤其值得注意：它通过了**全部**既有断言，包括专为「层到底能不能用」写的那条 —— 因为「能用」还有一层含义没被覆盖：**在目标设备上能用**。\n\n已记入 AGENTS.md 的教训是：核对产物时要一直核到「它在目标设备上能用」，而不是停在「它长得对」。\n\n**一个尚未做的改进**：那 7 个包的清单目前硬编码在脚本与检查器里，绑定 DSH 版本。更彻底的做法是从 npm 的 registry 元数据里读出该版本的 platform 可选依赖清单，让断言自己跟着版本走。当前版本升级频率低（0.2.0-rc.2 是唯一目标），硬编码 + 明确写「升级后必须重新对照」是可接受的折中。"
+    },
+    {
+      "id": "DIV-0016",
+      "title": "无障碍服务名改为 DSHFusion，不再与 DSHBox 撞名",
+      "upstream": "dshbox",
+      "type": "identity",
+      "phase": 1,
+      "target_files": [
+        "pilot/dshbox-adapter/src/main/res/values/strings.xml",
+        "pilot/dshbox-adapter/src/main/res/values-zh/strings.xml",
+        "pilot/dshbox-adapter/src/main/res/values-ar/strings.xml",
+        "pilot/dshbox-adapter/src/main/res/values-es/strings.xml",
+        "pilot/dshbox-adapter/src/main/res/values-fr/strings.xml",
+        "pilot/dshbox-adapter/src/main/res/values-ru/strings.xml"
+      ],
+      "change": "`relay_a11y_label` 在 6 个语言里全部改为 DSHFusion：\n\n| 语言 | 原值 | 新值 |\n|---|---|---|\n| default | `DSHBox phone assistant` | `DSHFusion phone assistant` |\n| zh | `DSHBox手机助手` | `DSHFusion 手机助手` |\n| ar | `مساعد الهاتف DSHBox` | `مساعد الهاتف DSHFusion` |\n| es | `Asistente del teléfono DSHBox` | `Asistente del teléfono DSHFusion` |\n| fr | `Assistant du téléphone DSHBox` | `Assistant du téléphone DSHFusion` |\n| ru | `Помощник телефона DSHBox` | `Помощник телефона DSHFusion` |\n\n这个键由 `pilot/interlock-relay-core/src/main/AndroidManifest.xml:75` 的 `android:label` 引用，即无障碍服务列表里显示的那个名字。只改值，不改键名、不改键集合。",
+      "rationale": "真机截图（2026-10-14）：在系统「无障碍 → 已下载的应用」列表里，**出现两条完全同名的「DSHBox 手机助手」** —— 一条是真正的 DSHBox，一条是 DSHFusion。用户无法判断该开哪一个。\n\n这不是「文案不好看」，而是**功能性的**：开错了那一条，DSHFusion 的手机助手通道就不通，而界面上没有任何东西提示这一点。它和 DIV-0011（authority 冲突）是同一类问题 —— 都是「并存安装」这个设计目标在**系统可见身份**上的必然后果。阶段 1 处理了 applicationId 与 authority，漏掉了无障碍服务名，因为它是**资源里的文案**而不是配置里的标识符，前三条身份断言全都查不到它。\n\n上游这一项在 DSHBox 里是自洽的（就是它自己的名字），所以登记为 DSHFusion 侧的适配，不是上游缺陷。",
+      "detection": "`tools/verify-phase0.sh` 断言：6 个 `strings.xml` 的 `relay_a11y_label` 值都不含 `DSHBox`，且都含 `DSHFusion`；键集合仍与 `values/strings.xml` 完全一致（沿用上游 `tools/i18n_check.sh` 的 parity 门禁）。\n\n故障注入：把任一个语言的值改回 `DSHBox…` → 断言失败。\n\n**真机确认方式**：装上新版本后进「设置 → 无障碍 → 已下载的应用」，应当看到「DSHFusion 手机助手」与「DSHBox 手机助手」两条不同的名字。",
+      "reapply": "可以自动重放（纯值替换）：对 `pilot/dshbox-adapter/src/main/res/values*/strings.xml` 里 `relay_a11y_label` 那一行做定点替换。同步上游后若上游改了这个键的文案，人工判断是否合并上游的新措辞（保留 DSHFusion 这个名字）。",
+      "conflict_risk": "low —— 只改 6 个资源文件里的一行值，不碰结构。唯一需要注意的是上游 `tools/i18n_check.sh` 会校验 6 个语言的键集合一致，只改值不影响它。",
+      "note": "**其余「对用户可见但仍写着 DSHBox」的文案这一次有意不改**，它们是：\n\n- `settings_feedback_star_*`（求 star 的文案，6 个语言）\n- `settings_battery_whitelist_message`（后台保活提示）\n- `files_exit_external_warning`、`files_dshbox_readonly`\n- `plugin-manager` 的 `pm_adapt_section_*`\n\n理由与阶段 1 不做全量包名重命名相同：这些是**纯文案**，改了不会让任何功能变得可用或不可用，却会在 6 个语言 × 多个模块上产生大量 diff，并让后续每次上游同步都要重放。它们统一归入阶段 4 的全量品牌重命名任务（见 docs/FUSION-PLAN.md）。\n\n**但无障碍服务名不在那个豁免里** —— 因为它出现在一个**系统列举的、用于选择的列表**中，重名会直接导致用户选错。判据是「会不会让人做错事」，不是「是不是写着旧名字」。"
+    },
+    {
+      "id": "DIV-0017",
+      "title": "签名改用固定密钥库（CI 从 Actions Secret 还原），debug 构建也用它",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "app/build.gradle.kts",
+        ".github/workflows/android.yml"
+      ],
+      "change": "两处改动：\n\n1. **`app/build.gradle.kts` 的 `debug` 构建类型也用固定密钥库。** 上游的 `debug` 块没有覆盖 `signingConfig`，于是 AGP 使用每台机器（以及每次 CI 运行）现生成的 `~/.android/debug.keystore`。新增一行，复用 `release` 那套判断：\n\n```kotlin\nsigningConfig = if (hasReleaseKeystore) signingConfigs.getByName(\"release\") else signingConfigs.getByName(\"debug\")\n```\n\n2. **CI 新增 `Restore signing keystore` 步骤**（在 `Assemble debug APK` 之前）：从 Actions Secret `DSHFUSION_KEYSTORE_B64` 还原密钥库到 `signing/dshfusion.jks`，并生成 `keystore.properties`；随后**核验证书 SHA-256 指纹**，对不上就判失败。\n\n**密钥库不提交进仓库。** 上游 `.gitignore` 明确写着「签名密钥：绝不入库」（第 39-42 行），那条规定是有道理的，不需要为这件事破例 —— 所以走 Secret。`keystore.properties` 与 `signing/` 继续被 `.gitignore` 忽略。\n\n**Secret 缺失或指纹不符时直接失败，不静默退回调试密钥。** 静默退回会让「签名稳定」变成一句没人能验证的话，而下次真机安装失败时会被归因到别处。",
+      "rationale": "真机实测（2026-10-14）：用户按签名不一致的提示卸载重装 v4 之后，我测了四个不同 CI 运行的产物签名公钥，**两两不同**：\n\n| 构建 | 公钥前缀 |\n|---|---|\n| v3（run 38516880572） | `a575fb04…` |\n| d009105（run 38524550705） | `1f189500…` |\n| 30ef440（run 38526322508） | `08147e1f…` |\n| d16454e（run 38529745494） | `4556a65c…` |\n\n（另外 12:27 那次安装的构建是 `31d31b10…`。）原因是 CI 每个 runner 都是全新的，`~/.android/debug.keystore` 现生成，工作流里也没有任何缓存 —— `gradle/actions/setup-gradle` 只缓存 `~/.gradle`，不缓存 `~/.android`。\n\n后果：**每个构建都是一个不同的应用。** 新构建装不到旧构建上面（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），必须卸载重装，而卸载会连带清掉应用私有数据 —— 包括已经下好的 Debian base 与 Node 层（几百 MB）。对一个「长期自用、持续吸收上游」的项目来说，这意味着每次更新都要重下一次运行环境。\n\n这条偏离与用户此前的选择直接相关：阶段 1 决策时选的是「先不建密钥库，继续用 debug 签名」，当时的理解是「debug 签名足够」。**实测表明那不是「够不够正式」的问题，而是「能不能覆盖升级」的问题** —— 这是那句话当时没说出来的代价。\n\n一个未解开的观察（如实记录，不编解释）：设备上 `firstInstallTime=2026-10-14 12:27:29`、`lastUpdateTime=14:08:17`，看起来发生过一次就地更新；但那两次安装的构建公钥分别是 `31d31b10…` 与 `a575fb04…`，按 Android 的规则那次更新不该成功。我只报实测。",
+      "detection": "**CI 内的指纹断言**（`.github/workflows/android.yml`）：还原密钥库后用 `keytool -list -v` 取证书 SHA-256，与硬编码的期望值 `76d588d44aad12b00aac0a1587738bc91efc182b7c0b00b288a5826058e98126` 比对，不符则 `exit 1`。这样「签名稳定」是被**验证**的，不是被假定的。\n\n**故障注入**：改掉 Secret 的内容（或改掉期望指纹）→ 该步骤失败。\n\n**真机确认方式（这一条才是最终判据）**：连续两个 CI 构建的 APK 应当可以互相覆盖安装，不需要卸载。安装后用 `dumpsys package com.dshfusion.app` 看 `lastUpdateTime` 更新而 `firstInstallTime` 不变。\n\n**尚未做**：`check-apk-identity.py` 还没有「产物必须由期望证书签名」的断言。当前指纹检查在 CI 步骤里，覆盖的是「还原的密钥库对不对」；「APK 实际用的是不是它」还没有产物级断言。已记入待办。",
+      "reapply": "两处都是本项目自有改动，上游不会碰：`app/build.gradle.kts` 的 `debug` 块加一行（上游若给 debug 加了别的 signingConfig，以本条的意图为准 —— 固定身份优先）；`android.yml` 的还原步骤整段保留。\n\n**密钥库本身不在仓库里**，所以重放不涉及二进制。若将来密钥库丢失，需要生成新的并更新两处：Secret 内容 + 工作流里的期望指纹。**换密钥的代价是已装版本必须卸载重装一次**，所以不要轻易换。",
+      "conflict_risk": "low —— `debug` 块加一行，冲突面极小。真正的风险不在代码冲突，而在**密钥库的管理**：它是这个应用的长期身份，丢了就只能卸载重装、从头开始。",
+      "note": "**密钥库的备份**：已导出一份到设备的 `Download/dshfusion-keystore-backup/`（含 jks 与 properties），请另存到仓库之外的安全位置。GitHub 上的 Secret 是唯一的工作副本 —— Secret 可以重写，但**内容丢了就找不回来**（GitHub 不允许读回 Secret 的值）。\n\n**这个密钥库的定位**：它是**稳定性**措施，不是安全边界。口令与密钥都不比 Android 标准调试密钥更保密（那套口令是公开的 `android`）。它解决的是「同一个应用身份」问题。\n\n**将来若决定公开或分发**：先重新评估 —— 那时它才变成真正的发布密钥，届时应换一把新密钥、把它从 Secret 管理改为更严格的流程，并重新考虑 `docs/PHASE1-PREREQUISITES.md` 里关于数据迁移的结论。\n\n**为什么不用「提交进仓库」这个更简单的做法**：能省掉 Secret 管理，且不依赖 PAT 权限。但上游 `.gitignore` 里「签名密钥：绝不入库」是一条有理由的约定（上游是**分发**的，它的 release key 泄露是实质风险），本项目当前虽然私有自用，但没有必要在能两全的时候破例 —— GitHub 的 Actions Secret 恰好提供了这个两全。代价是多一个 Secret 依赖，而这个代价已经在上面「密钥库的备份」里说明了。"
+    }
   ]
 }

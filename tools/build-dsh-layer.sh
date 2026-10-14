@@ -10,9 +10,39 @@
 # 结果是：新克隆一份代码，构建出的 APK 不含 DSH 层，装上也起不了 DSH。
 # 这就是审计里的运行环境风险 R1。
 #
-# 本脚本补上这一环，并且可以在**任何有 node + npm 的机器上**运行：
-# `@deepseek-ai/dsh` 是纯 JavaScript 的 npm 包（无原生扩展、无 os/cpu 约束），
-# 所以不需要 Debian 沙箱、不需要 PRoot、不需要 arm64 主机。
+# 本脚本补上这一环，并且可以在**任何有 node + npm 的机器上**运行 ——
+# 但**必须显式指定目标平台**。见下面「平台」一节：这里曾经写着
+# 「`@deepseek-ai/dsh` 是纯 JavaScript 的 npm 包（无原生扩展、无 os/cpu 约束）」，
+# **那句话是错的**，而且它让整个层在真机上一次都跑不起来。
+#
+# ## 平台（2026-10-14 补，来自真机失败）
+#
+# `@deepseek-ai/dsh` 本身确实是纯 JS，但它的依赖树里有若干**按平台分发的可选包**
+# （optionalDependencies，由 npm 按宿主平台自动挑选）：
+#
+#   node-addon-require-builtin-linux-<arch>-gnu     ← dsh-app-boot 启动时**必需**
+#   @deepseek-ai/node-addon-system-linux-<arch>
+#   @img/sharp-linux-<arch> / @img/sharp-libvips-linux-<arch>
+#   sherpa-onnx-linux-<arch>
+#   @koromix/koffi-linux-<arch>
+#
+# CI 跑在 x86_64 runner 上，于是 npm 装的全是 `-x64` 那一套。产物打进 APK、
+# 装到 arm64 手机上，DSH 在 host preparation 阶段直接致命退出：
+#
+#   dsh: host preparation failed:
+#        No usable native binding found for
+#        node-addon-require-builtin-linux-arm64-gnu (auto)
+#
+# 所以必须显式覆盖 npm 的平台判定（npm >= 10.4 支持，CI 用的是 npm 11）：
+#
+#   --os=linux --cpu=arm64 --libc=glibc
+#
+# 这三个参数只影响**可选依赖的挑选**，不影响纯 JS 包。装完还会自检
+# （见「5.5 平台自检」），不通过就拒绝产出 —— 一个架构错的层比没有层更坏：
+# 它能装、能解包、能起来 node，然后在启动到一半时致命失败。
+#
+# 依据是**上游发布产物**（真机能跑的官方 DSHBox v1.4.0 的
+# `0.2.0-rc.2.tar.zst`，sha256 4197ec52…），逐包对照后确认它装的全是 arm64。
 # 层内布局与 `DefaultSandboxManager.dshLayerDir()` 的期望一致：
 # 解包后得到 `node_modules/@deepseek-ai/dsh/lib/bin.js`，
 # 运行时整层被 bind 到 guest 的 `/opt/dshapp/runtime`。
@@ -31,6 +61,7 @@
 # 环境变量：
 #   DSH_VERSION          覆盖版本（默认取 upstreams.json 的 tracked_version）
 #   DSH_NPM_REGISTRY     默认 https://registry.npmjs.org
+#   DSH_TARGET_ARCH      目标 CPU 架构，默认 arm64（阶段 1 只支持 arm64-v8a）
 #   DSH_SKIP_SMOKE=1     跳过 `node lib/bin.js --version` 冒烟测试
 #   DSH_KEEP_STAGE=1     保留中间暂存目录（排错用）
 #
@@ -46,6 +77,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${1:-$ROOT/runtime/android-assets}"
 
 DSH_NPM_REGISTRY="${DSH_NPM_REGISTRY:-https://registry.npmjs.org}"
+DSH_TARGET_ARCH="${DSH_TARGET_ARCH:-arm64}"
 DSH_SKIP_SMOKE="${DSH_SKIP_SMOKE:-0}"
 DSH_KEEP_STAGE="${DSH_KEEP_STAGE:-0}"
 
@@ -116,11 +148,14 @@ LAYER_ROOT="$STAGE/layer"
 mkdir -p "$LAYER_ROOT"
 
 # ---------- 4. 安装 ----------
-info "npm install @deepseek-ai/dsh@$VERSION（约 500 MB，可能需要几分钟）"
+# 平台参数是**必需**的，不是优化：CI 是 x86_64，不覆盖就会装出 x64 的可选包，
+# 层在 arm64 真机上跑到一半致命失败。理由见文件头「平台」一节。
+info "npm install @deepseek-ai/dsh@$VERSION（目标平台 linux/$DSH_TARGET_ARCH/glibc，约 500 MB，可能需要几分钟）"
 npm install \
     --prefix "$LAYER_ROOT" \
     "npm:@deepseek-ai/dsh@$VERSION" \
     --registry "$DSH_NPM_REGISTRY" \
+    --os=linux --cpu="$DSH_TARGET_ARCH" --libc=glibc \
     --no-audit --no-fund --loglevel=error
 
 PKG_JSON="$LAYER_ROOT/node_modules/@deepseek-ai/dsh/package.json"
@@ -138,6 +173,74 @@ info "版本核对通过：$INSTALLED"
 # ---------- 6. 关键文件存在性 ----------
 BIN_JS="$LAYER_ROOT/node_modules/@deepseek-ai/dsh/lib/bin.js"
 [ -f "$BIN_JS" ] || die "缺少入口 lib/bin.js —— 层布局与应用期望不符（dshLayerDir 绑定到 /opt/dshapp/runtime）"
+
+# ---------- 6.5 平台自检（fail closed）----------
+#
+# 这一节是 2026-10-14 真机失败之后补的。之前这个脚本能「成功」产出一个
+# 架构完全错误的层，而且它一路通过了打包、CI 断言、装到真机 —— 直到 DSH
+# 在 host preparation 阶段致命退出才暴露。
+#
+# 断言清单不是想出来的，是**逐包对照上游发布产物**得到的：
+# 官方 DSHBox v1.4.0 的 `0.2.0-rc.2.tar.zst`（sha256 4197ec52…，真机能跑）
+# 与我们的层做包目录集合比较，恰好是 7 个包一一对换（arm64 ↔ x64）。
+# 这 7 个就是全部按平台分发的可选包，一个不多一个不少。
+#
+# 为什么要「必需 + 禁止」两条都查：只查「arm64 在不在」不够 ——
+# npm 完全可能同时装两套（比如 lockfile 里钉了旧的），那时层体积翻倍、
+# 应用侧加载器也可能挑错。上游的形态是**只有一套**，就按上游钉。
+PLATFORM_PKGS=(
+    "node-addon-require-builtin-linux-ARCH-gnu"
+    "@deepseek-ai/node-addon-system-linux-ARCH"
+    "@img/sharp-linux-ARCH"
+    "@img/sharp-libvips-linux-ARCH"
+    "@koromix/koffi-linux-ARCH"
+    "@vscode/ripgrep-linux-ARCH"
+    "sherpa-onnx-linux-ARCH"
+)
+
+OTHER_ARCH=x64
+if [ "$DSH_TARGET_ARCH" = "x64" ]; then
+    OTHER_ARCH=arm64
+fi
+
+MISSING=()
+WRONG=()
+for tmpl in "${PLATFORM_PKGS[@]}"; do
+    want="${tmpl//ARCH/$DSH_TARGET_ARCH}"
+    bad="${tmpl//ARCH/$OTHER_ARCH}"
+    [ -d "$LAYER_ROOT/node_modules/$want" ] || MISSING+=("$want")
+    [ -d "$LAYER_ROOT/node_modules/$bad" ] && WRONG+=("$bad")
+done
+
+if [ "${#MISSING[@]}" -gt 0 ] || [ "${#WRONG[@]}" -gt 0 ]; then
+    {
+        printf '\n错误：DSH 层的目标平台不对，拒绝产出。\n\n'
+        if [ "${#MISSING[@]}" -gt 0 ]; then
+            printf '  缺少 %s 包（DSH 在 arm64 上启动时必需）：\n' "$DSH_TARGET_ARCH"
+            printf '    %s\n' "${MISSING[@]}"
+        fi
+        if [ "${#WRONG[@]}" -gt 0 ]; then
+            printf '  混进了 %s 包（宿主平台，不是目标平台）：\n' "$OTHER_ARCH"
+            printf '    %s\n' "${WRONG[@]}"
+        fi
+        cat <<'EOF'
+
+  这不是「最好有」的检查。一个架构错的层能装、能解包、能起来 node，
+  然后在 host preparation 阶段才致命失败：
+
+      dsh: host preparation failed: No usable native binding found for
+           node-addon-require-builtin-linux-arm64-gnu (auto)
+
+  真机上看到的就是这个 —— 界面报「DSH 异常」，日志里是上面那行。
+
+  修法：确认 npm install 带了 --os=linux --cpu=<目标架构> --libc=glibc
+  （npm >= 10.4 才支持这三个参数）。
+
+EOF
+    } >&2
+    exit 1
+fi
+info "平台自检通过：$DSH_TARGET_ARCH 的 ${#PLATFORM_PKGS[@]} 个平台包齐全，且无 $OTHER_ARCH 混入"
 
 # ---------- 7. 冒烟测试 ----------
 if [ "$DSH_SKIP_SMOKE" != "1" ]; then
@@ -169,10 +272,19 @@ TARBALL="$OUT_DIR/dsh/$VERSION.tar.zst"
 # `lib/arm64-v8a/libzstd-jni-1.5.7-15.so`，DSHFusion 也把
 # `libs/zstd-jni-1.5.7-15-classes.jar` 接进了 app 与 sandbox-manager。
 # **以发布产物为准，不以脚本默认值为准。**
-if ! command -v zstd >/dev/null 2>&1; then
+# 实现上有两条路，**两条都只产出 zstd**：
+#   ① 系统里的 zstd CLI —— CI 自带，压缩率最好，首选
+#   ② node 的 zlib.createZstdCompress —— Node >= 22.15 / 23.8 才有
+# 两条都没有才退出 2。这里没有任何一条路会产出 gzip：
+# 兜底改变的是「用什么压缩」，不是「要不要压缩」。
+if command -v zstd >/dev/null 2>&1; then
+    ZSTD_MODE=cli
+elif node -e "process.exit(require('zlib').createZstdCompress ? 0 : 1)" 2>/dev/null; then
+    ZSTD_MODE=node
+else
     cat >&2 <<'EOF'
 
-错误：找不到 zstd，拒绝继续。
+错误：既没有 zstd 命令，也没有支持 zstd 的 node，拒绝继续。
 
   不是「压缩率更好」的问题，而是**没有别的可行格式**：
   AGP 会把 `.gz` 资源解压并去掉扩展名，于是
@@ -182,13 +294,36 @@ if ! command -v zstd >/dev/null 2>&1; then
 
   安装：Debian/Ubuntu  apt-get install -y zstd
         macOS          brew install zstd
+  或者升级 node 到 22.15+（自带 zlib.createZstdCompress）。
   CI（ubuntu-latest runner）自带 zstd。
 
 EOF
     exit 2
 fi
-info "打包（zstd -19）：$TARBALL"
-tar -C "$LAYER_ROOT" -I 'zstd -19 -T0' -cf "$TARBALL" .
+
+if [ "$ZSTD_MODE" = "cli" ]; then
+    info "打包（zstd -19 -T0，系统 CLI）：$TARBALL"
+    tar -C "$LAYER_ROOT" -I 'zstd -19 -T0' -cf "$TARBALL" .
+else
+    info "打包（node zlib.createZstdCompress，无系统 zstd CLI）：$TARBALL"
+    # ⚠️ 实测：node 的 zstd **忽略 level 参数**。
+    # 同一份 40 MB 样本，level 1/3/9/19/22 输出字节数完全相同（5808545 B，
+    # 各约 60 ms）—— 也就是说它固定跑在某个默认级别上，调不高。
+    # 后果只是体积，实测同一层：CLI -19 = 84973267 B，node = 111809043 B（+31.6%）。
+    # **格式与内容都正确**，所以这里不判失败，但必须说出来 ——
+    # 一个「命令一样、产物大 30%」的静默差异，正是这个仓库反复踩的那类坑。
+    printf '    注意：node 的 zstd 无法指定压缩级别，产物比 CLI -19 大约 32%%。\n' >&2
+    printf '          CI 用 ubuntu-latest 自带的 zstd CLI，不会走这条路。\n' >&2
+    tar -C "$LAYER_ROOT" -cf - . | node -e '
+        const fs = require("fs"), z = require("zlib");
+        const out = fs.createWriteStream(process.argv[1]);
+        out.on("error", (e) => { console.error(e.message); process.exit(1); });
+        process.stdin
+            .pipe(z.createZstdCompress())
+            .pipe(out)
+            .on("finish", () => process.exit(0));
+    ' "$TARBALL"
+fi
 
 # 魔数自检：写出来的必须是 zstd 帧头，而不是别的什么。
 MAGIC="$(head -c 4 "$TARBALL" | od -An -tx1 | tr -d ' \n')"

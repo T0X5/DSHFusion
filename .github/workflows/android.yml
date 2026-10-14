@@ -110,6 +110,50 @@ jobs:
       - name: Build runtime assets
         run: tools/build-runtime-assets.sh
 
+      # DIV-0017：用**固定的**签名密钥库，而不是 AGP 每次现生成的调试密钥库。
+      #
+      # 真机实测（2026-10-14）：四个不同 CI 运行的产物，签名公钥两两不同 ——
+      # 于是新构建**装不到旧构建上面**（INSTALL_FAILED_UPDATE_INCOMPATIBLE），
+      # 每出一个构建都得卸载重装，连带丢掉已下好的运行环境层。
+      # 对一个「长期自用、持续吸收上游」的项目来说，这个代价不能接受。
+      #
+      # 密钥放在 Actions Secret 里，**不提交进仓库** —— 上游 .gitignore 写着
+      # 「签名密钥：绝不入库」，那条规定是有道理的，不需要为这件事破例。
+      #
+      # Secret 缺失时这一步直接失败，**不静默退回调试密钥**：
+      # 静默退回会让「签名稳定」变成一句没人能验证的话，而下次真机安装失败时
+      # 你会以为是别的原因。同理，指纹对不上也判失败。
+      - name: Restore signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.DSHFUSION_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.DSHFUSION_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_B64:-}" ] || [ -z "${KEYSTORE_PASSWORD:-}" ]; then
+            echo "::error::缺少 secret DSHFUSION_KEYSTORE_B64 / DSHFUSION_KEYSTORE_PASSWORD —— 拒绝用随机调试密钥签名"
+            exit 1
+          fi
+          mkdir -p signing
+          printf '%s' "$KEYSTORE_B64" | base64 -d > signing/dshfusion.jks
+          {
+            echo "storeFile=../signing/dshfusion.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=dshfusion"
+            echo "keyPassword=$KEYSTORE_PASSWORD"
+          } > keystore.properties
+
+          EXPECTED=76d588d44aad12b00aac0a1587738bc91efc182b7c0b00b288a5826058e98126
+          ACTUAL=$(keytool -list -v -keystore signing/dshfusion.jks \
+                     -storepass "$KEYSTORE_PASSWORD" 2>/dev/null \
+                   | grep -oE '([0-9A-F]{2}:){31}[0-9A-F]{2}' | head -1 \
+                   | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::密钥库指纹不符：期望 $EXPECTED，实际 ${ACTUAL:-<解不出>}"
+            echo "::error::secret 里的密钥库不是这个应用的身份。签名变了会让已装的版本无法覆盖升级。"
+            exit 1
+          fi
+          echo "签名密钥库已就位，证书 SHA-256 = $ACTUAL"
+
       - name: Assemble debug APK
         env:
           # app/build.gradle.kts:78 读这个变量；不设的话它默认指向

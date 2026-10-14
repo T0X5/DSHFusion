@@ -1278,6 +1278,194 @@ def handle_div_0014(entry) -> tuple[str, str]:
     )
 
 
+
+def handle_div_0015(entry) -> tuple[str, str]:
+    """dsh 运行环境层必须按目标架构（arm64）构建（DIV-0015）。
+
+    这条偏离没有可自动重放的锚点 —— 不是因为它跨文件（只跨两处），而是因为
+    真正要钉住的东西是**数据**（7 个按平台分发的包名），不是一段可插入的文本。
+    所以本函数只做核验。
+
+    ⚠️ 查的是**表达式形式**，不是裸的架构名。脚本的 KDoc 里本来就会写到
+    arm64（解释这个 bug 时必须写），若断言写成「文件里出现过 arm64」，
+    那把整段修复删掉、只留注释，断言照样通过 —— 这正是本项目栽过三次的
+    「检查器被长得像的东西骗过」。所以每一条都要求一个**只有真实现才有的形状**：
+    npm 参数、默认值赋值、自检清单的变量名与模板串。
+    """
+    missing: list[str] = []
+    present: list[str] = []
+
+    script = ROOT / "tools/build-dsh-layer.sh"
+    if not script.is_file():
+        return PENDING, "tools/build-dsh-layer.sh 尚未引入（阶段 1 之前是正常的）"
+    body = read(script)
+    for needle, why in (
+        ('--os=linux --cpu="$DSH_TARGET_ARCH" --libc=glibc',
+         "npm install 必须显式指定目标平台"),
+        ('DSH_TARGET_ARCH="${DSH_TARGET_ARCH:-arm64}"', "目标架构默认必须是 arm64"),
+        ("PLATFORM_PKGS=(", "必须有平台包自检清单"),
+        ("node-addon-require-builtin-linux-ARCH-gnu",
+         "自检清单必须含 DSH 启动时必需的那个包"),
+        ("平台自检通过", "自检必须打印通过结论"),
+    ):
+        (present if needle in body else missing).append(why)
+
+    checker = ROOT / "tools/check-apk-identity.py"
+    if not checker.is_file():
+        return PENDING, "tools/check-apk-identity.py 尚未引入"
+    cbody = read(checker)
+    for needle, why in (
+        ("断言 7", "产物级断言 7（层架构）必须在场"),
+        ("node-addon-require-builtin-linux-{a}-gnu", "断言 7 的包清单"),
+        ("_layer_pkg_dirs", "断言 7 必须真的解开层看里面的包"),
+        ("--os=linux --cpu={target_arch} --libc=glibc", "失败信息要指出修法"),
+    ):
+        (present if needle in cbody else missing).append(why)
+
+    # 行为证明必须在套件里。
+    #
+    # 上面那些都是字符串在场性检查 —— 它们证明不了断言 7 **在跑**。
+    # 真正证明它活着的是套件里那两条（x64 夹具必须失败、arm64 夹具必须通过）
+    # 加上那次反向注入（掐掉断言 7 后 x64 夹具必须变回通过）。
+    # 所以这里也钉住它们：删掉套件断言同样会让本偏离报失败。
+    suite = ROOT / "tools/verify-phase0.sh"
+    if not suite.is_file():
+        return PENDING, "tools/verify-phase0.sh 尚未引入"
+    sbody = read(suite)
+    for needle, why in (
+        ("x64-layer", "套件必须有 x64 层夹具场景"),
+        ("arm64-layer", "套件必须有 arm64 层夹具场景（成对才说明失败原因是架构）"),
+        ("checker-no-assert7.py", "套件必须有「掐掉断言 7」的反向注入"),
+        ("dsh 层不是 arm64 架构的", "套件必须核对失败原因确实是架构"),
+    ):
+        (present if needle in sbody else missing).append(why)
+
+    if not missing:
+        return OK, f"层架构偏离在场（{len(present)} 项断言通过）"
+
+    detail = "；".join(missing[:4])
+    return FAILED, (
+        "本偏离无法自动重放（要钉的是数据不是文本）。请按 divergences.json 里 "
+        f"DIV-0015 的 reapply 字段人工核对。缺：{detail}"
+    )
+
+
+def handle_div_0016(entry) -> tuple[str, str]:
+    """无障碍服务名改为 DSHFusion（DIV-0016）。
+
+    这条是**可以**自动重放的（纯值替换），但重放需要知道每个语言的新值，
+    而那 6 个新值已经在 divergences.json 里写明了 —— 与其在这里再抄一遍
+    （抄一遍就多一个会漂移的事实来源），不如只核验。
+    """
+    langs = ("values", "values-zh", "values-ar", "values-es", "values-fr", "values-ru")
+    base = ROOT / "pilot" / "dshbox-adapter" / "src" / "main" / "res"
+    missing: list[str] = []
+    ok_langs: list[str] = []
+
+    for lang in langs:
+        f = base / lang / "strings.xml"
+        if not f.exists():
+            return PENDING, f"pilot/dshbox-adapter/.../{lang}/strings.xml 尚未导入"
+        body = read(f)
+        m = re.search(r'<string name="relay_a11y_label">(.*?)</string>', body, re.S)
+        if not m:
+            missing.append(f"{lang} 缺 relay_a11y_label")
+            continue
+        value = m.group(1)
+        # 两个方向都要查：残留旧名 = 没改；没有新名 = 改成了别的东西。
+        # 只查「不含 DSHBox」会放过「改成了 DSHBox2」这类荒唐值。
+        if "DSHBox" in value:
+            missing.append(f"{lang} 仍写着 DSHBox")
+        elif "DSHFusion" not in value:
+            missing.append(f"{lang} 没有 DSHFusion")
+        else:
+            ok_langs.append(lang)
+
+    if not missing:
+        return OK, f"无障碍服务名已在 {len(ok_langs)} 个语言里改为 DSHFusion"
+
+    detail = "；".join(missing[:4])
+    return FAILED, f"无障碍服务名仍有问题：{detail}"
+
+
+def handle_div_0017(entry) -> tuple[str, str]:
+    """签名改用固定密钥库（DIV-0017）。
+
+    三处必须同时在场，缺一处这个 bug 就会以另一种形态回来：
+      - 只有 CI 步骤、没有 gradle 覆盖 -> 密钥库还原了但 debug 构建不用它；
+      - 只有 gradle 覆盖、没有 CI 步骤 -> 本地能用，CI 仍然每个构建一个身份；
+      - 有 CI 步骤但没有指纹核验 -> 「签名稳定」变成一句无法验证的话。
+
+    ⚠️ 另外查一件**反向**的事：密钥库不得进入版本控制。
+    上游 .gitignore 里那条规定必须仍然有效 —— 若有人为了图方便把它注释掉，
+    这条断言会失败。查的是 .gitignore 里仍有 *.jks 与 keystore.properties，
+    以及仓库里**确实没有**被跟踪的密钥文件。
+    """
+    missing: list[str] = []
+    present: list[str] = []
+
+    gradle = ROOT / "app" / "build.gradle.kts"
+    if not gradle.is_file():
+        return PENDING, "app/build.gradle.kts 尚未导入"
+    gbody = read(gradle)
+    # debug 块里必须出现 signingConfig 赋值。只查「有 signingConfig」不够 ——
+    # release 块本来就有，那会漏掉「debug 没改」这个真正的缺口。
+    m = re.search(r"debug\s*\{(.*?)\n        \}", gbody, re.S)
+    if not m:
+        missing.append("app/build.gradle.kts 里找不到 debug 构建块")
+    else:
+        debug_block = m.group(1)
+        if "signingConfig = if (hasReleaseKeystore)" in debug_block:
+            present.append("debug 构建用固定密钥库")
+        else:
+            missing.append("debug 构建块没有 signingConfig 覆盖（会退回随机调试密钥）")
+
+    wf = ROOT / ".github" / "workflows" / "android.yml"
+    if not wf.is_file():
+        return PENDING, ".github/workflows/android.yml 尚未导入"
+    wbody = read(wf)
+    for needle, why in (
+        ("Restore signing keystore", "CI 必须有还原密钥库的步骤"),
+        ("DSHFUSION_KEYSTORE_B64", "密钥库来自 Actions Secret，不提交进仓库"),
+        ("76d588d44aad12b00aac0a1587738bc91efc182b7c0b00b288a5826058e98126",
+         "必须核验证书指纹，否则「签名稳定」无法验证"),
+        ("keytool -list -v", "指纹核验要用 keytool 真读一次密钥库"),
+    ):
+        (present if needle in wbody else missing).append(why)
+
+    # 还原步骤必须排在 assemble 之前，否则等于没还原
+    if "Restore signing keystore" in wbody and "Assemble debug APK" in wbody:
+        if wbody.index("Restore signing keystore") > wbody.index("Assemble debug APK"):
+            missing.append("还原密钥库的步骤排在 assemble 之后，等于没生效")
+        else:
+            present.append("还原步骤在 assemble 之前")
+
+    # 反向：密钥库不得入库
+    #
+    # ⚠️ 必须逐行查、且跳过注释行。第一版写的是 `pat in read(gi)`，
+    # 故障注入实测：把 `*.jks` 那一行注释成 `# *.jks`，字符串仍在文件里，
+    # 检查照样通过 —— 又是「检查器被长得像的东西骗过」。
+    # 而这一条恰恰是防止密钥被提交的那道闸，不能是假的。
+    gi = ROOT / ".gitignore"
+    if gi.is_file():
+        patterns = {
+            line.strip()
+            for line in read(gi).splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        for pat in ("*.jks", "keystore.properties"):
+            if pat in patterns:
+                present.append(f".gitignore 仍忽略 {pat}")
+            else:
+                missing.append(f".gitignore 不再忽略 {pat}（密钥有入库风险）")
+
+    if not missing:
+        return OK, f"固定签名偏离在场（{len(present)} 项断言通过）"
+
+    detail = "；".join(missing[:4])
+    return FAILED, f"固定签名仍有缺口：{detail}"
+
+
 HANDLERS = {
     "DIV-0001": handle_div_0001,
     "DIV-0002": handle_div_0002,
@@ -1293,6 +1481,9 @@ HANDLERS = {
     "DIV-0012": handle_div_0012,
     "DIV-0013": handle_div_0013,
     "DIV-0014": handle_div_0014,
+    "DIV-0015": handle_div_0015,
+    "DIV-0016": handle_div_0016,
+    "DIV-0017": handle_div_0017,
 }
 
 

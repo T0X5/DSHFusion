@@ -271,7 +271,7 @@
 
     <!-- 这些是核心模块词条的 dshbox 覆写：键名沿用核心的 relay_ 前缀，取值为 dshbox 各语言文案 -->
     <string name="relay_a11y_description">يتيح للمساعد قراءة الشاشة الحالية وتنفيذ الإيماءات وإدخال النص نيابةً عنك (اللمس، اللمس المطوّل، السحب، التمرير، الكتابة وضبط القيم، وإرسال المفاتيح). يمنح النظام هذه الخدمة مرة واحدة؛ ثم يطلب المساعد إذنك لكل قدرة على حدة، ولا يتحكم في هذا التطبيق مطلقًا.</string>
-    <string name="relay_a11y_label">مساعد الهاتف DSHBox</string>
+    <string name="relay_a11y_label">مساعد الهاتف DSHFusion</string>
     <string name="relay_approval_char_count">%1$d حرفًا</string>
     <string name="relay_cap_app_install_summary">تُثبّت عبر Shizuku، وقد لا يزال التثبيت يتطلب تأكيد المستخدم. تطلب التأكيد دائمًا.</string>
     <string name="relay_cap_app_install_title">تثبيت تطبيق</string>

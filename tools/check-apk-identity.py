@@ -37,8 +37,13 @@ Android SDK 里有 aapt2，但多一个外部依赖就多一处「本地跑不�
 """
 
 import argparse
+import os
+import shutil
 import struct
+import subprocess
 import sys
+import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -567,6 +572,109 @@ def main() -> int:
                 )
             else:
                 notes.append(f"运行环境层 {label}：{name}（容器 {kind}）")
+
+    # --- 断言 7：dsh 层必须是**目标架构**的，不能是构建宿主的架构 ---
+    #
+    # 这条是 2026-10-14 真机失败之后补的。断言 6 的三条（层在不在、名字对不对、
+    # 容器格式认不认）当时**全部通过** —— 层真的解开了、node 也真的起来了，
+    # 然后 DSH 在 host preparation 阶段致命退出：
+    #
+    #     dsh: host preparation failed: No usable native binding found for
+    #          node-addon-require-builtin-linux-arm64-gnu (auto)
+    #
+    # 因为层是 CI 在 x86_64 runner 上 `npm install` 出来的，npm 按**宿主**平台
+    # 挑了整套 `-linux-x64` 的可选依赖。层的格式完全正确，内容是错的架构。
+    #
+    # 这是同一个病的第四次发作，而且每次都停在比「能不能用」更浅的一层：
+    #   ① 「缺层」只记成备注，不判失败 → 缺层的 APK 一路走到真机
+    #   ② 断言被 `.sha256` 侧车骗过（名字长得像）
+    #   ③ AGP 解压 `.gz` 并剥掉扩展名（格式看着对，应用却找不到）
+    #   ④ 层是 x64 的（内容存在、格式正确、架构错）
+    # 所以这一条不看名字也不看格式，**看层里面的包**。
+    #
+    # 断言清单来自上游发布产物的逐包对照：官方 DSHBox v1.4.0 的
+    # `0.2.0-rc.2.tar.zst`（sha256 4197ec52…）与在 x64 上建出来的层，
+    # 恰好是 7 个包一一对换（arm64 ↔ x64）。这 7 个就是全部按平台分发的
+    # 可选依赖，一个不多一个不少。
+    if dsh:
+        target_arch = "arm64"
+        host_arch = "x64"
+        platform_pkg_tmpl = (
+            "node-addon-require-builtin-linux-{a}-gnu",
+            "@deepseek-ai/node-addon-system-linux-{a}",
+            "@img/sharp-linux-{a}",
+            "@img/sharp-libvips-linux-{a}",
+            "@koromix/koffi-linux-{a}",
+            "@vscode/ripgrep-linux-{a}",
+            "sherpa-onnx-linux-{a}",
+        )
+        pkg_dir_re = _re.compile(r"^\.?/?node_modules/(@[^/]+/[^/]+|[^/]+)$")
+
+        def _layer_pkg_dirs(apk_path: Path, entry: str):
+            """流式解开 zstd 层，返回 node_modules 下的包目录名集合。
+
+            返回 None 表示这台机器上没有 zstd，无法核验（调用方按失败处理）。
+            """
+            if shutil.which("zstd") is None:
+                return None
+            with zipfile.ZipFile(apk_path) as z:
+                blob = z.read(entry)
+            with tempfile.NamedTemporaryFile(suffix=".tar.zst", delete=False) as tf:
+                tf.write(blob)
+                tmp = tf.name
+            try:
+                with open(tmp, "rb") as fin:
+                    proc = subprocess.Popen(
+                        ["zstd", "-dc"],
+                        stdin=fin,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    found = set()
+                    with tarfile.open(fileobj=proc.stdout, mode="r|") as tar:
+                        for member in tar:
+                            m = pkg_dir_re.match(member.name)
+                            if m:
+                                found.add(m.group(1))
+                    proc.stdout.close()
+                    proc.wait()
+                    return found
+            finally:
+                os.unlink(tmp)
+
+        pkg_dirs = _layer_pkg_dirs(path, dsh[0])
+        if pkg_dirs is None:
+            problems.append(
+                "无法核验 dsh 层的目标架构：这台机器上没有 zstd 命令。"
+                "层若是在 x86_64 上建的，npm 会装成 x64 的可选依赖，"
+                "arm64 真机上 DSH 会启动到一半致命退出 —— 这一条不能跳过，"
+                "装上 zstd 后重跑。"
+            )
+        else:
+            absent = [
+                t.format(a=target_arch)
+                for t in platform_pkg_tmpl
+                if t.format(a=target_arch) not in pkg_dirs
+            ]
+            present_wrong = [
+                t.format(a=host_arch)
+                for t in platform_pkg_tmpl
+                if t.format(a=host_arch) in pkg_dirs
+            ]
+            if absent or present_wrong:
+                problems.append(
+                    f"dsh 层不是 {target_arch} 架构的："
+                    + (f"缺少 {'、'.join(absent)}；" if absent else "")
+                    + (f"混入了 {'、'.join(present_wrong)}；" if present_wrong else "")
+                    + "层是在 x86_64 构建机上建的，npm 按宿主平台挑了可选依赖。"
+                    "修法：build-dsh-layer.sh 的 npm install 必须带 "
+                    f"--os=linux --cpu={target_arch} --libc=glibc。"
+                )
+            else:
+                notes.append(
+                    f"dsh 层平台核验：{target_arch} 的 {len(platform_pkg_tmpl)} "
+                    f"个平台包齐全，且无 {host_arch} 混入"
+                )
 
     if missing:
         hint = (

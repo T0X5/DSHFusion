@@ -277,6 +277,16 @@ tools/check-apk-identity.py <apk> [--expect-label DSHFusion]
 不解 `resources.arsc` 就不知道它各语言下解析成什么。
 已接进 `android.yml`（DIV-0008），在 `assembleDebug` 之后运行。
 
+**断言 7（DIV-0015）：`dsh` 层必须是目标架构（arm64）的。**
+会流式解开 APK 里嵌的层，检查 7 个按平台分发的包是否齐全、有没有 x64 混入。
+这一条是真机失败之后补的 —— 2026-10-14 的产物**通过了当时全部断言**，
+包括专为「层能不能用」写的断言 6，然后在真机上报
+`host preparation failed: No usable native binding found for
+node-addon-require-builtin-linux-arm64-gnu`。原因是 CI 跑在 x86_64 上，
+npm 按宿主平台装了整套 `-linux-x64` 可选依赖。
+
+没有 `zstd` 命令时这条**判失败、不跳过** —— 「核验不了」不等于「没问题」。
+
 退出码：0 通过；1 有身份断言失败；2 用法错误或 APK 无法解析。
 
 ### `make-apk-identity-fixture.py`
@@ -289,7 +299,18 @@ tools/make-apk-identity-fixture.py <输出 apk> <场景>
 ```
 
 场景：`good`（应通过）、`upstream-id`、`upstream-ver`、`wrong-ns`、
-`wrong-label`（都应退出 1）、`no-manifest`（应退出 2）。
+`wrong-label`、`bad-authority`、`no-layers`、`sidecar-only`、`gz-stripped`、
+`x64-layer`（都应退出 1）、`arm64-layer`（应通过）、`no-manifest`（应退出 2）。
+
+`x64-layer` / `arm64-layer` 成对存在，用来测断言 7：两者**只差层里那 7 个包**，
+所以「一个失败、一个通过」才能说明失败的原因是架构，
+而不是碰巧被别的断言拦下。它们需要 `zstd` 来造**真的**层
+（断言 7 会解压它），没有 `zstd` 时退出 3 表示跳过 —— 不造假层，
+假层会让这两个场景永远「通过」。
+
+> 加了断言 7 之后，原先所有场景用的 `_FAKE_ZSTD`（只有帧头、没有内容）不够用了：
+> `good` 也开始失败，因为假帧头解不开。那不是断言太严，是夹具失真 ——
+> 一个解不开的层本来就不该算合格产物。现在带 zstd 层的场景都造真层。
 
 手写 AXML 而不是用 aapt2：本机没有 Android SDK，CI 里也不该为造夹具装一整套；
 手写反而让「检查器读的到底是什么字节」完全明确。
@@ -320,12 +341,38 @@ tools/build-dsh-layer.sh [输出目录]      # 默认 ./runtime/android-assets
 - **必须有 `zstd`，没有就退出 2。** 不退回 gzip，见下面 `build-runtime-assets.sh`
   一节里「为什么必须是 zstd」—— 一句话：**AGP 会解压 `.gz` 资源并去掉扩展名**，
   于是 `.tar.gz` 层进 APK 后变成应用侧找不到的 `.tar`，等于白建。
-- 不需要 Debian 沙箱或 arm64 主机：`@deepseek-ai/dsh` 是纯 JS 的 npm 包，
-  无原生扩展、无 `os`/`cpu` 约束。
+- **必须显式声明目标平台（DIV-0015）。** 此处原先写着
+  「不需要 arm64 主机：`@deepseek-ai/dsh` 是纯 JS 的 npm 包，无原生扩展、
+  无 `os`/`cpu` 约束」—— **后半句是错的，而且它就是这个 bug 的成因**。
+  `@deepseek-ai/dsh` 包本身确实是纯 JS，但依赖树里有 7 个按平台分发的可选包
+  （`optionalDependencies`），npm 按**构建宿主**挑选：
 
-实测：538 个包、层 118.6 MB（gzip 时代的数据，保留作参考）、sha256 `747c0b619b2b…`。
+  ```
+  node-addon-require-builtin-linux-<arch>-gnu   ← dsh-app-boot 启动时必需
+  @deepseek-ai/node-addon-system-linux-<arch>
+  @img/sharp-linux-<arch> / @img/sharp-libvips-linux-<arch>
+  @koromix/koffi-linux-<arch>
+  @vscode/ripgrep-linux-<arch>
+  sherpa-onnx-linux-<arch>
+  ```
 
-退出码：0 成功；1 构建/核对/冒烟失败；2 用法或环境错误（缺 node、缺 zstd、版本读不到）。
+  在 x86_64 上建层会得到整套 `-linux-x64`，装到 arm64 手机上 DSH 会在
+  host preparation 阶段致命退出。修法是 npm 的交叉挑选参数
+  （`--os=linux --cpu=arm64 --libc=glibc`，npm ≥ 10.4），
+  由 `DSH_TARGET_ARCH` 控制（默认 `arm64`）。
+  装完有**平台自检**：7 个包必须齐全、且不得混入另一架构，否则拒绝产出。
+  CI 上的 `check-apk-identity.py` 断言 7 会对产物再查一遍。
+- 压缩优先用系统 `zstd` CLI（`-19 -T0`）；没有 CLI 时退回 node 的
+  `zlib.createZstdCompress`，两者都没有才退 2 —— **绝不产出 gzip**。
+  ⚠️ node 的 zstd **忽略 `level` 参数**（实测 level 1/3/9/19/22 输出字节数完全相同），
+  所以走那条路产物会大约 32%（84973267 B → 111809043 B）。脚本会打印警告。
+  CI 有 CLI，不走这条路。
+
+实测（arm64 层，zstd CLI -19）：**84973267 B（81.0 MB）**，
+sha256 `2183017cc8f1122f410194fd9ab0e0b59a2e52de27e12dc801e42d02d4c4b238`。
+与上游 v1.4.0 Release 里的官方层逐包对照，**520 个真实包完全一致**。
+
+退出码：0 成功；1 构建/核对/冒烟/平台自检失败；2 用法或环境错误（缺 node、缺 zstd、版本读不到）。
 
 ### `build-runtime-assets.sh`
 

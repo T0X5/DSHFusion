@@ -49,6 +49,17 @@ android {
     buildTypes {
         debug {
             buildConfigField("boolean", "ENABLE_WEBVIEW_DEBUGGING", "true")
+            // DIV-0017：有固定密钥库时就用它签名。
+            //
+            // 上游这里没有覆盖 signingConfig，于是 AGP 用每台机器（以及每次 CI
+            // 运行）现生成的 ~/.android/debug.keystore 签名。后果不是「不够正式」，
+            // 而是**每个构建都是一个不同的应用**：真机实测（2026-10-14），四个
+            // 不同 CI 运行的产物签名公钥两两不同，新构建装不到旧构建上面
+            // （INSTALL_FAILED_UPDATE_INCOMPATIBLE），每次都得卸载重装。
+            //
+            // 复用 release 那套判断（同一个 keystore.properties），保持单一事实来源。
+            // 变量名 hasReleaseKeystore 沿用上游，此处它也覆盖 debug 了。
+            signingConfig = if (hasReleaseKeystore) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
         release {
             isMinifyEnabled = true

@@ -27,12 +27,23 @@
     wrong-ns      application 类不在 com.dshbox.app 下 → 期望退出 1
     wrong-label   应用名字面量不是 DSHFusion → 期望退出 1
     no-manifest   包里没有 AndroidManifest.xml → 期望退出 2
+    x64-layer     身份全对、层名与容器格式全对，只有 dsh 层**里面的包**是 x64
+                  → 期望退出 1（断言 7）。这是 2026-10-14 真机失败的形态：
+                  断言 6 三条全过，node 也起来了，然后在 host preparation 阶段
+                  报「No usable native binding found for …-linux-arm64-gnu」
+    arm64-layer   与 x64-layer 相同，但层里是 arm64 的包 → 期望退出 0
+                  （用来证明 x64-layer 只因为「架构错」这一条失败，
+                   而不是碰巧被别的断言拦下）
 
-退出码：0 生成成功；2 用法错误。
+退出码：0 生成成功；2 用法错误；3 场景需要 zstd 但本机没有（跳过，不算通过）。
 """
 
+import io
+import shutil
 import struct
+import subprocess
 import sys
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -45,6 +56,41 @@ _FAKE_GZIP = b"\x1f\x8b\x08\x00" + b"\x00" * 32
 _FAKE_ZSTD = b"\x28\xb5\x2f\xfd" + b"\x00" * 32
 # 裸 tar：magic 在偏移 257（`BundleManager` 就是这么判的）。
 _FAKE_TAR = b"\x00" * 257 + b"ustar" + b"\x00" * 32
+
+# 断言 7（层架构）要检查的 7 个按平台分发的包。清单来自上游发布产物的逐包对照，
+# 与 tools/build-dsh-layer.sh 和 tools/check-apk-identity.py 里的同一份保持一致。
+_PLATFORM_PKG_TMPL = (
+    "node-addon-require-builtin-linux-{a}-gnu",
+    "@deepseek-ai/node-addon-system-linux-{a}",
+    "@img/sharp-linux-{a}",
+    "@img/sharp-libvips-linux-{a}",
+    "@koromix/koffi-linux-{a}",
+    "@vscode/ripgrep-linux-{a}",
+    "sherpa-onnx-linux-{a}",
+)
+
+
+def build_real_layer(arch: str) -> bytes:
+    """造一个**真的** zstd 压缩 tar，里面只有断言 7 关心的那些包目录。
+
+    为什么不能用 `_FAKE_ZSTD`：断言 7 会真的把层解开、看里面的包名，而假帧头
+    一解就报错。用假头的话，这两个场景测的就成了「zstd 能不能解」，
+    而不是「架构对不对」—— 又是一次「测的不是它声称的那件事」。
+
+    调用方必须先确认系统有 zstd（见 main 开头的检查）。
+    """
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for tmpl in _PLATFORM_PKG_TMPL:
+            info = tarfile.TarInfo(f"./node_modules/{tmpl.format(a=arch)}")
+            info.type = tarfile.DIRTYPE
+            info.mode = 0o755
+            tar.addfile(info)
+    proc = subprocess.run(["zstd", "-19", "-q", "-c"], input=buf.getvalue(),
+                          capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"zstd 压缩失败：{proc.stderr.decode(errors='replace')[:200]}")
+    return proc.stdout
 
 # ---- AXML 常量 ----
 RES_XML_TYPE = 0x0003
@@ -254,10 +300,25 @@ def main() -> int:
 
     known = {"good", "upstream-id", "upstream-ver", "wrong-ns", "wrong-label",
              "bad-authority", "no-layers", "sidecar-only", "gz-stripped",
-             "no-manifest"}
+             "no-manifest", "x64-layer", "arm64-layer"}
     if scenario not in known:
         print(f"未知场景 {scenario!r}；可用：{sorted(known)}", file=sys.stderr)
         return 2
+
+    # 带 zstd dsh 层的场景必须用**真的**层：断言 7 会把它解开看里面的包。
+    #
+    # 这里原本所有场景都用 `_FAKE_ZSTD`（只有帧头、没有内容）。加了断言 7 之后
+    # `good` 场景也开始失败 —— 因为假帧头解不开。那不是断言 7 太严，
+    # 而是夹具失真：一个「解不开的层」本来就不该被当成合格产物。
+    # 所以改成造真层（内容极小，只有 7 个空包目录）。
+    #
+    # 没有 zstd 就明确跳过（返回 3），而不是退回假层 ——
+    # 假层会让这些场景永远「通过」，比不测更坏。
+    needs_real_layer = scenario not in ("no-layers", "sidecar-only", "gz-stripped")
+    if needs_real_layer and shutil.which("zstd") is None:
+        print(f"跳过场景 {scenario}：本机没有 zstd，造不出真层（断言 7 要解压它）",
+              file=sys.stderr)
+        return 3
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -294,10 +355,23 @@ def main() -> int:
             z.writestr("assets/runtime/android-side.tar", _FAKE_TAR)
             z.writestr("assets/dsh/0.2.0-rc.2.tar.zst.sha256", b"0" * 64)
             z.writestr("assets/dsh/0.2.0-rc.2.tar", _FAKE_TAR)
-        else:
+        elif scenario in ("x64-layer", "arm64-layer"):
+            # 身份全对、层名与容器格式全对 —— 只有层**里面的包**是错架构。
+            # 这是真机实测到的形态（2026-10-14）：断言 6 的三条全过，
+            # node 也真的起来了，然后在 host preparation 阶段致命退出。
+            #
+            # android-side 层仍然用假帧头：断言 6 只看魔数、不解压，
+            # 而断言 7 只解 dsh 层。保持夹具轻量。
+            arch = "x64" if scenario == "x64-layer" else "arm64"
             z.writestr("assets/runtime/android-side.tar.zst", _FAKE_ZSTD)
             z.writestr("assets/runtime/android-side.tar.zst.sha256", b"0" * 64)
-            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst", _FAKE_ZSTD)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst", build_real_layer(arch))
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst.sha256", b"0" * 64)
+        else:
+            # 正常场景的 dsh 层也必须是真层（见 main 开头 needs_real_layer 的说明）。
+            z.writestr("assets/runtime/android-side.tar.zst", _FAKE_ZSTD)
+            z.writestr("assets/runtime/android-side.tar.zst.sha256", b"0" * 64)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst", build_real_layer("arm64"))
             z.writestr("assets/dsh/0.2.0-rc.2.tar.zst.sha256", b"0" * 64)
 
     print(f"已生成 {out_path}（场景 {scenario}）")
