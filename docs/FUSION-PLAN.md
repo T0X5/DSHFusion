@@ -129,7 +129,7 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 |---|---|---|---|
 | 发行版 | Debian trixie | Ubuntu noble | 以 DSHBox 为准；备份逻辑不得假设发行版 |
 | 运行时模型 | 三层（base/node/android-side）独立装配 | Ubuntu + dsh-runtime 两份分包 | **以 DSHBox 的分层为准**，把 DSHA 的"受管更新"改造成分层更新 |
-| 回切机制 | `runtime-current/` ↔ `runtime-new/` 双目录 | `ManagedRuntimeTransaction` + `RuntimeTrial` 隔离试运行 | **取 DSHA 的试运行思路**，落在 DSHBox 的双目录上 |
+| 回切机制 | `runtime-current/` ↔ `runtime-new/` 双目录，**但它换的是运行环境层，不是用户数据** | `ManagedRuntimeTransaction` + `RuntimeTrial` 隔离试运行 | **取 DSHA 的「先试运行、后提交」思路，但落点不是那对槽** —— 见下面的 2.4b 审计。`BundleManager.promoteNewSlotToCurrent()` 换的是 base/node/dsh 三层环境，而 `user-data/` 由本表下一行承诺「不被打扰」，两者不能混为一谈 |
 | 数据契约 | `user-data/` 不被打扰 | 宿主归档 v5 + 范围/合并子目录 | 移植 v5 的**格式与预检**，宿主实现重写为 DSHBox 风格 |
 | **工具链** | AGP **8.9.2**（单元测试按 `android.jar` 解析 `java.nio.file`） | AGP **9.1.1**（按 JDK 解析） | 以 DSHBox 为准。后果具体而隐蔽：DSHA 的 `Files.readString`/`writeString`（Java 11+）在本仓库**编不过**。3 份测试因此做机械适配并登记为 `derived`/`adapted`。见 [INCIDENTS.md](INCIDENTS.md) 第 20 条 |
 
@@ -144,7 +144,7 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 | 2.2 | 范围备份（全量 / 只对话 / 只插件 / 只设置） | DSHA `BackupScope`＋枚举/写入侧 | ✅ PR #6（CI 通过 run 38633884134） | 依赖 2.1；范围是纯逻辑，好测 |
 | 2.3 | 凭据排除（机器本地记录 **投影**掉，而不是整份删除） | DSHA `CredentialProjection`＋`CredentialFileBackupSource` | ✅ **已通过真实 CI**（run [38643847540](https://github.com/T0X5/DSHFusion/actions/runs/38643847540)，commit `19e95bd`，**24/24 步全绿**；`:backup` **76 条测试**、产物 128,791,472 字节）。分支 `phase-2.3/credential-exclusion`，PR #8 | 安全项，独立可测 |
 | 2.4a | **恢复核心**：预检 + 候选构建 + 校验（`NativeRestorePlan`/`BackupTree`） | DSHA `NativeRestorePlan`＋`BackupTree`＋`DataFormatEvidence`＋`RuntimeDescriptor` | ✅ **已通过真实 CI**（run [38647873314](https://github.com/T0X5/DSHFusion/actions/runs/38647873314)，commit `0629409`，**24/24 步全绿**；`:backup` **85 条测试 / 12 个类**、产物 128,789,848 字节）。分支 `phase-2.4/restore-core`，PR #10 | 会毁数据的那条路径，必须先能本机真跑 |
-| 2.4b | 恢复的落点与隔离试运行 + 失败回切（按 DSHBox 的 `runtime-current/` ↔ `runtime-new/` 另写） | DSHA `RuntimeTrial` **思路**（代码不搬） | 未开始 | 依赖 2.4a；要按骨干的设置模型与双目录机制另写 |
+| 2.4b | 恢复的落点与本机映射 + 隔离试运行 + 失败回切（**落在 `user-data/` 的成员上，不是 runtime 槽**） | DSHA `NativeRestoreTargets` **不导入**（见下）；只取 `RuntimeTrial` 的**思路** | 审计已完成（2026-10-14），未开始实现 | 依赖 2.4a；落点已由审计改正 |
 | 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA `AutomaticBackups` | 未开始 | 最后做，依赖 2.1–2.4 |
 
 **2.2 落地时校正了本表的两处假设**（都是对照真实代码后改的，不是推测）：
@@ -259,6 +259,97 @@ return digestTree(fs, root, control);          // ← 通用回退，功能完�
 不是同一个模型，不能照搬。** 它是 2.4 里唯一「思路可借、代码要重写」的部分 ——
 DSHBox 的 `runtime-current/` ↔ `runtime-new/` 切换是它自己的机制。
 具体怎么落，等它自己的审计做完再定；**不要因为 `RuntimeTrial` 长得像就搬。**
+
+### 2.4b 的只读审计结论（2026-10-14，**已审计、未实施**）
+
+2.4b 要做的是「把候选树提交到本机真实位置，失败能回切」。审计推翻了本文件自己
+先前的两处写法，也推翻了「复用 DSHA 的落点实现」这个默认假设。
+
+#### 一、回切的落点不是 runtime 槽 —— 我先前写的方案自相矛盾
+
+本文件的「必须先解决的冲突」表里，**同一个表的两行互相打架**：
+
+- 「回切机制」那行原本写：落在 DSHBox 的 `runtime-current/` ↔ `runtime-new/` 上；
+- 「数据契约」那行写：`user-data/` **不被打扰**。
+
+读代码后事实是后者对、前者错：
+
+| 证据 | 位置 | 说明 |
+|---|---|---|
+| 四个槽的定义 | `sandbox-manager/src/main/java/com/dshbox/app/sandbox/BundleManager.kt:26-30` | `currentSlotDir()`/`newSlotDir()`/`backupSlotDir()`/`failedSlotDir()` —— 四个**运行环境**槽 |
+| 槽的切换与回滚 | `sandbox-manager/src/main/java/com/dshbox/app/sandbox/BundleManager.kt:240-284` | `promoteNewSlotToCurrent()` 换的是 base/node/dsh 三层环境与 `runtime-previous`；`rollback()` 换回来 |
+| 用户数据目录 | `sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxConfig.kt:41-46` | `userDataDir = File(appFilesDir, "user-data")`，**与 runtime 无关** |
+| DSH 的 HOME | `app/src/main/java/com/dshbox/app/service/SandboxService.kt:1017` | `DSH_HOME=/root/projects/.dsh` |
+| 宿主与 guest 的 bind | `app/src/main/java/com/dshbox/app/ui/files/FilesScreen.kt:170`、`app/src/main/java/com/dshbox/app/util/SandboxFiles.kt:16-21` | 宿主 `user-data` ↔ guest `/root/projects` 是 bind 关系，**同一份数据** |
+
+**结论：恢复写的是用户数据（`user-data/.dsh`），而 `BundleManager` 那对槽换的是运行环境。
+把用户的恢复提交挂在环境槽上，等于用「换整个系统」去实现「换一个目录」。**
+`runtime-current` ↔ `runtime-new` 与 2.4b **不是同一个问题**；环境更新是阶段 3 的事。
+
+#### 二、DSHA 的 `NativeRestoreTargets` 不可复用 —— 三条独立理由
+
+第一版审计只写了「它依赖 `ConfigStore`/`KeyVault`」。读完代码后，那甚至不是最强的理由：
+
+1. **逻辑根词汇根本不同。** 归档里的根名 = `BackupSource.id()`
+   （`HostSnapshot.java:43` 与 `:220` 都写 `source.id()`），而 `BackupSource.description()`
+   只给三个键：`id` / `scope` / `external`（`BackupSource.java:62-68`）。
+   DSHA 的 `target()` 第一句就是 `BackupJson.string(root, "logicalKind")` ——
+   **我们的根没有这个键，它会直接抛**。DSHA 的根名是 `dsh-home`/`dsh-child`/
+   `native-settings`/`plugin-store`/`plugin-package`/`project`，其中 `dsh-child` 是
+   「`.dsh` 的**子条目**逐个成根」；我们的方案是「一个成员一个根」
+   （`DshBackupMember.id`）。**这是两套不同的归档词汇，不是同一套的两个实现。**
+2. **目的地路径不同。** 它写 `runtime-current/base`、`files/user-data-v5/dsh`、
+   `files/plugin-imports/<task>`；我们的是 `user-data/.dsh`。
+3. **设置钩子不同。** 它的 `current()`/`apply()` 走 `ConfigStore`（SharedPreferences +
+   Keystore），我们的是 DataStore。这条仍然成立，但**即使它不成立，前两条也已经够了**。
+
+⇒ 登记为 `not_imported`，并且在 2.4b 里**另写**一个 `Mapping`。这正是硬约束 2 说的
+「重复模块必须选一个权威实现」——权威实现是**我们自己的归档词汇**。
+
+#### 三、落点有单一事实来源，而且 2.2 当时就是对的
+
+`DshBackupScope` 的类型说明写着「`path` 相对 `user-data`」。这句话曾被我认为需要复核
+（因为 DSH 的 HOME 看起来该是 `/root/.dsh`）。实测**它是对的**：
+
+```
+guest /root/projects  ←bind→  宿主 filesDir/user-data
+DSH_HOME = /root/projects/.dsh  →  宿主 filesDir/user-data/.dsh
+```
+
+所以 `DshBackupMember.path`（`.dsh`、`.dsh/sessions`、…）可以直接当**宿主相对路径**用，
+不需要第二套映射表。2.4b 的 `Mapping` 因此很薄。
+
+#### 四、`Mapping` 的形状已经被 2.2 决定
+
+按 `NativeRestorePlan.Target` 的语义（`write`=活动目标、`read`=合并来源、
+`merge`=先拷后写、`group`=共享同一活动目标的组、`prefix`=组内子路径、
+`memberRead`=成员写前状态）与 `DshBackupMember` 逐项对上：
+
+| `DshBackupMember` | `Target` |
+|---|---|
+| 所有成员 | `group = "dsh"`（同一个活动根 `.dsh`） |
+| `mergeSubdir` | `prefix`（FULL 为空串） |
+| `path` 的宿主根 | `write = read = user-data/.dsh` |
+| —— | `merge = true`（未恢复的文件必须活着） |
+| `path` | `memberRead`（成员级写前摘要，用于 `TARGET_CHANGED` 与冲突预览） |
+
+#### 五、提交这一步确实还不存在（这是 2.4b 的实质内容）
+
+读完 `NativeRestorePlan` 全部 405 行后确认：`buildCandidates()` **只写
+`task/candidate/<group>/…`，一次都不碰活动目录**（`:182-323`），返回「哪些组有内容」。
+文件级校验（`:263-267` 重新读回落盘文件比 sha256）、链接环检测（`:290-300`）、
+冲突计数（`:247-252`）都在候选阶段完成。**所以 2.4a 是安全的**，缺的正是：
+
+1. 把 `candidate/<group>` 提交到 `write`；
+2. 提交前的 `before`/`readBefore` 复核（`buildCandidates` 已经做了，`:188-192`）；
+3. 失败时回切 —— 判据是 `plan.before` 里那些写前摘要。
+
+#### 未验证（如实登记）
+
+- **`buildCandidates` 的候选树与活动树之间的原子性没有验证过**：它是「先拷贝、
+  再逐文件覆盖」，提交时若进程被杀，活动树可能半新半旧。这不是 2.4a 的缺陷
+  （它不写活动目录），但它是 2.4b **必须有**的东西 —— 而且**目前没有任何测试覆盖它**。
+- 真机上「恢复后 DSH 能否读回会话」未验证（还没有界面入口）。
 
 ### 阶段 2 验收
 
