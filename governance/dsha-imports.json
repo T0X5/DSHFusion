@@ -189,7 +189,7 @@
     }
   ],
   "not_imported": {
-    "note": "同样属于 v5 预检、但本阶段刻意不搬的类，及其理由。留在阶段 2.4 处理。",
+    "note": "同样属于备份能力、但按阶段**刻意不搬**的类及理由。阶段 2.1–2.2 搬的是「判断归档对不对」与「决定备份什么」；剩下这一批全部是**恢复编排**，归阶段 2.4。其中只有 BackupTree / AndroidBackupFileSystem / AndroidTreeFileSystem 是因为 Android 耦合（AndroidTreeFileSystem 的批量快速路径）而搬不进来，其余都是因为绑定 DSHA 自己的模型（rootfs 分包、user-data-v5、自建插件目录）。",
     "items": [
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeRestorePlan.java",
@@ -210,6 +210,50 @@
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupErrorCode.java",
         "reason": "它不是枚举，而是异常→错误码的归类器，且含两处 Android 类名判断。真正有用的东西是它透传的那套错误码表，而那张表已经通过容器的 IOException message 自然存在，本阶段不需要额外包装。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupTree.java",
+        "reason": "**唯一因为 Android 耦合被挡在门外的一个**。它引用 AndroidBackupFileSystem、AndroidTreeFileSystem.LeafBatch.PAYLOAD_BYTES 与 AndroidTreeFileSystem.DigestDirectory —— 都是 Android 专属快速路径，搬进来纯 JVM 单测就跑不了。而且它只被一批事务类使用（ColdInstallTransaction / ConfigurationSnapshots / EnvironmentRebuildTransaction / HostDataTransaction / ManagedRuntimeTransaction / NativeConfigurationReset / NativeRestorePlan / NativeRestoreTargets / ProfileSettingsTransaction / QuarantinedPluginReview），全属阶段 2.4 的恢复编排。现在搬进来只会是「有代码没调用方」。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/AndroidBackupFileSystem.java",
+        "reason": "BackupTree 的 Android 实现（lstat/NOFOLLOW、批量列举）。阶段 2.2 的 JVM 侧已有 JvmBackupFileSystem 供单测；Android 实现等 2.4 有真实调用方时再搬，那时才验证得了。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/AndroidTreeFileSystem.java",
+        "reason": "同上（LeafBatch / DigestDirectory 快速路径）。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ColdInstallTransaction.java",
+        "reason": "恢复事务之一：依赖 DSHA 的冷装模型与 BackupTree。阶段 2.4 的范围。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/HostDataTransaction.java",
+        "reason": "恢复事务之一：DSHA 的 user-data-v5 布局。阶段 2.4 的范围。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ManagedRuntimeTransaction.java",
+        "reason": "恢复事务之一：DSHA 的受管运行时。阶段 2.4 的范围。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/EnvironmentRebuildTransaction.java",
+        "reason": "恢复事务之一：重建 rootfs 分包。DSHFusion 没有对应的分包模型（DIV-0015 / 分层运行环境是 DSHBox 的）。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ConfigurationSnapshots.java",
+        "reason": "恢复事务之一：DSHA 的 profile 配置快照。DSHFusion 的 profile 布局不同（见 DshBackupScope 里对 .dsh/profiles 的说明）。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ProfileSettingsTransaction.java",
+        "reason": "同上。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/QuarantinedPluginReview.java",
+        "reason": "插件隔离复核，接的是 DSHA 自己的插件管理目录（plugin-src / plugin-history）—— 本仓库不存在。DSHFusion 侧的对应物是 plugin-manager 模块的 plugin-guard.json。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeConfigurationReset.java",
+        "reason": "与 NativeRestorePlan 同属 DSHA 的原生恢复模型。"
       }
     ]
   }
