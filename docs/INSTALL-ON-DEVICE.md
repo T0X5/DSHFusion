@@ -363,7 +363,41 @@ sha256 `747c0b619b2b52bb5b73f98357efb51452da3116cb1f36588274cbd3cae67b9`。
 
 拿到之后我会把它记进
 [docs/PHASE0-VERIFICATION.md](PHASE0-VERIFICATION.md)，
-并把 AGENTS.md 里「真机验证 ❌ 未做」那一行改成实测结果。
+并把 AGENTS.md 里那一行状态改成实测结果。
 
 > **在拿到这些结果之前，本仓库不会声称「真机验证通过」。**
 > 这是硬约束第 4 条：没有实际执行的验证，不得标记为成功。
+
+---
+
+## 7. ✅ 成功之后应该看到什么（2026-10-14 实测基线，第六版 `5a7e7c7`）
+
+**这一节不再是待办 —— 第六版已经在真机上跑通了。** 留存它有两个用处：
+一是下一次升级后可以**照这个基线逐条对照**，二是省掉「成功长什么样」的猜测。
+
+下面全部是从设备上直接读回来的，**没有一条来自界面**：
+
+| 检查 | 实测读数 |
+|---|---|
+| DSHFusion 里有 `node` 进程 | ✅ `u0_a475 28990 node --expose-internals --import /opt/dshbox/link-shim.mjs … --port 0` |
+| 它的完整启动命令 | `… bin.js --profile web --patch /root/projects/.dsh/dshbox/…-overlay.yml --host 127.0.0.1 --port 0` |
+| `/proc/net/tcp` 里它监听的端口 | **39983**（`0x9C2F`），该行 **owner uid = 10475** = `com.dshfusion.app` |
+| 同机上 3080 的 owner | uid **10402** = `com.dsh.client`（DSHA）—— 两个 DSH 并存，互不干扰 |
+| 对端口发一个 HTTP 请求 | `401 dsh web authentication required` —— 这**正是 DSH 的应答**（DIV-0014 的判据） |
+
+**关键点：端口是内核随机分配的（39983），不是 3080。** 看到 39983 说明
+`--port 0` 生效了；只要这个端口的 owner uid 是 DSHFusion 的，就是对的。
+**看到 3080 反而是可疑的** —— 那大概率又探到了别人的服务。
+
+另外两个「看着像错、其实正常」的噪音：
+
+- `WARNING: linker: failed to find generated linker configuration from
+  "/linkerconfig/ld.config.txt"` —— PRoot 环境里的常态，不是错误。
+- 进程的 `--port 0` 不等于实际端口。`--port 0` 是**请求内核分配**，
+  真实端口在 DSH 打印的那一行里，也在 `/proc/net/tcp` 里。
+
+> **仍然只差界面那一半。** 上面证明的是「进程真的起来了、在监听、能应答」。
+> 界面显示的端口是不是 39983、点「浏览器」能不能带 token 打开，
+> 这两条还没被核对过 —— 它们属于**显示层**，即使有问题也是另一类缺陷。
+> 见到时请按第 6 节最后两条告诉我。
+
