@@ -142,7 +142,7 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 |---|---|---|---|---|
 | 2.1 | 备份归档 v5 格式与预检（不含自动计划） | DSHA `backup/` | ✅ PR #4（CI 通过 run 38627379821） | 先有能读写的格式，才谈自动化 |
 | 2.2 | 范围备份（全量 / 只对话 / 只插件 / 只设置） | DSHA `BackupScope`＋枚举/写入侧 | ✅ PR #6（CI 通过 run 38633884134） | 依赖 2.1；范围是纯逻辑，好测 |
-| 2.3 | 凭据排除（机器本地记录 **投影**掉，而不是整份删除） | DSHA `CredentialProjection`＋`CredentialFileBackupSource` | ✅ 分支 `phase-2.3/credential-exclusion`（待 CI） | 安全项，独立可测 |
+| 2.3 | 凭据排除（机器本地记录 **投影**掉，而不是整份删除） | DSHA `CredentialProjection`＋`CredentialFileBackupSource` | ✅ **已通过真实 CI**（run [38643847540](https://github.com/T0X5/DSHFusion/actions/runs/38643847540)，commit `19e95bd`，**24/24 步全绿**；`:backup` **76 条测试**、产物 128,791,472 字节）。分支 `phase-2.3/credential-exclusion`，PR #8 | 安全项，独立可测 |
 | 2.4 | 覆盖更新的隔离试运行 + 失败回切 | DSHA `RuntimeTrial` 思路 | 未开始 | 落在 DSHBox 双目录上 |
 | 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA `AutomaticBackups` | 未开始 | 最后做，依赖 2.1–2.3 |
 

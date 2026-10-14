@@ -133,6 +133,15 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
   上游 DSHA 的 release 是 `minifyEnabled false`，所以「DSHA 装了它能跑」不构成证据。
   app 侧补了 `-keep class org.yaml.snakeyaml.**`。**这条规则是保险，不是修复 ——
   它的效果没有被验证**，CI 只构建 debug。
+> ✅ **阶段 2.3 已通过真实 CI**（run [38643847540](https://github.com/T0X5/DSHFusion/actions/runs/38643847540)，
+> commit `19e95bd`）：**24/24 步全绿**（比 2.2 多一步 —— 就是下面那条计数断言），
+> `:backup` **76 条测试**（Java 33 + Kotlin 43，11 个测试类），产物 `dshapp-debug-apk` 128,791,472 字节。
+> **但这 76 条里有一条特别值得注意**：那 8 条 Kotlin 测试**本机跑不了**（没有 kotlinc），
+> 而 Gradle 对通过的测试不打名字 —— 所以 CI 的绿**本身**并不作证它们跑过。
+> 为此专门加了一步把每个测试类的条数打进日志并判失败（见第 26 条），
+> 而它**第一次真跑就红了** —— 红的是我写错的期望值（见第 27 条）。
+> **2.3 仍未在真机上验证过**（还没有导出/恢复入口）。
+
 - **刻意没做**：`settings.yaml` 里模型凭据的**字段级**排除。目前的模型凭据走 DSH 自己的
   凭据存储（与 `.credentials.yaml` 同一条路）；`settings.yaml` 里是否还有需要单独排除的字段，
   要等确认过它的实际内容才能决定。**没有证据之前不动它。**
