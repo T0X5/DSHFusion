@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+"""make-apk-identity-fixture.py — 造一个合成 APK，用来测 check-apk-identity.py。
+
+## 为什么需要
+
+`check-apk-identity.py` 的价值全在它的断言上。如果只测「文件不存在时退出 2」，
+那测的是 argparse，不是检查逻辑。要测断言就必须有一个 APK，而真实的 CI 产物
+不在仓库里（也不该在）。
+
+所以这里**手写一个最小但格式合法**的 APK：二进制 AndroidManifest.xml（AXML）
+用 `zipfile` 打包，`resources.arsc` 可选。
+
+## 为什么手写而不是用 aapt2
+
+本机没有 Android SDK，CI 里也不该为了造夹具去装一整套。AXML 的格式是稳定的，
+手写一份反而让「检查器读的到底是什么字节」变得完全明确。
+
+## 用法
+
+    tools/make-apk-identity-fixture.py <输出 apk> [场景]
+
+场景：
+    good          applicationId=com.dshfusion.app、versionCode=1、versionName=0.1.0
+                  → 期望 check-apk-identity.py 退出 0
+    upstream-id   applicationId=com.dshbox.app → 期望退出 1
+    upstream-ver  versionCode=8、versionName=1.4.0 → 期望退出 1
+    wrong-ns      application 类不在 com.dshbox.app 下 → 期望退出 1
+    wrong-label   应用名字面量不是 DSHFusion → 期望退出 1
+    no-manifest   包里没有 AndroidManifest.xml → 期望退出 2
+    x64-layer     身份全对、层名与容器格式全对，只有 dsh 层**里面的包**是 x64
+                  → 期望退出 1（断言 7）。这是 2026-10-14 真机失败的形态：
+                  断言 6 三条全过，node 也起来了，然后在 host preparation 阶段
+                  报「No usable native binding found for …-linux-arm64-gnu」
+    arm64-layer   与 x64-layer 相同，但层里是 arm64 的包 → 期望退出 0
+                  （用来证明 x64-layer 只因为「架构错」这一条失败，
+                   而不是碰巧被别的断言拦下）
+
+退出码：0 生成成功；2 用法错误；3 场景需要 zstd 但本机没有（跳过，不算通过）。
+"""
+
+import io
+import shutil
+import struct
+import subprocess
+import sys
+import tarfile
+import zipfile
+from pathlib import Path
+
+# 运行环境层占位内容。检查器只断言「这两个条目存在」，不解压它们，
+# 所以内容不必是真 gzip —— 但开头写成 gzip 魔数，免得将来有人
+# 看到一段随机字节就以为是坏的。
+_FAKE_GZIP = b"\x1f\x8b\x08\x00" + b"\x00" * 32
+# zstd 帧头（28 B5 2F FD）。断言 6 会按魔数判容器格式，所以夹具必须给出
+# 真实格式的头 —— 用 gzip 头假装 zstd 的话，测的就不是真东西了。
+_FAKE_ZSTD = b"\x28\xb5\x2f\xfd" + b"\x00" * 32
+# 裸 tar：magic 在偏移 257（`BundleManager` 就是这么判的）。
+_FAKE_TAR = b"\x00" * 257 + b"ustar" + b"\x00" * 32
+
+# 断言 7（层架构）要检查的 7 个按平台分发的包。清单来自上游发布产物的逐包对照，
+# 与 tools/build-dsh-layer.sh 和 tools/check-apk-identity.py 里的同一份保持一致。
+_PLATFORM_PKG_TMPL = (
+    "node-addon-require-builtin-linux-{a}-gnu",
+    "@deepseek-ai/node-addon-system-linux-{a}",
+    "@img/sharp-linux-{a}",
+    "@img/sharp-libvips-linux-{a}",
+    "@koromix/koffi-linux-{a}",
+    "@vscode/ripgrep-linux-{a}",
+    "sherpa-onnx-linux-{a}",
+)
+
+
+def build_real_layer(arch: str) -> bytes:
+    """造一个**真的** zstd 压缩 tar，里面只有断言 7 关心的那些包目录。
+
+    为什么不能用 `_FAKE_ZSTD`：断言 7 会真的把层解开、看里面的包名，而假帧头
+    一解就报错。用假头的话，这两个场景测的就成了「zstd 能不能解」，
+    而不是「架构对不对」—— 又是一次「测的不是它声称的那件事」。
+
+    调用方必须先确认系统有 zstd（见 main 开头的检查）。
+    """
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for tmpl in _PLATFORM_PKG_TMPL:
+            info = tarfile.TarInfo(f"./node_modules/{tmpl.format(a=arch)}")
+            info.type = tarfile.DIRTYPE
+            info.mode = 0o755
+            tar.addfile(info)
+    proc = subprocess.run(["zstd", "-19", "-q", "-c"], input=buf.getvalue(),
+                          capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"zstd 压缩失败：{proc.stderr.decode(errors='replace')[:200]}")
+    return proc.stdout
+
+# ---- AXML 常量 ----
+RES_XML_TYPE = 0x0003
+RES_STRING_POOL_TYPE = 0x0001
+RES_XML_RESOURCE_MAP_TYPE = 0x0180
+RES_XML_START_NAMESPACE_TYPE = 0x0100
+RES_XML_START_ELEMENT_TYPE = 0x0102
+RES_XML_END_ELEMENT_TYPE = 0x0103
+RES_XML_END_NAMESPACE_TYPE = 0x0101
+
+TYPE_STRING = 0x03
+TYPE_INT_DEC = 0x10
+
+# AOSP 固定的系统属性资源 ID
+ATTR_LABEL = 0x01010001
+ATTR_NAME = 0x01010003
+ATTR_VERSION_CODE = 0x0101021B
+ATTR_VERSION_NAME = 0x0101021C
+ATTR_AUTHORITIES = 0x01010018
+
+NO_INDEX = 0xFFFFFFFF
+
+
+def build_string_pool(strings: list[str]) -> bytes:
+    """构造一个 UTF-16 的 ResStringPool（不做样式、不做 UTF-8 压缩）。"""
+    offsets = []
+    blob = bytearray()
+    for s in strings:
+        offsets.append(len(blob))
+        encoded = s.encode("utf-16-le")
+        blob += struct.pack("<H", len(s))
+        blob += encoded
+        blob += b"\x00\x00"  # 结尾 NUL，格式要求
+    while len(blob) % 4:
+        blob += b"\x00"
+
+    header_size = 28
+    offsets_size = 4 * len(strings)
+    strings_start = header_size + offsets_size
+    total = strings_start + len(blob)
+
+    out = bytearray()
+    out += struct.pack("<HHI", RES_STRING_POOL_TYPE, header_size, total)
+    out += struct.pack("<IIIII", len(strings), 0, 0, strings_start, 0)
+    for o in offsets:
+        out += struct.pack("<I", o)
+    out += blob
+    return bytes(out)
+
+
+def build_resource_map(res_ids: list[int]) -> bytes:
+    """ResXMLTree_resourceMap：第 i 项对应字符串池第 i 条的名字资源 ID。"""
+    header_size = 8
+    total = header_size + 4 * len(res_ids)
+    out = bytearray()
+    out += struct.pack("<HHI", RES_XML_RESOURCE_MAP_TYPE, header_size, total)
+    for rid in res_ids:
+        out += struct.pack("<I", rid)
+    return bytes(out)
+
+
+def build_start_element(
+    name_idx: int,
+    attrs: list[tuple[int, int, int, int, int]],
+    ns_idx: int = NO_INDEX,
+) -> bytes:
+    """构造一个 ResXMLTree 开始元素。
+
+    attrs 每项是 (attr_name_string_idx, attr_name_res_id, raw_string_idx,
+                  value_type, value_data)。
+    """
+    header_size = 16  # ResXMLTree_node
+    attr_start = 20   # ResXMLTree_attrExt 的大小
+    attr_size = 20    # 单个 ResXMLTree_attribute
+    attr_count = len(attrs)
+    ext_size = attr_start + attr_size * attr_count
+    total = header_size + ext_size
+
+    out = bytearray()
+    out += struct.pack("<HHI", RES_XML_START_ELEMENT_TYPE, header_size, total)
+    out += struct.pack("<II", 0xFFFFFFFF, 0xFFFFFFFF)  # lineNumber, comment
+    # ResXMLTree_attrExt
+    out += struct.pack("<iI", ns_idx if ns_idx != NO_INDEX else -1, name_idx)
+    out += struct.pack("<HHHHHH", attr_start, attr_size, attr_count, 0, 0, 0)
+    for a_name, a_resid, a_raw, v_type, v_data in attrs:
+        # ns 与 name 是有符号的 ResStringPool_ref；rawValue 是无符号的，
+        # NO_INDEX(0xFFFFFFFF) 只有按 "I" 才能装下。
+        out += struct.pack("<iiI", -1, a_name, a_raw)  # ns, name, rawValue
+        out += struct.pack("<HBBI", 8, 0, v_type, v_data)  # Res_value
+    del a_resid
+    return bytes(out)
+
+
+def build_end_element(name_idx: int, ns_idx: int = NO_INDEX) -> bytes:
+    header_size = 16
+    total = header_size + 8
+    out = bytearray()
+    out += struct.pack("<HHI", RES_XML_END_ELEMENT_TYPE, header_size, total)
+    out += struct.pack("<II", 0xFFFFFFFF, 0xFFFFFFFF)
+    out += struct.pack("<iI", ns_idx if ns_idx != NO_INDEX else -1, name_idx)
+    return bytes(out)
+
+
+def build_axml(scenario: str) -> bytes:
+    """拼出一份最小的 AndroidManifest.xml。"""
+    if scenario == "upstream-id":
+        package = "com.dshbox.app"
+    else:
+        package = "com.dshfusion.app"
+
+    if scenario == "upstream-ver":
+        version_code, version_name = 8, "1.4.0"
+    else:
+        version_code, version_name = 1, "0.1.0"
+
+    if scenario == "wrong-ns":
+        app_class = "com.dshfusion.app.DshApp"
+    else:
+        app_class = "com.dshbox.app.DshApp"
+
+    if scenario == "wrong-label":
+        label = "DSHBox"
+    else:
+        label = "DSHFusion"
+
+    # authority 场景。
+    #
+    # 每个场景都要有一个 provider —— 检查器现在要求「至少有一个 authority」
+    # 且「每个都从 applicationId 派生」，缺了 provider 会命中前一条。
+    if scenario == "bad-authority":
+        authority = "com.dshbox.app.fileprovider"
+    else:
+        authority = f"{package}.fileprovider"
+
+    # 字符串池。索引顺序是刻意安排的：资源映射按字符串索引对齐。
+    strings = [
+        "android",            # 0  命名空间 URI（这里不真正使用）
+        "manifest",           # 1
+        "package",            # 2
+        "versionCode",        # 3
+        "versionName",        # 4
+        "application",        # 5
+        "name",               # 6
+        "label",              # 7
+        package,              # 8
+        version_name,         # 9
+        app_class,            # 10
+        label,                # 11
+        "provider",           # 12
+        "authorities",        # 13
+        authority,            # 14
+    ]
+    S = {s: i for i, s in enumerate(strings)}
+
+    # 资源映射：第 i 项对应字符串池第 i 条。
+    res_map = [0] * len(strings)
+    res_map[S["versionCode"]] = ATTR_VERSION_CODE
+    res_map[S["versionName"]] = ATTR_VERSION_NAME
+    res_map[S["name"]] = ATTR_NAME
+    res_map[S["label"]] = ATTR_LABEL
+    res_map[S["authorities"]] = ATTR_AUTHORITIES
+
+    chunks = bytearray()
+    chunks += build_start_element(
+        S["manifest"],
+        [
+            # (attr name idx, res id, raw string idx, value type, value data)
+            (S["versionCode"], ATTR_VERSION_CODE, NO_INDEX, TYPE_INT_DEC, version_code),
+            (S["versionName"], ATTR_VERSION_NAME, S[version_name], TYPE_STRING, S[version_name]),
+            (S["package"], 0, S[package], TYPE_STRING, S[package]),
+        ],
+    )
+    chunks += build_start_element(
+        S["application"],
+        [
+            (S["name"], ATTR_NAME, S[app_class], TYPE_STRING, S[app_class]),
+            # 应用名用字面量字符串：走「不解资源表」那条分支。
+            (S["label"], ATTR_LABEL, S[label], TYPE_STRING, S[label]),
+        ],
+    )
+    # FileProvider：检查器会核对它的 authority 是否从 applicationId 派生。
+    chunks += build_start_element(
+        S["provider"],
+        [
+            (S["authorities"], ATTR_AUTHORITIES, S[authority], TYPE_STRING, S[authority]),
+        ],
+    )
+    chunks += build_end_element(S["provider"])
+    chunks += build_end_element(S["application"])
+    chunks += build_end_element(S["manifest"])
+
+    body = build_string_pool(strings) + build_resource_map(res_map) + bytes(chunks)
+
+    header_size = 8
+    out = bytearray()
+    out += struct.pack("<HHI", RES_XML_TYPE, header_size, header_size + len(body))
+    out += body
+    return bytes(out)
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 2
+    out_path = Path(sys.argv[1])
+    scenario = sys.argv[2] if len(sys.argv) > 2 else "good"
+
+    known = {"good", "upstream-id", "upstream-ver", "wrong-ns", "wrong-label",
+             "bad-authority", "no-layers", "sidecar-only", "gz-stripped",
+             "no-manifest", "x64-layer", "arm64-layer"}
+    if scenario not in known:
+        print(f"未知场景 {scenario!r}；可用：{sorted(known)}", file=sys.stderr)
+        return 2
+
+    # 带 zstd dsh 层的场景必须用**真的**层：断言 7 会把它解开看里面的包。
+    #
+    # 这里原本所有场景都用 `_FAKE_ZSTD`（只有帧头、没有内容）。加了断言 7 之后
+    # `good` 场景也开始失败 —— 因为假帧头解不开。那不是断言 7 太严，
+    # 而是夹具失真：一个「解不开的层」本来就不该被当成合格产物。
+    # 所以改成造真层（内容极小，只有 7 个空包目录）。
+    #
+    # 没有 zstd 就明确跳过（返回 3），而不是退回假层 ——
+    # 假层会让这些场景永远「通过」，比不测更坏。
+    needs_real_layer = scenario not in ("no-layers", "sidecar-only", "gz-stripped")
+    if needs_real_layer and shutil.which("zstd") is None:
+        print(f"跳过场景 {scenario}：本机没有 zstd，造不出真层（断言 7 要解压它）",
+              file=sys.stderr)
+        return 3
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
+        if scenario != "no-manifest":
+            z.writestr("AndroidManifest.xml", build_axml(scenario))
+        # 塞一个无关文件，让 zip 结构更像真 APK（且 no-manifest 场景下非空）
+        z.writestr("classes.dex", b"dex\n035\x00" + b"\x00" * 64)
+
+        # 运行环境层：除三个「层有问题」的场景外，**每个场景都带上正确的层**。
+        #
+        # 理由不是「像真 APK」，而是隔离：套件用 check_scenario 断言失败**消息内容**，
+        # 而断言 6（必须含可用层）对所有夹具都会失败。若不给夹具塞层，
+        # 每个场景都会同时因为自己的原因和缺层而失败，消息里混着两条 ——
+        # 那样「夹具测的是不是它声称的那件事」就说不清了。
+        #
+        # 三个专门测断言 6 的场景，各自对应一种**真实发生过**的失败：
+        #   no-layers    —— 完全没有层（我抄 android.yml 漏掉建层步骤的那次）
+        #   sidecar-only —— 只有 .sha256 侧车，没有层本体。
+        #                   第一版断言 6 写的是 `startswith("android-side.tar.")`，
+        #                   `android-side.tar.gz.sha256` 满足这个前缀 ——
+        #                   于是 CI 全绿，而 APK 里根本没有层。
+        #   gz-stripped  —— 模拟 AGP 的真实行为：`.tar.gz` 被解压并去掉扩展名，
+        #                   在 APK 里变成 `android-side.tar`（裸 tar）。
+        #                   应用侧要求名字以 `android-side.tar.` 开头（带那个点），
+        #                   匹配不上 —— 层进了 APK 但永远看不见。
+        #                   这是 run 38513950774 的真实产物形态。
+        if scenario == "no-layers":
+            pass
+        elif scenario == "sidecar-only":
+            z.writestr("assets/runtime/android-side.tar.gz.sha256", b"0" * 64)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.gz.sha256", b"0" * 64)
+        elif scenario == "gz-stripped":
+            z.writestr("assets/runtime/android-side.tar.gz.sha256", b"0" * 64)
+            z.writestr("assets/runtime/android-side.tar", _FAKE_TAR)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst.sha256", b"0" * 64)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar", _FAKE_TAR)
+        elif scenario in ("x64-layer", "arm64-layer"):
+            # 身份全对、层名与容器格式全对 —— 只有层**里面的包**是错架构。
+            # 这是真机实测到的形态（2026-10-14）：断言 6 的三条全过，
+            # node 也真的起来了，然后在 host preparation 阶段致命退出。
+            #
+            # android-side 层仍然用假帧头：断言 6 只看魔数、不解压，
+            # 而断言 7 只解 dsh 层。保持夹具轻量。
+            arch = "x64" if scenario == "x64-layer" else "arm64"
+            z.writestr("assets/runtime/android-side.tar.zst", _FAKE_ZSTD)
+            z.writestr("assets/runtime/android-side.tar.zst.sha256", b"0" * 64)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst", build_real_layer(arch))
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst.sha256", b"0" * 64)
+        else:
+            # 正常场景的 dsh 层也必须是真层（见 main 开头 needs_real_layer 的说明）。
+            z.writestr("assets/runtime/android-side.tar.zst", _FAKE_ZSTD)
+            z.writestr("assets/runtime/android-side.tar.zst.sha256", b"0" * 64)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst", build_real_layer("arm64"))
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst.sha256", b"0" * 64)
+
+    print(f"已生成 {out_path}（场景 {scenario}）")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

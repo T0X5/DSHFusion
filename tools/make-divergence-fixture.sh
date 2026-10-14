@@ -28,6 +28,9 @@ mkdir -p "$TARGET"
 TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------- 假的上游文件 ----------
+# 注意：app/build.gradle.kts 必须同时含 versionCode 与 versionName。
+# 真实的上游文件两者都有，DIV-0001 也同时约束两者。夹具里少写一个字段，
+# 就会让「偏离能否施加」的测试因为夹具不真实而假失败（曾发生过）。
 mkdir -p "$TARGET/app/src/main/res/values" \
          "$TARGET/app/src/main/res/values-zh" \
          "$TARGET/app/src/main/java/com/dshbox/app/util" \
@@ -39,6 +42,7 @@ android {
     defaultConfig {
         applicationId = "com.dshbox.app"
         versionCode = 8
+        versionName = "1.4.0"
     }
 }
 

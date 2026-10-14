@@ -12,17 +12,17 @@
   "planned": [
     {
       "id": "DIV-0001",
-      "title": "独立应用标识 com.dshfusion.app",
+      "title": "独立 applicationId 与独立版本线（namespace 不动）",
       "upstream": "dshbox",
       "type": "identity",
       "phase": 1,
       "target_files": [
         "app/build.gradle.kts"
       ],
-      "change": "applicationId 与 namespace 由 com.dshbox.app 改为 com.dshfusion.app；versionCode/versionName 改用独立版本线。",
-      "rationale": "必须能与 com.dshbox.app、com.dsh.client 并存安装，否则无法在真机上与上游对照测试。",
-      "reapply": "同步后由 tools/apply-divergences.sh 按规则重写 app/build.gradle.kts 中的这三行。",
-      "conflict_risk": "medium — 上游每次改 build.gradle.kts 都可能冲突；冲突时以本项为准。"
+      "change": "applicationId 由 com.dshbox.app 改为 com.dshfusion.app；versionCode 8→1、versionName 1.4.0→0.1.0。**namespace 保持上游值 com.dshbox.app 不变。**",
+      "rationale": "applicationId 决定安装身份 —— 必须能与 com.dshbox.app、com.dsh.client 并存安装，否则无法在真机上与上游对照测试。namespace 则决定生成的 R/BuildConfig 类所在包，也决定 AndroidManifest 中相对类名（.DshApp、.MainActivity、.service.SandboxService）的解析基准。改 namespace 就必须同时改 36 处 `import com.dshbox.app.R`、4 处 `import com.dshbox.app.BuildConfig` 与全部相对类名 —— 那正是被刻意推迟到阶段 4 的全量重命名。2026-10-13 的首次真实 CI 运行验证了这个判断：把 namespace 一起改掉后报出 36 个 Unresolved reference 'R'。 版本号也必须独立：SettingsScreen 会显示 v${BuildConfig.VERSION_NAME}，沿用上游的 1.4.0 会让设置页显示「v1.4.0」，而 CHANGES.md 里 v1.4.0 正是 DSHBox 的 versionCode 8 —— 用户会以为装的是上游那个版本。",
+      "reapply": "tools/apply-divergences.sh 的 handle_div_0001：改写 applicationId 与版本线；发现 namespace 被误改时回退为 com.dshbox.app。",
+      "conflict_risk": "low —— 单文件单行。上游若改 applicationId 的写法，锚点检查会先失败而不是静默覆盖。"
     },
     {
       "id": "DIV-0002",
@@ -69,17 +69,18 @@
     },
     {
       "id": "DIV-0004",
-      "title": "上游监测地址指向 DSHFusion 自身",
+      "title": "上游监测地址改指 DSHFusion 真实仓库",
       "upstream": "dshbox",
       "type": "config",
       "phase": 1,
       "target_files": [
         "app/src/main/java/com/dshbox/app/util/AppVersion.kt"
       ],
-      "change": "SITE_URL / REPO_URL / 更新检查 API_URL 改为 DSHFusion 自己的地址，或改为可配置并默认关闭检查。",
-      "rationale": "不能把用户导向 DSHBox 的发布页；也不能让本应用去拉取 DSHBox 的 Release 作为自身更新源。",
-      "reapply": "由 tools/apply-divergences.sh 重写这三个常量。",
-      "conflict_risk": "low"
+      "change": "AppVersion.kt 的 SITE_URL / REPO_URL / API_URL 由 DSHBox 的站点与仓库改为 https://github.com/T0X5/DSHFusion；User-Agent 由 DSHBox/ 改为 DSHFusion/。",
+      "rationale": "不能把用户导向 DSHBox 的发布页，也不能让本应用把 DSHBox 的 Release 当成自身更新源。**本项曾经做错**：常量被换成了 example.invalid 占位域名，而重放器只检查「还有没有指向上游的地址」，于是报告「已指向自身」—— 占位域名解析不到任何主机，那句话是假的，链接会死、更新检查永远失败。现在重放器改为正向校验地址里确实出现 SELF_URL，并显式拒绝 example.invalid。",
+      "reapply": "tools/apply-divergences.sh 的 handle_div_0004：把三处上游地址替换为 SELF_URL，并复核替换结果里确实出现 SELF_URL。",
+      "conflict_risk": "low",
+      "known_limitation": "DSHFusion 仓库当前是私有的，releases/latest 对匿名请求返回 404，自动更新检查不会成功。这是私有仓库的必然结果，不是缺陷。失败路径静默（MainScreen 只在 isNewer 时弹窗），不打扰用户。自建自用时更新靠手动安装 APK；仓库若将来公开，无需改动即可工作。"
     },
     {
       "id": "DIV-0005",
@@ -94,6 +95,283 @@
       "rationale": "官网内容与品牌属于上游；本项目不需要对外站点。",
       "reapply": "同步时整目录忽略。",
       "conflict_risk": "none"
+    },
+    {
+      "id": "DIV-0006",
+      "title": "为上游 android.yml 补顶层 permissions",
+      "upstream": "dshbox",
+      "type": "config",
+      "phase": 1,
+      "target_files": [
+        ".github/workflows/android.yml"
+      ],
+      "change": "在 android.yml 顶部加 permissions: contents: read。",
+      "rationale": "上游未声明顶层 permissions，GITHUB_TOKEN 会拿到仓库默认的宽权限；构建任务只需要读源码。该工作流要在 DSHFusion 里真实运行，因此不适合像其他上游文件那样走『不改、只登记基线』的路子。",
+      "reapply": "tools/apply-divergences.sh 会在锚点 name: Android CI 之后插入该块；锚点失效则报错而不是猜。",
+      "conflict_risk": "low —— 单文件、单处、插入式改动；上游若自己加了 permissions 则本偏离自动判定为已生效。"
+    },
+    {
+      "id": "DIV-0007",
+      "title": "隐私审计：跳过冻结的上游许可副本，并放行 .invalid 测试域",
+      "upstream": "dshbox",
+      "type": "config",
+      "phase": 1,
+      "target_files": [
+        "tools/privacy_audit.py"
+      ],
+      "change": "四处改动。(1) 新增 FROZEN_PREFIXES，scan() 跳过 governance/upstream-licenses/ 下的文件；(2) ALLOW 增加 example\\.invalid 一条；(3) ALLOW 再增加一条仓库内相对路径 —— `app/src/main/java/com/dshbox/app/ui/home/HomeScreen.kt` 里的 `/home/HomeScreen.kt` 被「Linux 家目录」正则误匹配（与既有那条「安卓导航三键名」同一类）。该条目刻意写到完整仓库前缀，**不放宽任何 `/home/…` 形态**：已做反向验证 —— `/home/t0x5/secret/project`、`/home/HomeScreen.kt`、`/home/other/HomeScreen.kt` 三者仍然被报出。触发来源是 DIV-0014 在 `target_files` 里列出了该路径。(4) ALLOW 再增加一条**负面测试夹具** —— 阶段 2.1 从 DSHA 导入的 `BackupArchiveTest.pathsDuplicatesAndTypeConflictsAreRejected` 里有一行是要**验证被拒绝的输入**（`../escape`、`/absolute`、盘符样例、`a//b` 等），其中盘符样例被「Windows 盘符路径」规则命中。放行正则刻意锚定整行（从 `../escape` 到那条盘符样例），只放行这一条夹具，**不放宽任何「任意盘符路径」形态**：已做反向验证 —— `C:` + `/Users/someone/secret.txt`、`C:` + `/my/local/path`、`D:` + `/bad` 三者仍然被报出。字面量按本文件既有约定**拼接**书写，因为 `tools/privacy_audit.py` 自身也在扫描范围内 —— 第一版把样例直接写进注释，结果审计立刻报出「本文件 L123 泄露」，这就是自匹配。",
+      "rationale": "上游的隐私审计在 DSHFusion 里报出 34 处，其中两类需要区别对待。第一类是**门禁互相矛盾**：governance/upstream-licenses/ 是上游许可与声明的冻结副本，字节由 upstream-license-hashes.json 锁定，改动会让 check-license-hashes.py 失败 —— 也就是说那里报出的发现我们无权修改。审计一个改不了、也不属于我们的目录没有意义。同一口径已用于 tools/check-references.py 的 FROZEN_DIRS。实测触发点是 DSHA 的 THIRD_PARTY_NOTICES.md 里 GeckoView 版本号 143.0.<14位日期串>，被「设备序列号样式」规则误判。第二类是**保留域误报**：make-record-fixture.sh 用 upstream@example.invalid 造测试夹具，而 .invalid 是 RFC 2606 保留的测试专用顶级域，与已在白名单里的 example.com 同性质，保证解析不到任何真实主机。其余 31 处（/tmp 硬编码路径）没有走白名单，而是在我们自己的文件里改掉了 —— 那些是真实的工程缺陷：并发会互相覆盖、中断会留残留，用 mktemp 本来就更对。",
+      "reapply": "tools/apply-divergences.sh 的 handle_div_0007：确认 FROZEN_PREFIXES 存在、scan() 里引用了它、ALLOW 含 example\\.invalid；缺任一项即报失败。",
+      "conflict_risk": "low-medium —— 单文件两处。上游若自己改了 SKIP 逻辑或 ALLOW，锚点检查会先失败而不是静默覆盖。"
+    },
+    {
+      "id": "DIV-0008",
+      "title": "android.yml 增加 APK 产物身份核验步骤",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        ".github/workflows/android.yml"
+      ],
+      "change": "在 `Assemble debug APK` 之后插入 `Verify APK application identity` 步骤，运行 `python3 tools/check-apk-identity.py <apk>`。",
+      "rationale": "上游只构建、不核验产物身份。DSHFusion 承诺了独立 applicationId、独立版本线与独立应用名，而这些都编译进二进制 —— 光看构建配置无法确认。阶段 1 实测证明这不是多虑：versionCode/versionName 当时是上游的 8 / 1.4.0，配置与产物一致但两者都错；android:label 是资源引用，必须解 resources.arsc 才能知道各语言下解析成什么。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0008 校验该步骤存在且指向脚本。",
+      "conflict_risk": "low"
+    },
+    {
+      "id": "DIV-0009",
+      "title": "根目录 LICENSE 不再放 GPL-3.0 全文，改为许可状态说明",
+      "upstream": "dshbox",
+      "type": "removal",
+      "phase": 1,
+      "target_files": [
+        "LICENSE"
+      ],
+      "change": "根目录 LICENSE 由上游的 GPL-3.0 全文替换为 DSHFusion 的许可状态说明（私有自用、未授予许可），并指向 governance/upstream-licenses/DSHBox/LICENSE。",
+      "rationale": "上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，而 LICENSE-PENDING.md 写的是「暂不设许可，私有自用」—— 两者矛盾，且矛盾的是 GitHub 那一侧：它对外声称了一个本仓库并未做出的许可承诺。现在改成明确的状态说明，名实相符。",
+      "safety": "**GPL-3.0 全文没有被删除，只是换了位置。** 它按原样保存在 governance/upstream-licenses/DSHBox/LICENSE，SHA-256 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986，由 governance/upstream-license-hashes.json 记录并在 CI 中核验。handle_div_0009 会**正向核验**该副本仍然存在且哈希一致 —— 只检查「根目录不再是 GPL」是不够的，那等于允许许可证被换掉后凭空消失。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0009 校验：根 LICENSE 含 DSHFusion 标记且不再是 GPL 全文，同时上游 GPL 副本存在且哈希正确。",
+      "conflict_risk": "low"
+    },
+    {
+      "id": "DIV-0010",
+      "title": "install_dsh.sh 取消默认 DSH 版本，改为失败即报错",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "runtime-bundle/scripts/install_dsh.sh"
+      ],
+      "change": "`DSH_VERSION=\"${DSH_VERSION:-0.1.0-rc.6}\"` 改为无默认值：未显式指定就打印错误并以 2 退出。",
+      "rationale": "**这条偏离同时是对我自己上一轮结论的纠正。** 我此前把风险 R3 写成「已从结构上消除」，理由是 tools/build-dsh-layer.sh 的版本只来自 upstreams.json。这个说法过头了：新脚本只是**新增了一条正确的路径**，并没有消除 install_dsh.sh 里那个陈旧的 0.1.0-rc.6 默认值。上游文件里的坑还在，只是暂时没人踩。现在把默认值去掉 —— 静默装出一个错版本，比大声拒绝危险得多。",
+      "scope_note": "本脚本在 DSHFusion 里**没有任何地方执行它**：app 走的是 SandboxManager.installDshFromNpm 的 Kotlin 路径，RuntimeUpdateManager/DshUpdateScreen 里对它的提及都只是注释。所以这个改动不影响运行，它修的是一个潜在的坑。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0010 校验：脚本含 DSH_VERSION 空值守卫，且正文里不再出现版本默认值。",
+      "conflict_risk": "low"
+    },
+    {
+      "id": "DIV-0011",
+      "title": "FileProvider authority 从 applicationId 派生（真机安装失败 -13）",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "app/src/main/AndroidManifest.xml",
+        "app/src/main/java/com/dshbox/app/util/viewer/ExternalOpener.kt",
+        "app/src/main/java/com/dshbox/app/ui/webview/SandboxFilePickerDialog.kt"
+      ],
+      "change": "1) app/src/main/AndroidManifest.xml：FileProvider 的 `android:authorities=\"com.dshbox.app.fileprovider\"` → `\"${applicationId}.fileprovider\"`。\n2) ExternalOpener.kt：`const val FILE_PROVIDER_AUTHORITY = \"com.dshbox.app.fileprovider\"` → `val FILE_PROVIDER_AUTHORITY = \"${BuildConfig.APPLICATION_ID}.fileprovider\"`（去掉 const，因为 APPLICATION_ID 随构建变体变化）。\n3) SandboxFilePickerDialog.kt：仅 KDoc 里的 authority 示例改成 `content://<applicationId>.fileprovider/...`。**这一条一开始漏登记了**，是 tools/check-import-fidelity.py 报出来的 —— 见 detection。",
+      "rationale": "**这是第一次真机验证暴露的问题，而且是我的阶段 1 决策造成的。**\n\n真机安装报 `安装失败(-13)` / `与已安装应用内容提供者冲突`，即 INSTALL_FAILED_CONFLICTING_PROVIDER。\n\n根因：applicationId 只是「安装身份」的一条轴，ContentProvider 的 authority 是**另一条独立的轴** —— Android 要求它全局唯一，两个已安装应用声明同一个 authority 时后装的那个直接失败 -13，**跟 applicationId 是否不同无关**。\n\n阶段 1 把 applicationId 从 com.dshbox.app 改成 com.dshfusion.app，三条身份断言全过、CI 全绿，但 authority 写死成上游的值，与已装的 DSHBox 撞车。我此前把「并存安装必需」理解成只包含 applicationId / 应用名 / 版本号，**漏掉了 authority 这条轴**。\n\n第二重后果（即使装上了也会中）：上游代码里 authority 有两个来源，manifest 写死 `com.dshbox.app.fileprovider`，而 DshWebViewScreen.kt:449 用 `\"${context.packageName}.fileprovider\"` 计算 —— 在 DSHBox 里两者相等所以没事，在 DSHFusion 里 packageName 是 com.dshfusion.app，两者不等，getUriForFile 会抛异常（该文件第 168 行的注释正好警告过这个后果）。所以两处必须一起改。",
+      "detection": "补了两层检查，都做过反向验证：\n- tools/check-apk-identity.py 断言 4：APK 里每个 authority 都必须以 applicationId 开头，且至少存在一个。对那个装不上的真实 APK 跑 → 正确退出 1。\n- tools/check-android-identity.py 检查 4：源码层扫描所有 AndroidManifest.xml 的 android:authorities，以及代码里写死的 `com.dshbox.app.*fileprovider` 字面量。构建前就报，不用等 CI。\n- 夹具新增 bad-authority 场景，套件独立测这条断言（不靠别的断言顺带发现）。\n\n**漏登记第三个文件是被工具抓出来的。** 改完 manifest 与 ExternalOpener.kt 后，我顺手把 SandboxFilePickerDialog.kt 的 KDoc 示例也改了，但只往 target_files 里登记了两个文件。tools/check-import-fidelity.py 逐 blob 对照上游时报出「1 处未登记的差异」，指名就是这个文件。\n这正是那条硬约束的意义：**未登记的偏离 = 下次同步时静默丢失**。改 KDoc 看着无害，但它同样是一处偏离；漏登记之后，下次合并上游会把上游的旧 KDoc 合回来，而没有人会注意到文档已经和代码不一致。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0011 校验：manifest 与 ExternalOpener.kt 两处都必须从 applicationId 派生，任一处写死即失败；SandboxFilePickerDialog.kt 的 KDoc 不得再出现写死的 `com.dshbox.app.fileprovider`。",
+      "conflict_risk": "low",
+      "note": "上游 DSHBox 自身也有这个隐患（manifest 与 DshWebViewScreen 用了两种写法，只是恰好相等）。这是**上游缺陷**，但我们不向上游提改动，只在本仓库内适配。"
+    },
+    {
+      "id": "DIV-0012",
+      "title": "android.yml 增加运行环境层构建步骤（上游根本没有这一步）",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        ".github/workflows/android.yml",
+        "tools/build-runtime-assets.sh"
+      ],
+      "change": "在 `assembleDebug` 之前插入一步 `Build runtime assets`（跑 `tools/build-runtime-assets.sh`），并给 `assembleDebug` 加上环境变量 `DSHFUSION_RUNTIME_ASSETS: ${{ github.workspace }}/runtime/android-assets`。同时新增 `tools/build-runtime-assets.sh`（本项目自有文件，不对应任何上游文件）。",
+      "rationale": "**上游 android.yml 根本不建运行环境层。** 实测确认：上游 `.github/workflows/android.yml` 里只有 `assembleDebug`（第 87 行），没有任何 runtime 层构建步骤；上游仓库只有 `android.yml` 与 `pages.yml` 两个 workflow，也没有别的 workflow 承担这件事。\n\n上游的发布流程是在**树外**把层建到 `../../runtime/android-assets`，再由 `app/build.gradle.kts:78` 的 `assets.srcDirs` 读进来。也就是说：**克隆上游仓库直接跑它的 CI，产出的 APK 不含任何运行环境层。**\n\n我抄 android.yml 时只抄了编译步骤，于是 DSHFusion 的 APK 也没有层 —— 后果比「少一层」严重得多：`prepareAndroidSide`（OnlineRuntimeImportManager.kt:458）会在下载完几百 MB 之后才失败，而 `provisionBundledDshBaseline`（第 733 行）会静默 return。**两条获取途径都是死的**，这个 APK 装上去永远起不了 DSH。\n\n所以这不是「给上游补个便利步骤」，而是让产物具备最小可用性的必要改动。",
+      "detection": "tools/check-apk-identity.py 断言 6：APK 里必须同时存在 `assets/runtime/android-side.tar.*` 与 `assets/dsh/*.tar.{zst,gz}`，缺任一即失败（`--allow-missing-runtime-layers` 可降级为备注，供确实不该带层的场景使用）。\n夹具 `no-layers` 场景：身份全部正确、只缺层 —— 确保它只因为「缺层」失败，不是被别的断言顺带拦下。套件 5d 独立断言它。\n**这条断言才是这次修复的关键**：在此之前，缺层只被记为「备注」，CI 照样全绿，缺层的 APK 一路走到了真机。一个发现了问题却不判失败的检查等于没有检查。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0012 校验：android.yml 必须含 `tools/build-runtime-assets.sh` 调用与 `DSHFUSION_RUNTIME_ASSETS` 环境变量，且该步骤必须出现在 `assembleDebug` **之前** —— 顺序反了等于没建层。",
+      "conflict_risk": "medium —— 上游若调整 android.yml 的步骤结构，锚点会失效。但我们是**插入**而非改写上游已有步骤，合并时冲突面很小，通常能自动合入。",
+      "note": "上游不提交 runtime/ 是刻意的判断（层是可再生构建产物，118 MB 不该进 git），我们沿用 —— DSHFusion 的 `.gitignore` 同样忽略 `/runtime/`。区别只在于：上游把建层留在树外的人工流程里，我们把它放进 CI，否则「克隆即可构建」不成立。"
+    },
+    {
+      "id": "DIV-0013",
+      "title": "docs/BUILD_RUNBOOK.md 加一条 zstd 警告横幅（上游该文件里的 gzip 建议会造出坏产物）",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "docs/BUILD_RUNBOOK.md"
+      ],
+      "change": "在文件最前面插入一段 6 行的引用块，说明：该文件第 1.2/1.4 节里「zstd 缺装会自动降级 gzip」这条建议**只适用于上游仓库内的打包与消费**，不能用于任何要进 APK 的层，因为 AGP 会解压 `.gz` 资源并去掉扩展名，使层变成应用侧找不到的 `.tar`。横幅本身不改动上游正文一个字。",
+      "rationale": "这是一份**要照着做**的 runbook，不是背景说明。它第 38 行写「`zstd` 缺装会自动降级 gzip」、第 50 行写「不存在则 pack 脚本自动 gzip」、第 117 行写「若某层用 gzip 制作，同样可解（gzip→commons-compress）」。\n\n这三句对**上游**都是真的 —— `BundleManager` 确实按魔数嗅探、确实能解 gzip。**问题在于它们答的不是同一个问题**：层不是直接交给 `BundleManager` 的，它要先过 AGP 的资源打包，而 AGP 会解压 `.gz` 并去掉扩展名。\n\n我本人就是被这份 runbook（配合 `pack_runtime.sh` 的默认值）说服、用 gzip 建层，结果 CI 全绿而产物里是 `assets/runtime/android-side.tar`，应用侧 `startsWith(\"android-side.tar.\")` 匹配不上 —— 等于没建。见 AGENTS.md 的「修好了？没有」专节。\n\n所以这条横幅的价值不在「更正一处笔误」，而在于**在读者照着做之前拦住他**。放在最前面是因为没人会读完整篇 runbook 才动手。",
+      "detection": "tools/verify-phase0.sh 5c-2 节断言两个构建脚本不含 gzip 打包路径（`-czf`）、层文件赋值只产出 `.tar.zst`、且收尾断言使用精确文件名；同时断言缺 zstd 时退出 2 并解释原因。\n`handle_div_0013` 自身核验横幅存在，且**上游正文一字未改**（第 38/50/117 行的原文必须仍在）—— 只加不改，是这条偏离能低冲突合入的前提。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0013 校验：`docs/BUILD_RUNBOOK.md` 开头必须是那 6 行横幅，且正文三处 gzip 原文仍在（说明我们只做了插入）。上游若改了这份文档，横幅可能被冲掉 —— 重放会重新插到最前面。",
+      "conflict_risk": "none —— 纯前置插入，不触碰上游任何一行。上游改这份文件时 git 会按上下文合并，冲突面仅限文件头。",
+      "note": "选择改这份上游文件而不是只在 DSHFusion 自有文档里写警告，是因为**这份文件本身就是要照着做的**：读者打开它就直接开干，不会先去读 AGENTS.md。偏离登记 + 重放脚本保证了它在下次上游同步时不会静默消失。"
+    },
+    {
+      "id": "DIV-0014",
+      "title": "DSH 端口改为内核动态分配 + 健康检查必须核验身份（写死 3080 会与其它 DSH 应用互撞，并把别人的服务误报成「DSH 就绪」）",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "common/src/main/java/com/dshbox/app/common/Constants.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxConfig.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxProcessRunner.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/DefaultSandboxManager.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/HttpHealthChecker.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/DshHealthPolicy.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxHealth.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxManager.kt",
+        "sandbox-manager/src/test/java/com/dshbox/app/sandbox/HttpHealthCheckerTest.kt",
+        "sandbox-manager/src/test/java/com/dshbox/app/sandbox/DshHealthPolicyTest.kt",
+        "sandbox-manager/src/test/java/com/dshbox/app/sandbox/SandboxProcessRunnerTest.kt",
+        "app/src/main/java/com/dshbox/app/ui/MainScreen.kt",
+        "app/src/main/java/com/dshbox/app/ui/home/HomeScreen.kt",
+        "app/src/main/java/com/dshbox/app/ui/settings/SettingsScreen.kt",
+        "app/src/main/java/com/dshbox/app/ui/settings/DiagnosticsScreen.kt",
+        "app/src/main/java/com/dshbox/app/ui/webview/DshBrowser.kt",
+        "app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+        "app/src/main/res/values/strings.xml",
+        "app/src/main/res/values-zh/strings.xml",
+        "app/src/main/res/values-ar/strings.xml",
+        "app/src/main/res/values-es/strings.xml",
+        "app/src/main/res/values-fr/strings.xml",
+        "app/src/main/res/values-ru/strings.xml"
+      ],
+      "change": "四件事一起改，缺一条都会留下同一个 bug 的另一种形态：\n\n1. **端口不再写死。** `Constants.DSH_DEFAULT_PORT = 3080` 与 `DSH_BASE_URL` 常量删除，改为 `DSH_PORT_AUTO = 0`（= 让内核分配）与函数 `Constants.dshBaseUrl(port)`。`SandboxConfig.dshPort` 默认值改为 `DSH_PORT_AUTO`。\n2. **端口必须真的传下去。** `SandboxProcessRunner.buildProotDshCommand` 新增 `port` 参数并生成 `--port <n>`。上游只设了一个 `PORT` 环境变量 —— 那是死代码（见 rationale）。\n   ⚠️ **但这一行的顺序有硬约束（2026-10-14 真机失败后补，见 detection 第 13 项）。**\n   dsh 启动器只解析它自己的旗标（`--profile` / `--patch` / `--dump-*`），\n   **遇到第一个不认识的旗标，就把剩下的原样转交给被启动的应用**（`@deepseek-ai/dsh/lib/bin.js`\n   的模块注释：launcher flags come first）。`--host` / `--port` 属于 web 应用、不属于启动器，\n   所以 `--patch` 必须排在它们**之前**。上游原本把 `$patches` 紧贴在 `--profile` 之后，\n   正是靠这个顺序才成立；本次把 `--host` / `--port` 插到中间，**打断了一个隐含前提**。\n   顺序排错时 web 应用打印 `error: unknown option '--patch'` 并退出，DSH 每次启动都死在这里。\n   正确写法：把 `$patches` 留在 `--profile` 之后、`--host` / `--port` 之前。\n3. **健康检查核验身份。** `HttpHealthChecker` 改为读运行期端口与 launchToken（用 provider 而非构造期取值），带 token 发请求，判据从「任意 HTTP 状态码」收紧为「状态码 ≠ 401」。`SandboxHealth` 新增 `instanceVerified`，用于区分「没人应答」与「有人应答但不是我」。\n4. **就绪必须同时满足进程存活。** `DshHealthPolicy.decideDshHealth` 的 `Ready` 分支由 `if (probe.webUiReady)` 改为 `if (probe.webUiReady && probe.processAlive)`。\n\n配套：新增纯函数 `DshWebLaunchParser`（从 DSH 自己打印的 `dsh web: http://127.0.0.1:<port>/?token=…` 里解析端口与 token）；`SandboxManager` 接口新增 `dshPort` / `dshBaseUrl`；UI 与通知栏改用本实例地址，端口未知时显示新增文案 `home_dsh_address_unknown`（6 个语言同步）；`DefaultSandboxManager` 在启动前/重启前/停机后统一清空端点状态。",
+      "rationale": "**这是真机上实测出来的缺陷，不是静态推演。** DSHFusion 被刻意设计成可与其它 DSH 应用并存安装（阶段 1 专门为此改了 applicationId 与 authority，见 DIV-0011），而 Android 上所有应用共享网络命名空间 —— 于是两台 DSH 抢同一个 3080。真机证据（2026-10-14，v3 已安装并运行）：\n\n- 进程表里 DSHFusion 只有 `libproot.so → bash → sleep 3600`，**没有 node**；全表匹配 `dsh web` 只命中 `u0_a402 … node …/lib/bin.js web --no-open --host 127.0.0.1 --port 3080`，即**另一个应用**（`com.dsh.client`）。\n- `/proc/net/tcp` 里 `0100007F:0C08 … 0A` 的 uid 是 **10402**（`com.dsh.client`），不是 DSHFusion 的 10473。\n- 而 DSHFusion 界面显示「DSH 就绪」「http://127.0.0.1:3080」「已运行 00:00:49」。\n\n即：**自己的 DSH 根本没起来，界面却报就绪，因为它探到的是别人的服务。**\n\n后果比「显示错误」严重得多。首页「启动」按钮的可用条件是 `sandboxRunning && !dshReady`（HomeScreen.kt），`dshReady` 被误报为 true 之后这个按钮**永久灰掉**；「浏览器」按钮虽然可点，但 token 永远拿不到，只会弹「启动令牌尚未就绪」。用户被卡在一个既没起来、又无法重试的状态里。\n\n根因是三处独立的假设叠在一起，任何一处单独修都不够：\n\n- `Constants.DSH_DEFAULT_PORT = 3080`：把「端口」当成编译期常量。\n- `HttpHealthChecker.httpProbe()` 返回 `code in 200..599`，注释明写「任何 HTTP 响应（含 401/302/404/5xx）都说明 webserver 存活」。**这个推理本身没错**，但它答的是「3080 上有没有 webserver」，不是「我的 DSH 起来了没有」—— 两者只在「设备上只有一个 DSH」时等价。\n- `DshHealthPolicy` 的 `Ready` 只看 `webUiReady`，**从不查 `processAlive`** —— 而进程存活恰恰是唯一能区分「我的服务」和「别人的服务」的本地证据。\n\n另外查清了两件事，它们解释了为什么这个假设能潜伏这么久：\n\n1. **`base[\"PORT\"] = \"3080\"` 是死代码。** `dsh --dump-config` 显示 webserver 的端口配置是 `port: !!js ctx.webStartup.port ?? 3080`，只来自命令行 `--port`；`@deepseek-ai/dsh-web-app/lib/startup.js` 也只读 `options.port`。全包内 `process.env.PORT` 的唯一命中是一个无关的示例文件。**上游那个环境变量看起来像在配置端口，其实什么都没做** —— 一个不起作用却长得像配置的变量，正是让「端口写死」得以长期不被怀疑的原因。\n2. **端口可以从 DSH 自己的输出里学到。** `dsh-web-app/lib/index.js` 打印 `dsh web: ${authenticatedUrl}`，其端口取自 `connectionCtx.webServer.port`，即**实际绑定**的端口。本机实测 `--port 0`：内核分配 42797，打印 `dsh web: http://127.0.0.1:42797/?token=…`。app 本来就在解析这一行取 token（`ingestDshWebLaunchToken`），多取一个端口即可 —— 不需要任何新的探测机制。\n\n判据用「状态码 ≠ 401」而不是「= 200」，也是实测定的：对本机 DSH 请求 `/`，无 token → 401、错 token → 401、对 token → **303**（不是 200）。所以 401 是 DSH 明确表达的「这个 token 我不认识」，即「应答者不是我」。拿不到 token 时一律判未就绪，而不是退回「任何响应都算活」：宁可继续等（启动有 120s 窗口），也不要再产生一次无法归因的假成功。\n\n**为什么这是 adaptation 而不是「上游 bug 修复」。** 对上游 DSHBox 而言，写死 3080 是**自洽的**：它就是那台设备上唯一的 DSH，没有第二个应用来抢端口。这条偏离是 DSHFusion「可并存安装」这一设计目标带来的必然代价，因此登记为 DSHFusion 侧的适配，而不是声称上游错了。同理，`docs/AUDIT.md:139-140` 早在阶段 0 就把「动态端口」列为 DSHA 的相对优势之一 —— 当时我把它当成一条无关的功能对比记下了，没有把它连到「DSHFusion 会与别的 DSH 并存」这件我自己刚刚做过的事上。这条偏离是那个疏忽的补课。",
+      "detection": "**反向验证（本项目要求：检查器必须被证明能拦住真实故障）。** 对 handle_div_0014 注入 12 种故障，逐一确认被拦：Ready 判据退回只看 webUiReady、健康判据退回「任意状态码都算活」、加回 base[\"PORT\"]、加回写死的端口常量、首页/WebView 退回写死地址、通知栏改用错的状态流、诊断页换掉占位文案、接口不再暴露实例地址、不再区分「有人应答但不是我」、删掉某个语言的文案、dsh 启动命令行不再传 --port、解析器不再校验端口范围。\n\n其中两条**第一轮漏过**，都是同一类病（查的东西与实际语义不等价），已收紧：(a) 只查了「资源里有占位文案」而没查「UI 真的在用它」—— UI 写死地址仍能通过；(b) 端口范围那条查的是字面量 65535，而 KDoc 里也写着「1..65535」，把校验删掉仍能通过。两者都是「检查器被一个长得像的东西骗过」，与本项目此前断言 6 被 .sha256 侧车骗过是同一种病。\n\n**判据的前置条件也实测过并钉住了。** 带 token 之后又测了换路径的后果：`GET /?token=<正确>` → 303，而 `GET /api/health?token=<正确>` → **401** —— 即「状态码 != 401」这个判据**只在路径是 DSH 打印的那个 URL 时成立**，换成一个看起来更正规的健康检查路径会让它永久失败，退化成上游踩过的「一直未就绪 → 120s 超时 → 销毁进程」。因此 5g 节另加两条断言：`SandboxConfig.healthPath` 默认值必须是 `/`，且不得被别处覆盖；两条都做过故障注入（改成 /api/health、在 ServiceLocator 里覆盖）并被拦下。\n\n**新增测试是否真的被执行，也单独证明了。** CI 全绿之后查日志，`DshWebLaunchParserTest` 这个类名一次都没出现（Gradle 默认不逐条打印测试名），而「CI 绿」只说明「没有测试失败」、不说明「测试类被发现了」——没被发现的测试类与全过的测试类在日志里长得一样。于是在临时分支上把期望端口 42797 改成 9999 做故障注入，推送并开临时 PR：run 38527201721 如期失败，报 `DshWebLaunchParserTest > 解析实测输出：端口与 token 都取到 FAILED` + `AssertionError at DshWebLaunchParserTest.kt:31`（第 31 行正是注入点）。这一次失败同时证明：测试类被发现、被执行、断言真的在断言、CI 会拦住其回归。临时分支与 PR 已删除。另记两个读法陷阱：`testDebugUnitTest` 那行必须没有 `UP-TO-DATE`/`FROM-CACHE`/`NO-SOURCE` 后缀才算真跑；`head_sha` 过滤需要完整 40 位 SHA（用短 SHA 会静默返回空列表）。\n\n**一处刻意不由源码断言覆盖**：把 DshWebLaunchParser.parse 的解析失败分支改成返回默认端口 3080（即原始 bug 的形态）—— 这属于**行为**，由单测 DshWebLaunchParserTest 的「解析失败不返回任何默认端口」守（已用等价实现复刻注入、确认该用例会失败）。源码断言不重复承担这一层，避免造出第二个只会查字符串的假保险。\n\n**第 13 种故障注入（2026-10-14 真机失败后补）：参数顺序。**\n把 `$patches` 挪回 `--port` 之后（即真机上那个坏顺序），handle_div_0014 的顺序断言必须失败。\n**这是本项目第一次遇到「字符串存在、但位置错」的回归** —— 原有的 `--port $port` 是\n**存在性**检查，在坏顺序下**照样通过**，所以它对这个 bug 是完全瞎的。\n两层都补了：`handle_div_0014` 增加下标比较断言；单测增加\n`dshPatchOverlaysMustPrecedeAppFlags`（钉下标，不钉存在性）。\n真机证据：`process-dsh.log` 里连续 6 次 `error: unknown option '--patch'`。\n\ntools/verify-phase0.sh 断言：`Constants.kt` 不再含 `3080` 字面量、`DSH_BASE_URL` 常量已删除、`DSH_PORT_AUTO` 存在；`SandboxProcessRunner` 生成的命令含 `--port`；`DefaultSandboxManager` 不再设 `base[\"PORT\"]`；`HttpHealthChecker` 含 401 判据与 token provider；`DshHealthPolicy` 的 Ready 分支同时要求 `processAlive`；6 个 strings.xml 键数一致且都含 `home_dsh_address_unknown`。\n单测：`DshWebLaunchParserTest`（含「解析失败不得返回任何默认端口」）、`HttpHealthCheckerTest`（含「401 判为不就绪」「无 token 判为不就绪」「请求确实带上了本实例 token」）、`DshHealthPolicyTest`（含「端口有应答但进程已死，不得判就绪」）。\n注意：`HttpHealthCheckerTest` 的**上游版本断言的正是这个 bug**（「HTTP 401 视为 webserver 存活」等），本次一并改写 —— 这一点在提交信息与 PR 评论里都写明了，避免被误读成「为了让测试通过而改测试」。",
+      "reapply": "无脚本可自动重放 —— 这处偏离跨 22 个文件、且是语义改动，不适合用锚点插入。同步上游后按以下顺序人工核对：\n1. `git diff <上游新提交> -- common/.../Constants.kt sandbox-manager/.../HttpHealthChecker.kt sandbox-manager/.../DshHealthPolicy.kt` —— 这三处是语义核心，冲突必须人工判。\n2. 核对 `SandboxProcessRunner` 的命令行仍带 `--port`（上游若改了 DSH 入口写法，这条最容易丢）。\n3. 跑 `tools/verify-phase0.sh` 与三个单测文件。\n上游若自行引入动态端口，则应删除本条偏离并在 note 里记明「已由上游解决」。",
+      "conflict_risk": "high —— 这是本次融合里冲突面最大的一处：跨 22 个文件，且改的都是上游**正在演进**的核心运行期代码（进程启动命令行、健康判定、UI 地址展示）。上游若重构健康检查或 DSH 启动方式，会与本条正面冲突。\n刻意避免了两类更脆的写法：不改 DSH 自身源码（仍然零补丁，符合本项目一贯策略）、不引入新的跨模块依赖（`DshWebLaunchParser` 放在 sandbox-manager 内，common 不反向依赖它）。",
+      "note": "**这是本项目第一次把「界面显示的状态」与「设备上真实发生的事」对上的修复。** 此前所有验证都停在「产物里有层」「进程起来了」，而这次是「界面说就绪」对不上「进程根本没起」—— 说明此前的验证清单缺了一条：**状态结论必须有独立证据**。真机核验方式已记入 docs/INSTALL-ON-DEVICE.md：界面报就绪时，用进程表与 /proc/net/tcp 的 uid 交叉确认那个端口确实是自己的。\n\n**另一个有意不做的改进**：探测路径目前仍是配置项 `healthPath`（默认 `/`），而不是从 DSH 打印的那一行里派生。既然端口和 token 都从那里学，路径同理 —— 派生能**从结构上**消除「配置与 DSH 不一致」这一类问题。不做的理由是 `healthPath` 是上游配置项，改成派生会扩大偏离面；当前用「两条断言钉住 + KDoc 写明实测数据」把风险降到可接受。若将来上游动了 healthPath 的语义，这条应升级为派生实现。\n\n**改命令行参数时，「加一个参数」不是局部改动（2026-10-14 补）。**\n加 `--host` / `--port` 时我只考虑了「端口要传下去」，没有考虑「这一行的顺序被别的东西依赖」。\n而依赖它的那条规则（dsh 启动器的 pass-through）**当时没有写在项目里的任何地方** ——\n我是从 `bin.js` 的模块注释里读到的。\n**一个隐含前提被破坏时，破坏它的人往往是唯一不知道它存在的人。**\n所以修复同时做了三件事：把规则写进参数 KDoc 与行内注释（放在下一个人会读的地方）、\n写进本登记、并加一条单测把它变成**可执行的事实**。\n\n这次失败也再次印证了本项目的一条老规矩：**「产物核验通过」与「在目标设备上能用」是两件事** ——\nAPK 里的层格式对、架构对、签名对、断言 7 全绿，DSH 依然一次都没起来。\n\n未做而有意留下的：端口**每次启动都变**（不记忆上次可用端口）。审计报告里 DSHA 的做法是「动态分配并复用上次可用端口」，那对需要固定地址的外部工具有用；但它引入一个新的失败模式（复用的端口恰好被别人占了），而当前阶段的首要目标是「不再互撞、不再误报」。地址在界面上随时可见，先保证正确，再谈稳定。"
+    },
+    {
+      "id": "DIV-0015",
+      "title": "dsh 运行环境层必须按目标架构（arm64）构建，不能跟随构建宿主",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "tools/build-dsh-layer.sh",
+        "tools/check-apk-identity.py",
+        "tools/README.md"
+      ],
+      "change": "三处一起改，缺一条都会留下同一个 bug 的另一种形态：\n\n1. **构建时显式指定目标平台。** `build-dsh-layer.sh` 的 `npm install` 加上 `--os=linux --cpu=arm64 --libc=glibc`（新增环境变量 `DSH_TARGET_ARCH`，默认 `arm64`）。这三个参数只影响**可选依赖的挑选**，不影响纯 JS 包。\n2. **装完自检，不通过就拒绝产出。** 新增「6.5 平台自检」：7 个按平台分发的包必须存在且是 arm64，且不得混入 x64。断言清单来自上游发布产物的逐包对照，不是想出来的。\n3. **产物级断言。** `check-apk-identity.py` 新增断言 7：流式解开 APK 里嵌的 dsh 层，检查同一组 7 个包。这样即使有人绕过脚本直接塞一个层进 APK，CI 也会拦下。\n\n顺带修正了脚本头部一句**错误的注释**：原文写着「`@deepseek-ai/dsh` 是纯 JavaScript 的 npm 包（无原生扩展、无 os/cpu 约束）」—— 就是这句话让整件事看起来不需要考虑架构。\n\n另外把「找不到 zstd」的处置从「直接退 2」改为「优先系统 zstd CLI，否则用 node 的 `zlib.createZstdCompress`，两者都没有才退 2」。**兜底改变的是「用什么压缩」，不是「要不要压缩」** —— 两条路都只产出 zstd，所以「绝不产出 gzip」这条保证没有被削弱。",
+      "rationale": "**这是真机上实测出来的，而且它是 DSHFusion 至今最深的一层缺陷：层的格式完全正确，内容是错的架构。**\n\n真机证据（2026-10-14，v4 安装后点启动）。界面报「DSH 异常 / 地址待定」，应用自带的「DSH 进程日志」里是：\n\n    dsh: fatal uncaught exception: Error: dsh: host preparation failed:\n         No usable native binding found for\n         node-addon-require-builtin-linux-arm64-gnu (auto)\n      attempts: [\n        { source: 'optional-package', request: 'node-addon-require-builtin-linux-arm64-gnu',\n          error: Cannot find module '…-linux-arm64-gnu' },\n        { source: 'local-build', path: '…/build/napi/napi-v9-linux-arm64-gnu/require_builtin.node',\n          error: Cannot find module … }\n      ]\n\n**注意这一次 Node 真的起来了** —— 上一版连 `node` 进程都没有（见 DIV-0014）。所以这是「往前走了一步之后才暴露出来的下一层问题」。\n\n根因：`@deepseek-ai/dsh` 本身确实是纯 JS，但它的依赖树里有 7 个**按平台分发的可选包**（optionalDependencies，由 npm 按宿主平台自动挑选）：\n\n    node-addon-require-builtin-linux-<arch>-gnu   ← dsh-app-boot 启动时必需\n    @deepseek-ai/node-addon-system-linux-<arch>\n    @img/sharp-linux-<arch> / @img/sharp-libvips-linux-<arch>\n    @koromix/koffi-linux-<arch>\n    @vscode/ripgrep-linux-<arch>\n    sherpa-onnx-linux-<arch>\n\nCI 跑在 x86_64 runner 上，于是 npm 装的是整套 `-linux-x64`。\n\n**判定依据是上游发布产物，不是推断。** 从 `WSK-build/DSHBox` v1.4.0 的 Release 下载官方 `0.2.0-rc.2.tar.zst`（85893395 B，sha256 `4197ec52…`）解包后逐包对照，恰好是 7 个包一一对换（arm64 ↔ x64）。这是本项目第二次「以发布产物为准，不以脚本或注释为准」—— 上一次是 zstd 格式（见 DIV-0013 与 tools/README.md）。\n\n**为什么这是 adaptation 而不是「上游 bug」。** 上游在 x86_64 机器上构建会得到同样的错层；但上游实际发布的是 arm64 层（Release 资产里就是），它的发布流程没有踩到这一点。DSHFusion 把建层这一步搬进了 CI（DIV-0012），于是**继承了上游发布流程里一个没写下来的隐含前提：构建机必须是目标架构**。这条偏离就是把这个前提显式化。",
+      "detection": "**双向产物验证（本项目要求：检查器必须被证明能拦住真实故障）。**\n\n- 对**旧产物**（run 38529745494 打出的那个 APK，层是 x64）跑 `check-apk-identity.py` → 退出 1，报「dsh 层不是 arm64 架构的：缺少 node-addon-require-builtin-linux-arm64-gnu、@deepseek-ai/node-addon-system-linux-arm64、@img/sharp-linux-arm64、@img/sharp-libvips-linux-arm64、@koromix/koffi-linux-arm64、@vscode/ripgrep-linux-arm64、sherpa-onnx-linux-arm64；混入了 …-x64 的同样 7 个」。\n- 把新构建的 arm64 层换进同一个 APK（其余不动），再跑同一个命令 → 退出 0，并打印「dsh 层平台核验：arm64 的 7 个平台包齐全，且无 x64 混入」。\n- 本机实跑 `build-dsh-layer.sh`：平台自检打印「arm64 的 7 个平台包齐全，且无 x64 混入」，冒烟测试通过；随后与上游官方层做包目录集合比较，**520 个真实包完全一致**（差异只有：上游 tar 多 28 个作用域目录条目、我们多一个 `.bin`）。\n- `npm` 平台覆盖参数单独验证过：本机是 aarch64，强制 `--cpu=x64` 确实装出 `node-addon-require-builtin-linux-x64-gnu`，强制 `--cpu=arm64` 装出 arm64 那个。\n\n**fail-closed 也验证过**：在没有 zstd 的机器上跑检查器，断言 7 不跳过、不静默通过，而是判失败并说明「层若是在 x86_64 上建的，npm 会装成 x64 的可选依赖」。\n\n**node 兜底路径的实测副作用（已知且已在脚本里打印警告）**：node 的 `zstdCompressSync` / `createZstdCompress` **忽略 level 参数** —— 同一份 40 MB 样本，level 1/3/9/19/22 输出字节数完全相同（5808545 B，各约 60 ms）。后果只是体积：同一层 CLI -19 是 84973267 B，node 是 111809043 B（+31.6%）。CI 有 zstd CLI，不走这条路。",
+      "reapply": "第 1、2 处（脚本）可以直接重放：同步上游后若 `tools/build-dsh-layer.sh` 被上游版本覆盖，重新在 `npm install` 上加 `--os=linux --cpu=arm64 --libc=glibc` 并恢复「6.5 平台自检」整段即可。第 3 处（`check-apk-identity.py` 断言 7）同理，它是本项目自有文件，上游不会动。\n\n**每次把 `DSH_VERSION` 往上提之后必须重跑一次**：新增依赖可能带来新的按平台分发的包，而那 7 个包的清单会过期。核对方法是拿新版本的上游 Release 资产逐包对照（本项目已做过两次）。",
+      "conflict_risk": "low —— 三处目标文件里有两处（`check-apk-identity.py`、`tools/README.md`）是本项目自有文件，上游不存在。`build-dsh-layer.sh` 也是本项目新增的（上游没有建层脚本，见 DIV-0012），上游不会改它。\n真正的风险不是冲突，而是**过期**：那 7 个平台包的清单绑定在 DSH 0.2.0-rc.2 的依赖树上。",
+      "note": "**这是同一个病的第四次发作，值得单独记下来，因为它每次都停在比「能不能用」更浅的一层：**\n\n1. 「缺运行环境层」只记成备注、不判失败 → 缺层的 APK 一路走到真机。\n2. 断言 6 第一版被 `.sha256` 侧车骗过（名字长得像）。\n3. AGP 解压 `.gz` 资源并剥掉扩展名（格式看着对，应用却找不到）。\n4. 层是 x64 的（内容存在、格式正确、架构错）。\n\n四次都通过了 CI，四次都是真机发现的。第 4 次尤其值得注意：它通过了**全部**既有断言，包括专为「层到底能不能用」写的那条 —— 因为「能用」还有一层含义没被覆盖：**在目标设备上能用**。\n\n已记入 AGENTS.md 的教训是：核对产物时要一直核到「它在目标设备上能用」，而不是停在「它长得对」。\n\n**一个尚未做的改进**：那 7 个包的清单目前硬编码在脚本与检查器里，绑定 DSH 版本。更彻底的做法是从 npm 的 registry 元数据里读出该版本的 platform 可选依赖清单，让断言自己跟着版本走。当前版本升级频率低（0.2.0-rc.2 是唯一目标），硬编码 + 明确写「升级后必须重新对照」是可接受的折中。"
+    },
+    {
+      "id": "DIV-0016",
+      "title": "无障碍服务名改为 DSHFusion，不再与 DSHBox 撞名",
+      "upstream": "dshbox",
+      "type": "identity",
+      "phase": 1,
+      "target_files": [
+        "pilot/dshbox-adapter/src/main/res/values/strings.xml",
+        "pilot/dshbox-adapter/src/main/res/values-zh/strings.xml",
+        "pilot/dshbox-adapter/src/main/res/values-ar/strings.xml",
+        "pilot/dshbox-adapter/src/main/res/values-es/strings.xml",
+        "pilot/dshbox-adapter/src/main/res/values-fr/strings.xml",
+        "pilot/dshbox-adapter/src/main/res/values-ru/strings.xml"
+      ],
+      "change": "`relay_a11y_label` 在 6 个语言里全部改为 DSHFusion：\n\n| 语言 | 原值 | 新值 |\n|---|---|---|\n| default | `DSHBox phone assistant` | `DSHFusion phone assistant` |\n| zh | `DSHBox手机助手` | `DSHFusion 手机助手` |\n| ar | `مساعد الهاتف DSHBox` | `مساعد الهاتف DSHFusion` |\n| es | `Asistente del teléfono DSHBox` | `Asistente del teléfono DSHFusion` |\n| fr | `Assistant du téléphone DSHBox` | `Assistant du téléphone DSHFusion` |\n| ru | `Помощник телефона DSHBox` | `Помощник телефона DSHFusion` |\n\n这个键由 `pilot/interlock-relay-core/src/main/AndroidManifest.xml:75` 的 `android:label` 引用，即无障碍服务列表里显示的那个名字。只改值，不改键名、不改键集合。",
+      "rationale": "真机截图（2026-10-14）：在系统「无障碍 → 已下载的应用」列表里，**出现两条完全同名的「DSHBox 手机助手」** —— 一条是真正的 DSHBox，一条是 DSHFusion。用户无法判断该开哪一个。\n\n这不是「文案不好看」，而是**功能性的**：开错了那一条，DSHFusion 的手机助手通道就不通，而界面上没有任何东西提示这一点。它和 DIV-0011（authority 冲突）是同一类问题 —— 都是「并存安装」这个设计目标在**系统可见身份**上的必然后果。阶段 1 处理了 applicationId 与 authority，漏掉了无障碍服务名，因为它是**资源里的文案**而不是配置里的标识符，前三条身份断言全都查不到它。\n\n上游这一项在 DSHBox 里是自洽的（就是它自己的名字），所以登记为 DSHFusion 侧的适配，不是上游缺陷。",
+      "detection": "`tools/verify-phase0.sh` 断言：6 个 `strings.xml` 的 `relay_a11y_label` 值都不含 `DSHBox`，且都含 `DSHFusion`；键集合仍与 `values/strings.xml` 完全一致（沿用上游 `tools/i18n_check.sh` 的 parity 门禁）。\n\n故障注入：把任一个语言的值改回 `DSHBox…` → 断言失败。\n\n**真机确认方式**：装上新版本后进「设置 → 无障碍 → 已下载的应用」，应当看到「DSHFusion 手机助手」与「DSHBox 手机助手」两条不同的名字。",
+      "reapply": "可以自动重放（纯值替换）：对 `pilot/dshbox-adapter/src/main/res/values*/strings.xml` 里 `relay_a11y_label` 那一行做定点替换。同步上游后若上游改了这个键的文案，人工判断是否合并上游的新措辞（保留 DSHFusion 这个名字）。",
+      "conflict_risk": "low —— 只改 6 个资源文件里的一行值，不碰结构。唯一需要注意的是上游 `tools/i18n_check.sh` 会校验 6 个语言的键集合一致，只改值不影响它。",
+      "note": "**其余「对用户可见但仍写着 DSHBox」的文案这一次有意不改**，它们是：\n\n- `settings_feedback_star_*`（求 star 的文案，6 个语言）\n- `settings_battery_whitelist_message`（后台保活提示）\n- `files_exit_external_warning`、`files_dshbox_readonly`\n- `plugin-manager` 的 `pm_adapt_section_*`\n\n理由与阶段 1 不做全量包名重命名相同：这些是**纯文案**，改了不会让任何功能变得可用或不可用，却会在 6 个语言 × 多个模块上产生大量 diff，并让后续每次上游同步都要重放。它们统一归入阶段 4 的全量品牌重命名任务（见 docs/FUSION-PLAN.md）。\n\n**但无障碍服务名不在那个豁免里** —— 因为它出现在一个**系统列举的、用于选择的列表**中，重名会直接导致用户选错。判据是「会不会让人做错事」，不是「是不是写着旧名字」。"
+    },
+    {
+      "id": "DIV-0017",
+      "title": "签名改用固定密钥库（CI 从 Actions Secret 还原），debug 构建也用它",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "app/build.gradle.kts",
+        ".github/workflows/android.yml"
+      ],
+      "change": "两处改动：\n\n1. **`app/build.gradle.kts` 的 `debug` 构建类型也用固定密钥库。** 上游的 `debug` 块没有覆盖 `signingConfig`，于是 AGP 使用每台机器（以及每次 CI 运行）现生成的 `~/.android/debug.keystore`。新增一行，复用 `release` 那套判断：\n\n```kotlin\nsigningConfig = if (hasReleaseKeystore) signingConfigs.getByName(\"release\") else signingConfigs.getByName(\"debug\")\n```\n\n2. **CI 新增 `Restore signing keystore` 步骤**（在 `Assemble debug APK` 之前）：从 Actions Secret `DSHFUSION_KEYSTORE_B64` 还原密钥库到 `signing/dshfusion.jks`，并生成 `keystore.properties`；随后**核验证书 SHA-256 指纹**，对不上就判失败。\n\n**密钥库不提交进仓库。** 上游 `.gitignore` 明确写着「签名密钥：绝不入库」（第 39-42 行），那条规定是有道理的，不需要为这件事破例 —— 所以走 Secret。`keystore.properties` 与 `signing/` 继续被 `.gitignore` 忽略。\n\n**Secret 缺失或指纹不符时直接失败，不静默退回调试密钥。** 静默退回会让「签名稳定」变成一句没人能验证的话，而下次真机安装失败时会被归因到别处。",
+      "rationale": "真机实测（2026-10-14）：用户按签名不一致的提示卸载重装 v4 之后，我测了四个不同 CI 运行的产物签名公钥，**两两不同**：\n\n| 构建 | 公钥前缀 |\n|---|---|\n| v3（run 38516880572） | `a575fb04…` |\n| d009105（run 38524550705） | `1f189500…` |\n| 30ef440（run 38526322508） | `08147e1f…` |\n| d16454e（run 38529745494） | `4556a65c…` |\n\n（另外 12:27 那次安装的构建是 `31d31b10…`。）原因是 CI 每个 runner 都是全新的，`~/.android/debug.keystore` 现生成，工作流里也没有任何缓存 —— `gradle/actions/setup-gradle` 只缓存 `~/.gradle`，不缓存 `~/.android`。\n\n后果：**每个构建都是一个不同的应用。** 新构建装不到旧构建上面（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），必须卸载重装，而卸载会连带清掉应用私有数据 —— 包括已经下好的 Debian base 与 Node 层（几百 MB）。对一个「长期自用、持续吸收上游」的项目来说，这意味着每次更新都要重下一次运行环境。\n\n这条偏离与用户此前的选择直接相关：阶段 1 决策时选的是「先不建密钥库，继续用 debug 签名」，当时的理解是「debug 签名足够」。**实测表明那不是「够不够正式」的问题，而是「能不能覆盖升级」的问题** —— 这是那句话当时没说出来的代价。\n\n一个未解开的观察（如实记录，不编解释）：设备上 `firstInstallTime=2026-10-14 12:27:29`、`lastUpdateTime=14:08:17`，看起来发生过一次就地更新；但那两次安装的构建公钥分别是 `31d31b10…` 与 `a575fb04…`，按 Android 的规则那次更新不该成功。我只报实测。",
+      "detection": "**CI 内的指纹断言**（`.github/workflows/android.yml`）：还原密钥库后用 `keytool -list -v` 取证书 SHA-256，与硬编码的期望值 `76d588d44aad12b00aac0a1587738bc91efc182b7c0b00b288a5826058e98126` 比对，不符则 `exit 1`。这样「签名稳定」是被**验证**的，不是被假定的。\n\n**故障注入**：改掉 Secret 的内容（或改掉期望指纹）→ 该步骤失败。\n\n**真机确认方式（这一条才是最终判据）**：连续两个 CI 构建的 APK 应当可以互相覆盖安装，不需要卸载。安装后用 `dumpsys package com.dshfusion.app` 看 `lastUpdateTime` 更新而 `firstInstallTime` 不变。\n\n**尚未做**：`check-apk-identity.py` 还没有「产物必须由期望证书签名」的断言。当前指纹检查在 CI 步骤里，覆盖的是「还原的密钥库对不对」；「APK 实际用的是不是它」还没有产物级断言。已记入待办。",
+      "reapply": "两处都是本项目自有改动，上游不会碰：`app/build.gradle.kts` 的 `debug` 块加一行（上游若给 debug 加了别的 signingConfig，以本条的意图为准 —— 固定身份优先）；`android.yml` 的还原步骤整段保留。\n\n**密钥库本身不在仓库里**，所以重放不涉及二进制。若将来密钥库丢失，需要生成新的并更新两处：Secret 内容 + 工作流里的期望指纹。**换密钥的代价是已装版本必须卸载重装一次**，所以不要轻易换。",
+      "conflict_risk": "low —— `debug` 块加一行，冲突面极小。真正的风险不在代码冲突，而在**密钥库的管理**：它是这个应用的长期身份，丢了就只能卸载重装、从头开始。",
+      "note": "**密钥库的备份**：已导出一份到设备的 `Download/dshfusion-keystore-backup/`（含 jks 与 properties），请另存到仓库之外的安全位置。GitHub 上的 Secret 是唯一的工作副本 —— Secret 可以重写，但**内容丢了就找不回来**（GitHub 不允许读回 Secret 的值）。\n\n**这个密钥库的定位**：它是**稳定性**措施，不是安全边界。口令与密钥都不比 Android 标准调试密钥更保密（那套口令是公开的 `android`）。它解决的是「同一个应用身份」问题。\n\n**将来若决定公开或分发**：先重新评估 —— 那时它才变成真正的发布密钥，届时应换一把新密钥、把它从 Secret 管理改为更严格的流程，并重新考虑 `docs/PHASE1-PREREQUISITES.md` 里关于数据迁移的结论。\n\n**为什么不用「提交进仓库」这个更简单的做法**：能省掉 Secret 管理，且不依赖 PAT 权限。但上游 `.gitignore` 里「签名密钥：绝不入库」是一条有理由的约定（上游是**分发**的，它的 release key 泄露是实质风险），本项目当前虽然私有自用，但没有必要在能两全的时候破例 —— GitHub 的 Actions Secret 恰好提供了这个两全。代价是多一个 Secret 依赖，而这个代价已经在上面「密钥库的备份」里说明了。"
+    },
+    {
+      "id": "DIV-0018",
+      "title": "通知栏动作不再被压成「一个字 + 省略号」：动作随状态变化（最多 3 个）、文案改短",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+        "app/src/main/java/com/dshbox/app/service/DshNotifyActions.kt",
+        "app/src/test/java/com/dshbox/app/service/DshNotifyActionsTest.kt",
+        "app/src/main/res/values/strings.xml",
+        "app/src/main/res/values-zh/strings.xml",
+        "app/src/main/res/values-ar/strings.xml",
+        "app/src/main/res/values-es/strings.xml",
+        "app/src/main/res/values-fr/strings.xml",
+        "app/src/main/res/values-ru/strings.xml"
+      ],
+      "change": "两处一起改，缺一处都不够：\n\n**① 动作个数随状态变化（最多 3 个）。** 上游固定放 4 个动作。新增纯函数 `dshNotifyActions(dshState)` 与枚举 `DshNotifyAction`（`service/DshNotifyActions.kt`），`SandboxService.buildNotification()` 改为按它的结果循环 `addAction`：\n\n| DSH 状态 | 动作 |\n|---|---|\n| `READY` | 打开 / 重启 / 停止 |\n| `STARTING`、`RUNNING` | 重启 / 停止 |\n| `UNINITIALIZED`、`STOPPED`、`ERROR` | 启动 / 停止 |\n\n三条规则：**打开与启动互斥**（上游同时列出两个，既是压缩文案的直接原因，也让人选错 —— DSH 已经在跑时「启动」是误导，没在跑时「打开」无处可开）；**运行中才给「重启」**；**「停止」永远在场且排最后**（它是沙箱卡住时唯一的出路）。\n\n**② 6 个语言的动作文案改成单个短词。** 只改值，不改键名、不改键集合：\n\n| 键 | default | zh | ar | es | fr | ru |\n|---|---|---|---|---|---|---|\n| `notify_action_open_dsh` | `Open` | `打开` | `فتح` | `Abrir` | `Ouvrir` | `Открыть` |\n| `notify_action_start_dsh` | `Start` | `启动` | `تشغيل` | `Iniciar` | `Démarrer` | `Запустить` |\n| `notify_action_restart_dsh` | `Restart` | `重启` | `إعادة` | `Reiniciar` | `Redémarrer` | `Перезапуск` |\n| `notify_action_stop_sandbox` | `Stop` | `停止` | `إيقاف` | `Detener` | `Arrêter` | `Стоп` |\n\n改短之前的值分别是 `Open DSH` / `打开 DSH` / `Restart DSH` / `重启 DSH` / `Stop sandbox` / `停止沙箱`，以及 ru 的 `Перезапустить DSH`、es 的 `Detener entorno aislado`。",
+      "rationale": "真机截图（2026-10-14）：DSHFusion 的常驻通知里，4 个动作按钮**全部只显示一个字加省略号** —— 「打… / 启… / 重… / 停…」。设备字体缩放是正常的 1.0（`settings get system font_scale` = 1.0），所以不是用户把字调大了。\n\n原因是两条叠加：**动作个数**与**文案长度**。Android 把动作栏按个数平分宽度并在放不下时省略，4 个动作每个只能分到约四分之一，而文案是 4～6 个字符（es / ru 更长）。两个因素各自都不致命、乘在一起就一个字都放不下。\n\n**这是上游的既有缺陷，不是 DSHFusion 引入的** —— 上游那 4 个 `addAction` 与那 4 条文案一直如此，只是在 DSHBox 的设备/语言组合下没那么刺眼。登记为 adaptation 而不是上游缺陷认领，是因为修法（按状态收敛动作）本身也是 DSHFusion 的取舍。\n\n**为什么两条都要改、而不是只改文案**：只改文案的话，ru 的 `Перезапуск`、fr 的 `Redémarrer` 仍在四分之一宽度里；只减个数的话，4～6 字符的文案在三分之一宽度里依然紧张。先减个数（结构）、再改短（余量），两条都改才留出冗余。\n\n顺带修掉一个语义问题：「打开」与「启动」本来就不该同时出现。",
+      "detection": "三层，都做过故障注入：\n\n1. **单测** `DshNotifyActionsTest`（7 个 `@Test`）钉四条性质：任何状态动作数 ≤ 3；「打开」与「启动」不同时出现；「停止」始终在场且排最后；`READY` 之外不出现「打开」。\n2. **`tools/verify-phase0.sh`**：`handle_div_0018` 核验 6 个语言的 4 条文案都已改短（两个方向都查：既不能还含旧的长文案，也不能是空/单个 DSH），并断言 `SandboxService` 不再出现裸的 4 连 `addAction`、且确实调用了 `dshNotifyActions`。\n3. **`apply-divergences.sh --check`** 的 `handle_div_0018`。\n\n**真机确认方式（这一步还没做）**：装上带本修复的版本后，拉下通知栏看 4 个按钮是否变成 3 个且文案完整。**在真机看到之前，这一条只能记成「已改、未验证」** —— 本机没有 JDK/Android SDK，Kotlin 无法编译，CI 是第一次真实编译。",
+      "reapply": "`tools/apply-divergences.sh` 的 `handle_div_0018` 负责核验。**可以**自动重放（纯值替换 + 一处结构改动），但重放需要知道 6 个语言 × 4 条的新值，而它们已在本文的 `change` 里写明；与其在脚本里再抄一遍（多一个会漂移的事实来源），沿用 DIV-0016 的做法：脚本只核验。\n\n上游若改了这段通知代码，冲突点在 `buildNotification()` 的动作装配那一段，以及 `DshNotifyActions.kt` 这个**新增文件**是否还在（它不来自上游，不会被同步覆盖）。",
+      "conflict_risk": "low",
+      "note": "**这是本项目第一次为「真机上的可用性」而不是「能不能起来」登记的偏离。** 前 17 条都是「装不上 / 起不来 / 身份冲突 / 误报」这一类会让人**做不成事**的问题；这一条只是**看不清**，但它同样是真机才暴露的。\n\n**有意没做的一件事**：没有把动作栏改成 `NotificationCompat.Action` 的图标形式，也没有加 `setStyle(BigTextStyle)` —— 那些都要动上游更多代码，而当前证据只支持「个数 + 长度」这个解释。**如果改完仍然不全，下一个怀疑对象是设备/主题对动作按钮的 padding**，而不是继续在这里加码。\n\n**未验证的部分要如实记**：本机无法编译 Kotlin，所以这次修复的验证链是「Python 模拟的单测断言」（仅推演，未编译）→ CI 首次真实编译 → 真机截图对照。在拿到真机截图之前，不得标记为已修好。"
+    },
+    {
+      "id": "DIV-0019",
+      "title": "新增 `:backup` 模块与 Gson 依赖，承载阶段 2.1 的 v5 归档格式与预检",
+      "upstream": "dshbox",
+      "type": "config",
+      "phase": 2,
+      "target_files": [
+        "gradle/libs.versions.toml",
+        "settings.gradle.kts",
+        "backup/build.gradle.kts"
+      ],
+      "change": "三处构建配置改动，都是为了给 `:backup` 模块腾位置：\n\n**① `gradle/libs.versions.toml` 新增 Gson 2.13.1**（`versions` 与 `libraries` 各一行）。版本号与 DSHA 一致；**下限是 2.11**，因为导入的 `BackupJson` 用了 `com.google.gson.Strictness`。\n\n**② `settings.gradle.kts` 新增 `include(\":backup\")`。**\n\n**③ 新增 `backup/build.gradle.kts`**（android-library + kotlin-android，namespace `com.dshbox.app.backup`，compileSdk 36、minSdk 29、Java 17，依赖 `libs.gson` 与测试用 `libs.junit`）。\n\n模块里的源码分两部分，**包名不同是刻意的**：`com/deepseekharness/app/**` 是 DSHA 的 7 个逐字节原样副本（见 `governance/dsha-imports.json`），`com/dshbox/app/backup/**` 是本项目自己写的 Kotlin 预检门面。",
+      "rationale": "**为什么要新模块而不是塞进 `:app`。** v5 归档的格式与预检是一套自洽的纯逻辑（无 Android API、无界面、无数据库），放进 `:app` 会与界面、服务、运行时装配混在一起，也让「只测格式」需要拖上整个 app 的依赖图。DSHBox 本身就是多模块结构，新增一个边界清晰的模块是沿用它的风格。\n\n**为什么是 android-library 而不是更贴切的 java-library。** 这里一行 Android API 都不用，纯 JVM 模块在语义上更准确。但本项目 CI 跑的是 `./gradlew testDebugUnitTest`，而纯 JVM 模块的测试任务叫 `:backup:test` —— **不会被这个任务名匹配到**，于是那些负面用例（截断、篡改、假完整、路径穿越）会在 CI 里一次都不执行。这与 `docs/INCIDENTS.md` 第 13 条是同一类问题：一个不被执行的门禁等于没有门禁。宁可多一个空壳 Android 模块，也不要一个静默跳过的检查。\n\n**为什么必须引入 Gson，而不能用项目现有的 `org.json`。** 这是本条最实质的决定。导入的 `BackupJson` 里，「有界」不是靠调用方自觉，而是靠 Gson 的三项能力：`Strictness.STRICT` 拒绝重复键、流式读取时按深度与字段数累计限流、数字字面量按长度与 scale 限流。`org.json` 三项都没有：它不检测重复键（后写的静默覆盖先写的，这正是 JSON 走私的前提），先整体构建再交给调用方（无法在解析中限流），嵌套只受栈深限制（那条「66 层嵌套必须被拒」的用例会变成栈溢出而不是可处理的错误）。\n\n**换成 `org.json` 不是「换个库」，而是把这层保护静默削掉** —— 而且削掉之后大部分现存断言仍会通过，因为那些用例测的是「恶意输入被拒」，重写后未必还有同样的拒绝点。所以这里选择加依赖，而不是重写：这与硬约束 2「能直接保留的成熟实现就保留，不要重写」一致。\n\nGson 是 Apache-2.0，方向上是宽松并入 GPL-3.0 骨干，已在 `governance/ATTRIBUTION.md` 的传递上游表里补记。",
+      "detection": "三层：\n\n1. **`tools/check-dsha-imports.py`（新增，独立可运行）**：逐 sha256 核验 7 个导入副本与 `governance/dsha-imports.json` 一致，**且反向**检查导入目录里没有未登记的 `.java`。与骨干的 `check-import-fidelity.py` 不同，它的期望值内嵌在仓库里，**在 CI 里是真跑而不是走跳过分支**（见第 13 条事故）。已做三种故障注入，全部正确转红：按位翻转导入副本一个字节、删掉一个登记文件、往目录里塞一个未登记文件。\n2. **`tools/verify-phase0.sh` 第 5j 节**：核验模块接入（`settings.gradle.kts` 有 `:backup`、版本目录有 Gson、模块构建文件存在）与导入清单在磁盘上双向一致。\n3. **单测**：`V5ArchiveTest` 钉住具体错误码；`BackupArchiveTest`（8 个）与 `BackupJsonTest`（3 个）是原样导入的负面用例。\n\n**第一次故障注入无效，值得记**：给 `BackupScopes.java` 的第 200 字节写入空格，检查器报「通过」—— 因为那个偏移**本来就是空格**，什么都没改。改用按位翻转并**先断言文件哈希确实变了**才作数。一个没生效的注入会给出完全虚假的安全感，与「发现问题却只记成备注」是同一族错误。",
+      "reapply": "本条是新增，不覆盖上游任何行，因此不存在「上游改了导致重放失败」的情况。重新建立时需要：\n\n1. 版本目录加 Gson（版本 ≥2.11）；\n2. `settings.gradle.kts` 加 `include(\":backup\")`；\n3. 恢复 `backup/build.gradle.kts`；\n4. 用 `git checkout <tag> -- backup/` 恢复模块源码，然后跑 `tools/check-dsha-imports.py` 确认导入副本没被顺手改过。\n\n`tools/apply-divergences.sh` 的 `handle_div_0019` 负责核验这三处。**注意**：模块源码本身**不**由该脚本重放（那是 33 KB 的逐字节副本），只由 `check-dsha-imports.py` 按 sha256 守护。",
+      "conflict_risk": "low —— 三处都是新增行，不修改上游既有行。唯一可能冲突的是 `libs.versions.toml`：上游若自己引入 Gson（或改名 `gson` 条目），需要合并而不是叠加。",
+      "note": "**这是阶段 2 的第一条偏离，也是本项目第一次「从 DSHA 搬代码」。** 前 18 条都只动 DSHBox 骨干自身的行；这一条开始把 DSHA 的实现纳入仓库，因此引入了两种新的可核验性要求：导入副本的逐字节溯源（`check-dsha-imports.py`）与「导入不是偏离」的登记方式。\n\n**登记范围有意收窄。** `governance/dsha-imports.json` 里逐文件记了 DSHA 路径、锁定提交、blob 与 sha256；而本条目只登记**对骨干的构建配置偏离**。把「导入」本身也塞进 `divergences.json` 会模糊这个文件的本意（对骨干的偏离清单，供同步时重放），所以两者分开：`divergences.json` 管「我们改了骨干什么」，`dsha-imports.json` 管「我们从 DSHA 拿了什么」。\n\n**阶段 2.1 刻意没做的事**：没有搬 `NativeRestorePlan`（零 Android 依赖，但价值全经 `Mapping` 接口表达，没有 DSHFusion 的 Mapping 实现时就是死代码 —— `Mapping` 正是 2.4 的切口）；没有搬 `NativeRestoreTargets` / `DataRootPolicy`（深绑 DSHA 的 rootfs 分包模型，必须重写）；没有做范围备份（2.2）、凭据排除（2.3）、自动计划（2.5）；**写入侧的目录枚举也没有做** —— 容器本身可写且已被 `V5ArchiveTest` 验证，但「备份哪些逻辑根」属于 2.2 的范围决策，提前写一遍会与 2.2 打架。"
+    },
+    {
+      "id": "DIV-0020",
+      "title": "`:backup` 增加 SnakeYAML 依赖（阶段 2.3 的凭据投影），并给 app 补 keep 规则",
+      "upstream": "dshbox",
+      "type": "config",
+      "phase": 2,
+      "target_files": [
+        "gradle/libs.versions.toml",
+        "backup/build.gradle.kts",
+        "app/proguard-rules.pro"
+      ],
+      "change": "三处，都是为了阶段 2.3 的凭据投影：\n\n**① `gradle/libs.versions.toml` 新增 SnakeYAML 2.4**（`versions` 与 `libraries` 各一行），版本与 DSHA 一致。\n\n**② `backup/build.gradle.kts` 新增 `implementation(libs.snakeyaml)`。**\n\n**③ `app/proguard-rules.pro` 新增 `-keep class org.yaml.snakeyaml.** { *; }` 与 `-dontwarn`。**\n\n第 ③ 处**是保险，不是修复** —— 我没有复现出「不加它就坏」的实例（`CredentialProjection` 只走 SafeConstructor + 节点级 compose/serialize，不碰 JavaBean 反射那条路）。加它是因为三点事实：已解包核对 `snakeyaml-2.4.jar`，**META-INF 下只有 MANIFEST 与 maven 元数据，没有任何 consumer proguard 规则**；本仓库 release 开了混淆，而**上游 DSHA 的 release 是 `minifyEnabled false`** —— 所以「DSHA 装了它能跑」不构成「它在 R8 下能用」的证据。",
+      "rationale": "**为什么必须引入 YAML 解析器。** DSH 的凭据存在 `$DSH_HOME/.credentials.yaml`（DSH 自己的 `dsh-credentials-local` 模块定义：`version: 1` + `refs:` + `records:`，记录键是 `<scope>/<id>`，记录类型 `api-key` / `grant`）。要「删掉机器本地记录、保留 provider 凭据、再写回去」，就必须按这个布局解析与再序列化 —— 用字符串替换去改 YAML 会在 flow mapping、引号、注释、锚点上出错，而这是**唯一一处处理用户密钥的代码**，出错代价是密钥丢失或泄漏。\n\n**为什么是复用而不是自己写。** DSHA 的 `CredentialProjection` 已经实现了这一整套，含 fail-closed 的严格解析（拒绝重复键、锚点/别名、显式标签、非有限数、超限、非法 UTF-8）与「诊断里绝不带出密文」。它逐字节导入本仓库（见 `governance/dsha-imports.json`），因此它需要的 YAML 解析器也一并引入 —— 这才是复用而不是重写。\n\n**为什么版本必须与 DSHA 一致（2.4）。** `CredentialProjection` 用的是 SnakeYAML 2.x 才有的 `LoaderOptions`（`setCodePointLimit` / `setMaxAliasesForCollections` / `setNestingDepthLimit` / `setAllowDuplicateKeys`）。这些正是它的安全边界所在，降到 1.x 会**静默**失去其中几项。\n\n**为什么加依赖而不是改用项目现有的东西。** 骨干里没有任何 YAML 解析器，`org.json` 也处理不了 YAML。这与 DIV-0019 加 Gson 是同一个判断：宁可多一个 Apache-2.0 依赖，也不要为了省依赖而重写一层安全关键代码。\n\nSnakeYAML 是 Apache-2.0，方向上是宽松并入 GPL-3.0 骨干，已在 `governance/ATTRIBUTION.md` 的传递上游表里补记。",
+      "detection": "四层：\n\n1. **`tools/check-dsha-imports.py`**：核验凭据投影那两个逐字节副本（含来源头与正文 sha256）与改写/适配登记。\n2. **`tools/run-backup-jvm-tests.sh`（新增）**：从 Maven Central 取 4 个 jar，编译并运行 `backup/src/{main,test}` 的**全部 .java**，再跑行为探针。**版本必须与 `libs.versions.toml` 一致，脚本自己 grep 版本目录，对不上退 2**（已做注入：把目录里的 gson 改成 2.12.0，脚本拒绝运行）。取不到 jar 也退 2，**不静默跳过**（第 13 条的病）。\n3. **`tools/check-credential-projection.java`（新增）**：核验的是**行为**而不是字符串 —— 机器本地记录（`client-connection/`）不进投影结果、provider 凭据原样保留、`version: 1` 还在、没有机器记录时逐字节不变、坏输入的诊断里不含密钥且不带 cause、超限与非法 UTF-8 在解析前就被挡住。\n4. **`tools/verify-phase0.sh` 第 5m 节**：核验三处构建配置与署名登记，并**真跑**上面第 2、3 层。\n\n**本条第一次做到「本机真编译真运行」**：本机一直有 JDK 17，此前被误记为没有（见 `docs/INCIDENTS.md` 第 21 条），于是 2.1/2.2 的 4 次 CI 红里有 3 次是纯 Java 侧、本机两秒就能发现的问题。",
+      "reapply": "本条是新增行，不覆盖上游任何行。重新建立时需要：\n\n1. 版本目录加 SnakeYAML（版本必须 ≥2，且建议与 DSHA 一致）；\n2. `backup/build.gradle.kts` 加 `implementation(libs.snakeyaml)`；\n3. `app/proguard-rules.pro` 加 `-keep class org.yaml.snakeyaml.** { *; }`。\n\n`tools/apply-divergences.sh` 的 `handle_div_0020` 负责核验这三处。**注意**：凭据投影的源码本身**不**由该脚本重放（那是逐字节副本），只由 `check-dsha-imports.py` 按 sha256 守护。",
+      "conflict_risk": "low —— 三处都是新增行。唯一可能冲突的是 `libs.versions.toml`（上游若自己引入 SnakeYAML）与 `proguard-rules.pro`（上游若加了同类规则）。",
+      "note": "**阶段 2.3 的实质是「让归档里没有机器本地凭据」，而这件事必须由行为证明。** 因此本条的检验重心刻意放在**跑一遍**上，而不是「源码里有 `client-connection/` 这个字符串」。\n\n**未验证的部分如实记**：`app/proguard-rules.pro` 那条 keep 规则的**效果没有被验证** —— CI 只构建 debug（`assembleDebug`），release 混淆后的行为要等有人真的构建 release 并运行凭据投影才能说「可用」。规则本身是保险，不是已证明的修复。\n\n**另一件刻意没做的事**：没有改 `settings.yaml` 里模型凭据的**字段级**排除。DSHFusion 目前的模型凭据走 DSH 自己的凭据存储（与 `.credentials.yaml` 同一条路）；`settings.yaml` 里是否有需要单独排除的字段，要等确认过它的实际内容才能决定 —— **没有证据之前不动它**，比照 DIV-0019 的收窄登记。"
     }
   ]
 }

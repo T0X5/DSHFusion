@@ -105,6 +105,11 @@ jobs:
           # 稳定标题：不含日期。带日期的标题会每周制造一个新 issue。
           title="上游有新提交需要评估"
 
+          # 报告写进一次性目录：写死 /tmp 文件名会被隐私审计报成「本机痕迹」。
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          report="$work/upstream-report.md"
+
           {
             echo "本次检查发现上游有新提交（${{ github.event_name }}，$(date -u +%Y-%m-%dT%H:%MZ)）。"
             echo
@@ -125,7 +130,7 @@ jobs:
             echo "> 构建或测试失败时**保留现有稳定主干，不要合并**。"
             echo "> 集成完成后用 \`tools/sync-upstream.sh <上游> --record <提交>\` 推进锁定提交，"
             echo "> 该命令会校验审核记录，并关闭本 issue 的对应条目。"
-          } > /tmp/upstream-report.md
+          } > "$report"
 
           # 查找已存在的同名 open issue（标题精确匹配，避免前缀误命中）
           # 用 --arg 传标题，避免 jq 表达式里嵌套引号
@@ -139,10 +144,10 @@ jobs:
 
           if [ -n "$existing" ]; then
             echo "==> 已有跟踪 issue #$existing，追加评论（不新建）"
-            gh issue comment "$existing" --body-file /tmp/upstream-report.md
+            gh issue comment "$existing" --body-file "$report"
           else
             echo "==> 没有已存在的跟踪 issue，新建一个"
-            url="$(gh issue create --title "$title" --body-file /tmp/upstream-report.md)" \
+            url="$(gh issue create --title "$title" --body-file "$report")" \
               || { echo "NOTE: 无法创建 issue（可能未开启 issues）。摘要已作为 artifact 上传。"; exit 0; }
             echo "已创建：$url"
           fi

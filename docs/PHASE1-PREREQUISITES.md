@@ -53,7 +53,7 @@ DSHBox 的运行环境由四层组成。**关键事实：四层全部可获取**
 **对阶段 1 的意义**：要让 `assembleDebug` / `assembleRelease` 产出可用 APK，
 DSHFusion 只需准备这两层 —— 一层来自 npm，一层已在仓库内。**这比预想的门槛低得多。**
 
-### 1.3 压缩格式：两种都支持，不是缺陷
+### 1.3 压缩格式：脚本说「两种都行」，但产物说「只有 zstd 能用」
 
 `DSHBox:tools/pack_runtime.sh:46-56` 的实际行为：
 
@@ -65,13 +65,48 @@ OUT_FILE="$OUT_DIR/${LAYER_NAME}.${EXT}"     # 文件名跟随实际格式
 ```
 
 输出扩展名**跟随实际压缩格式**，消费侧 `build_apk.sh` 用 `ls "$src/${layer}.tar."*` 通配匹配。
-所以 README 里的 `.tar.zst` 与脚本默认的 `.tar.gz` 是**两种受支持的形态**，不是矛盾。
+
+> ### ⚠️ 更正（2026-10-14）：上面这段结论下早了，而且方向是错的
+>
+> 我原先在这里写的是「README 里的 `.tar.zst` 与脚本默认的 `.tar.gz` 是
+> **两种受支持的形态**，不是矛盾」。**这个结论是错的。**
+>
+> 反例来自真机：官方 DSHBox 包里是
+> `assets/runtime/android-side.tar.zst`（113245 B）、
+> `assets/dsh/0.2.0-rc.2.tar.zst`（85893395 B）、
+> `lib/arm64-v8a/libzstd-jni-1.5.7-15.so`。
+> **发布产物一律是 zstd，没有一份是 gzip。**
+>
+> 而我自己按脚本默认值建出来的 gzip 层，进 APK 后变成了
+> `assets/runtime/android-side.tar`（337920 B，裸 tar）——
+> **AGP 会解压 `.gz` 资源并去掉 `.gz` 扩展名。**
+> 应用侧的查找条件是 `names.firstOrNull { it.startsWith("android-side.tar.") }`
+> （`OnlineRuntimeImportManager.kt:769`，注意那个点），
+> `"android-side.tar"` 匹配不上 —— **层进了 APK，应用永远看不见。**
+>
+> 所以正确的读法不是「两种形态都受支持」，而是：
+>
+> | 格式 | 上游脚本默认 | 发布产物 | 能过 AGP 吗 |
+> |---|---|---|---|
+> | `.tar.gz` | ✅ 默认 | ❌ 从未出现 | ❌ **会被剥成 `.tar`** |
+> | `.tar.zst` | 需 `PACK_COMPRESSION=zstd` | ✅ 一直是这个 | ✅ |
+>
+> 「扩展名跟随实际格式」「消费侧用通配匹配」这两句本身没错，
+> 但它们描述的是**上游仓库内**的打包与消费（`build_apk.sh` 读的是构建目录，
+> 不经过 AGP 资源打包）。**一旦产物要进 APK，AGP 就是中间那道过不去的关。**
+>
+> 这条教训值得记下来：我当时是从**脚本默认值**推断「两种都行」的，
+> 而正确答案在**发布产物**里。**当脚本默认值与产物不一致时，以产物为准。**
+>
+> 处置：`tools/build-runtime-assets.sh` 与 `tools/build-dsh-layer.sh`
+> 现在**要求 zstd，缺了退 2**，不静默降级（提交 `bc4bdb0`）。
 
 > **一处文档漂移**：`pack_runtime.sh:41-45` 的注释说降级到 gzip 是因为
 > 「zstd-jni 在当前离线构建里无法解析」。但 zstd-jni **已经入库**
 > （`libs/zstd-jni-1.5.7-15.aar`、`libs/zstd-jni-1.5.7-15-classes.jar`，
 > 并由 `app/build.gradle.kts:129` 引用，arm64 `.so` 在 jniLibs）。
-> 该注释已过期。不影响功能，但会误导下一个人。
+> 该注释已过期。不影响功能，但会误导下一个人 ——
+> **它当时就把我误导了**：我据此认为 gzip 是上游认可的默认选择。
 
 ### 1.4 仓库内已入库的资产（阶段 1 会一并导入）
 
@@ -89,9 +124,9 @@ OUT_FILE="$OUT_DIR/${LAYER_NAME}.${EXT}"     # 文件名跟随实际格式
 
 | # | 风险 | 严重度 | 处置 |
 |---|---|---|---|
-| R1 | **dsh 层没有仓库内构建脚本**。`build_arm64_runtime_bundle.sh:45,108,112` 明确只做 base/node/android-side 三层并打印「no DSH」「DSH is a SEPARATE product」；`install_dsh.sh` 是**guest 内**安装脚本，不是打包脚本 | 中 | DSHFusion 需自建一个打包步骤（见 1.6） |
+| R1 | **dsh 层没有仓库内构建脚本**。`build_arm64_runtime_bundle.sh:45,108,112` 明确只做 base/node/android-side 三层并打印「no DSH」「DSH is a SEPARATE product」；`install_dsh.sh` 是**guest 内**安装脚本，不是打包脚本 | 中 | ✅ **已解决**：`tools/build-dsh-layer.sh`，已真跑通（见 1.6） |
 | R2 | **PRoot 二进制是预编译 vendored**，构建来源未在仓库内记录。`THIRD_PARTY_NOTICES.md` 写「二进制来自 termux-packages 构建」，但没有可核对的版本号或校验和 | 中 | 记录来源假设；不声称已核验 |
-| R3 | **`install_dsh.sh:8` 默认版本 `0.1.0-rc.6`** 与实际内嵌的 `0.2.0-rc.2` 不一致 | 低 | 已在 `docs/FUSION-PLAN.md` 登记为「不继承的上游缺陷」 |
+| R3 | **`install_dsh.sh:8` 默认版本 `0.1.0-rc.6`** 与实际内嵌的 `0.2.0-rc.2` 不一致 | 低 | ⚠️ **部分解决，此前我把它说过头了**（见下方更正） |
 
 ### 1.6 阶段 1 的处置
 
@@ -99,9 +134,50 @@ OUT_FILE="$OUT_DIR/${LAYER_NAME}.${EXT}"     # 文件名跟随实际格式
    保留 `../../runtime/android-assets` 作为默认值。
    → 这样 `testDebugUnitTest` 与 `lintDebug` **不需要任何运行时资产**即可运行。
 2. **保留两条获取途径**：在线获取（Debian 官方源）与离线整包导入，都不改动。
-3. **自建 dsh 层打包步骤**（补 R1）：
-   `npm install --prefix <staging> npm:@deepseek-ai/dsh@<pin>` → `tar` → `.sha256`，
-   落到 `<assets>/dsh/<version>.tar.zst`。版本**必须显式 pin**，不用 `latest`。
+3. **自建 dsh 层打包步骤**（补 R1）—— ✅ **已完成并实测**：`tools/build-dsh-layer.sh`。
+
+   ```bash
+   tools/build-dsh-layer.sh [输出目录]     # 默认 ./runtime/android-assets
+   ```
+
+   版本不写死在脚本里，而是从 `governance/upstreams.json` 的
+   `transitive_upstreams[id=deepseek-harness].tracked_version` 读。
+
+   > ### ⚠️ 更正（2026-10-13）：R3 没有被「从结构上消除」
+   >
+   > 我最初在这里写的是「R3 已从结构上消除，单一事实来源让两处不可能再分歧」。
+   > **这个说法是错的，已改正。**
+   >
+   > 新脚本只是**新增了一条正确的路径**，它并没有碰 `install_dsh.sh:8` 里那个
+   > `0.1.0-rc.6` 默认值。那个默认值当时仍然存在，仍然会在被直接调用时装错版本。
+   > 换句话说：我增加了一个不会漂移的入口，但**没有消除原有的漂移源** ——
+   > 这是两件不同的事，我混为一谈了。
+   >
+   > 现在已按 **DIV-0010** 处理：`install_dsh.sh` 取消默认值，未显式指定
+   > `DSH_VERSION` 就报错退出（2）。静默装出一个错版本，比大声拒绝危险得多。
+   >
+   > 补充一个查证结果：**本脚本在 DSHFusion 里没有任何地方执行它。**
+   > app 走的是 `SandboxManager.installDshFromNpm` 的 Kotlin 路径；
+   > `RuntimeUpdateManager.kt:68` 与 `DshUpdateScreen.kt:72` 提到它，但都只是注释。
+   > 所以这条偏离修的是一个**潜在的坑**，不是正在发作的 bug。
+
+   脚本会：核对装出来的版本与 pin 一致（不一致直接失败，否则「已适配 X」变成假话）；
+   跑 `node lib/bin.js --version` 冒烟测试；**要求 `zstd`，缺了退 2**（见 1.3 的更正 ——
+   原先写的是「否则退回 gzip 并明确告知」，那个做法已废弃）；
+   产出 `<version>.tar.zst` 与同目录 `<version>.tar.zst.sha256`。
+
+   **实测证据**（2026-10-13，本机 aarch64）：
+   `added 538 packages in 2m`、层 **118.6 MB**（gzip 时代的数据，保留作参考）、
+   sha256 `747c0b619b2b52bb5b73f98357efb51452da3116cb1f36588274cbd3cae67b9`、
+   冒烟测试输出 `0.2.0-rc.2`。
+
+   **不需要 Debian 沙箱，也不需要 arm64 主机**：`@deepseek-ai/dsh` 是纯 JavaScript
+   的 npm 包，`optionalDependencies` 为空、无 `os`/`cpu` 约束，所以在 x86 开发机上
+   也能构建同一个层。这一点是审计时实测确认的，不是推断。
+
+   > 层内布局必须与 `DefaultSandboxManager.dshLayerDir()` 的期望一致：
+   > 解包后得到 `node_modules/@deepseek-ai/dsh/lib/bin.js`，运行时整层被 bind
+   > 到 guest 的 `/opt/dshapp/runtime`。脚本按此布局安装。
 4. **`assembleDebug` 作为可选的慢通道**：需要资产，缺失时给出可读错误而不是晦涩的 Gradle 失败。
 
 ---
@@ -192,6 +268,26 @@ Shizuku (MIT)、AndroidX/Compose/Kotlin (Apache-2.0)、JUnit (EPL-2.0) 等。
 现在 `tools/apply-divergences.sh` 按登记的上游 SHA-256 **正向核验**这 8 个文件 ——
 只要任一仍与上游一致，就报 FAILED 并点名具体文件。
 三种状态（已替换 / 仍为上游 / 文件缺失）都有隔离夹具覆盖，见 [tools/README.md](../tools/README.md)。
+
+#### 2.4.2 DSHFusion 的替代图形是**生成**出来的，不是手绘后提交
+
+8 个替代图形全部由 `tools/make-brand-assets.py` 生成：
+
+```bash
+tools/make-brand-assets.py            # 生成
+tools/make-brand-assets.py --check    # 重新渲染并逐字节比对（CI 用这个）
+```
+
+- 渲染器是**纯 Python**（只用 `zlib` 做 PNG 编码，不依赖 Pillow）。
+  CI 里没有 Pillow，也不该为画图标装一个图像库。
+- `--check` 在**临时目录**里重渲染再比对，不落盘到仓库 ——
+  这样 CI 能证明「提交的图确实由脚本生成」，又不会因为 CI 自己改了文件而变脏。
+- 生成器是自写的 SDF 光栅化，**没有复用上游的标识构造方法** ——
+  这是 `TRADEMARK.md` §四 明确禁止的。
+
+> 记录一个曾经踩过的坑：`ic_splash_mark.png` 的**上游原图是白底透明前景**
+> （白图形 + 全透明背景），在浅色启动背景上等于看不见。
+> 上游自己就有这个潜在缺陷。我们的替代图没有继承它。
 
 ### 2.5 DSHFusion 的义务
 
@@ -311,7 +407,7 @@ SharedPreferences：`dshapp_prefs`（`Constants.PREFS_NAME`）、
 | 6 | 施加 `DIV-0003`：`assets.srcDirs` 可被 `DSHFUSION_RUNTIME_ASSETS` 覆盖 | 无资产也能跑单测/lint | `apply-divergences.sh` |
 | 7 | 施加 `DIV-0004` / `DIV-0005`：监测地址指向自身；不导入 `website/` | 去除上游硬引用 | 脚本 + 清单排除 |
 | 8 | 改写 `.github/workflows/android.yml`<!-- future: .github/workflows/android.yml --> 中依赖 `website/` 的步骤 | 可用构建 CI | 见 §4.5 陷阱 2 |
-| 9 | 自建 dsh 层打包脚本（补 R1） | `tools/build-dsh-layer.sh` <!-- future: tools/build-dsh-layer.sh --> | 尚未编写 |
+| 9 | 自建 dsh 层打包脚本（补 R1） | `tools/build-dsh-layer.sh` | ✅ 已编写并实测（538 包 / 118.6 MB / 冒烟通过） |
 | 10 | 自建 keystore（不复用任何上游证书） | 独立签名 | 尚未创建 |
 | 11 | 跑 `./gradlew testDebugUnitTest lintDebug`，记录真实输出与退出码 | 验证证据 | **本机无 JDK/SDK，只能在 CI 跑** |
 

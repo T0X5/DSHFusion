@@ -10,6 +10,169 @@
 
 ---
 
+### `check-import-fidelity.py` — 导入保真度
+
+逐 blob 对照上游审计副本的 git 索引，确认「原样导入」这个承诺成立。
+
+比对索引 blob 而不是工作区内容：工作区会被 `.gitattributes` 的换行转换和本地
+`chmod` 影响，blob 才是别人 clone 之后真正拿到的东西。
+
+差异必须能对上 `governance/divergences.json` 的登记，否则报错。
+
+> 它在 2026-10-13 首次运行时就抓到一个真问题：本项目 `.gitattributes` 的
+> `* text=auto eol=lf` 把 `gradlew.bat` 从 CRLF 规范化成了 LF，blob 与上游不同。
+> 改成 `text eol=crlf` **仍然不对**（那只影响检出），最终要用 `-text`。
+
+用法：`python3 tools/check-import-fidelity.py [--list-diffs]`
+退出码：0 一致或上游未导入；1 有未登记的差异；2 配置错误。
+
+### `check-dsha-imports.py` — DSHA 导入副本核验
+
+核验从 DSHA 导入的代码（阶段 2.1–2.2 在 `backup/` 模块里）：文件必须**正好**以
+`governance/dsha-imports.json` 里登记的那几行来源头开头，去掉头之后的**正文**
+sha256 必须与登记的 `upstream_sha256` 一致。两个断言互相独立，改哪边都会红。
+
+> 与上面那个保真度检查器有个**刻意的区别**：它的期望值**内嵌在仓库里**，
+> 因此**在 CI 里是真跑**。`check-import-fidelity.py` 需要仓库外的审计副本，
+> 在 CI 里只会走「跳过」分支 —— 这正是 [../docs/INCIDENTS.md](../docs/INCIDENTS.md)
+> 第 13 条记录的问题（一条红了很久没人看见的断言）。新增导入路径时刻意不再沿用那个模式。
+
+反向也查：导入目录里出现未登记的 `.java`、或登记的文件不在磁盘上，都报错。
+（反向检查把 `derived` 的 `local_path` 也算作已登记 —— 漏掉这一点会把
+「从 `files[]` 移到 `derived[]`」误判成「未登记的文件」。）
+
+用法：`python3 tools/check-dsha-imports.py`
+      `python3 tools/check-dsha-imports.py --update`（仅复核过上游改动后使用；会警告正文已不再一致）
+退出码：0 一致（成功信息里会写明「改写/适配移植 N 项上游侧已核 / 未核」）；1 有差异。
+
+#### 两类登记、两种来源头
+
+| 登记位置 | `kind` | 正文 | 来源头 | 靠什么核验 |
+|---|---|---|---|---|
+| `files[]` | ——（逐字节副本） | 与上游**逐字节相同** | `provenance_header` | 正文 sha256 ＋ 头的精确匹配 |
+| `derived.items[]` | `adapted` | 只做机械等效替换 | `adapted_header` | 头 ＋ `kept`/`changed` 非空 ＋ 禁止两种身份重叠 |
+| `derived.items[]` | `rewritten` | 本仓库按真实布局重写 | **不许带**「原样复制」头 | 同上 |
+
+`derived` **不能靠 sha256 证明任何事**，所以改成核对「改写者有没有说清保留了哪条
+不变式、改掉了什么、为什么」：
+
+- `kept` / `changed` 必须都是非空字符串列表 —— 否则「改写」就成了把任意代码
+  洗成「上游移植」的通道，这是本节真正的治理断言；
+- 同一路径**不能**同时出现在 `files[]` 与 `derived.items[]`（一处代码一种身份）；
+- `upstream_sha256` 格式、`upstream_bytes` 正数、`kind` 取值、`verified_by` 指向的文件存在；
+- **头不能撒谎**：`adapted` 必须带 `adapted_header`，`rewritten` 不许带「原样复制」头。
+  没有这条，文件可以自己声称是逐字节副本，而没有任何东西会不同意 ——
+  这条是被一次真实情况逼出来的：3 份测试文件改完正文后，头还写着「正文未做任何修改」。
+  见 [../docs/INCIDENTS.md](../docs/INCIDENTS.md) 第 20 条。
+
+> 上游侧哈希只有在仓库外的审计副本存在时才能核对。这里**不**让它悄悄走一个跳过分支
+> （那正是 [../docs/INCIDENTS.md](../docs/INCIDENTS.md) 第 13 条的坑），
+> 而是把「已核 / 未核」写进成功信息里，让跳过变成看得见的事实。
+
+### `check-backup-contract.py` — 备份模块「测试与容器不能各说各话」
+
+阶段 2.1 第一次真实编译时红得最惨的一次：`V5ArchiveTest` 把容器的魔数**手抄**成
+`"DSHDATA"`，而 `BackupArchive.MAGIC` 是 8 个字符的 `DSHADATA`。差一个字节，
+5 条用例同时红 —— `hasMagic` 直接失败，4 条 `forge` 负面用例则因为**夹具本身不合规**
+而抛 IOException，断言到的错误码根本不是要测的那个。
+
+本机当时跑的所有检查都没发现它。于是这里做三件正交的核对：
+
+1. **`V5Archive.MAGIC_SIZE` 必须等于 `BackupArchive.MAGIC` 的真实长度** ——
+   从 Java 源码的字符字面量还原，不重抄。
+2. **测试代码里不得手抄魔数** —— 字面量形式与 `byteArrayOf(0x44, …)` 形式都挡；
+   应当从真实写入器取（`V5ArchiveTest` 的 `magic` 属性就是这么做的）。注释里允许提。
+3. **测试断言的每个错误码，必须是导入的容器/数据源源码里真的会抛的码** ——
+   防住 `PAYLOAD_CHECKSUM` 拼成 `PAYLOAD_CHECKSUMS` 那种「永远失败」的错。
+
+> 这条检查器**自己也被故障注入抓过一次**：第一版正则写成 `DSH[A-Z]{2,5}ATA`
+> （要求 `ATA` 前至少 2 个字符），恰好匹配不了 7 字符的 `DSHDATA`；把真实缺陷注入
+> 回去，它照样报通过。修好正则后没过文字，又漏在 KDoc 的 `*` 续行上 ——
+> 两次都是「注入必须先自证」这条规则救的。见 [../docs/INCIDENTS.md](../docs/INCIDENTS.md) 第 17–18 条。
+
+`verify-phase0.sh` 的 5k 节除了跑它，还会**真做一遍注入**（把手抄魔数写回测试、
+断言哈希确实变了、断言检查器确实变红、再复原）—— 没生效的注入会给出完全虚假的安全感。
+
+用法：`python3 tools/check-backup-contract.py`
+退出码：0 通过；1 有问题。
+
+### `run-backup-jvm-tests.sh` — 本机真编译真运行 `:backup` 的 Java 侧
+
+**这个脚本存在的直接原因是 `docs/INCIDENTS.md` 第 21 条**：这个仓库从阶段 2.1 起
+一直记着「本机没有 JDK，编译层面的结论只能由 CI 给出」——**那条记录是错的**。
+本机一直有完整的 JDK 17。代价是：2.1/2.2 的四次 CI 红里有**三次是纯 Java 侧问题**，
+本机两秒就能发现。
+
+它做四件事：
+
+1. **断言版本一致**：`gradle/libs.versions.toml` 里的 `gson` / `snakeyaml` / `junit`
+   必须分别等于脚本里的 `2.13.1` / `2.4` / `4.13.2`。**对不上退 2**（不是 1 ——
+   「环境不对」与「代码有问题」必须能区分）。做过注入验证：把目录里的 gson 改成
+   2.12.0，脚本拒绝运行。
+2. **取四个 jar** 到 `${DSHFUSION_JVM_CACHE:-<仓库根>/.jvm-test-cache}/lib`。
+   取不到**退 2，绝不静默跳过** —— 「尽力而为地跳过」正是第 13 条那个病。
+3. **编译并运行** `backup/src/main` 与 `backup/src/test` 下的**全部 `.java`**
+   （`.kt` 编不了：本机没有 kotlinc，Kotlin 侧仍然只能靠 CI）。
+   源码清单用 `mapfile -t` 数组收集，**并断言集合非空** —— 编译一个空集合是假通过。
+4. **跑行为探针** `check-credential-projection.java`（见下）。
+
+```bash
+bash tools/run-backup-jvm-tests.sh
+```
+
+退出码：0 全过；1 编译或测试失败；2 环境/版本不对（含取不到 jar）。
+
+> ⚠️ **缓存目录必须和它一起 gitignore。** 这里踩过一次：`.jvm-test-cache/`
+> 一次 `git add -A` 就进了 57 个文件（4 个 jar + 53 个 `.class`），
+> 而既有的「大资产不许入库」断言只匹配 `*.tar.zst`/`*.tar.gz`，**抓不到 jar**。
+> 见 `docs/INCIDENTS.md` 第 24 条。现在 CI 有专门一条断言盯着它。
+
+### `check-credential-projection.java` — 凭据投影的**行为**核验
+
+**为什么是 `.java` 而不是 `.py`**：这条检查要看的是**行为**，不是源码里有没有某个字符串。
+「`CredentialProjection.java` 里有 `"client-connection/"`」证明不了投影真的删掉了记录 ——
+那正是这个仓库反复记的「查『有没有』而缺陷在『在哪』」。
+
+四组断言：
+
+1. 机器本地记录（`client-connection/browser-session`）**值和键名都消失**，
+   而同一文件里的 `provider/main` 凭据与 `version: 1` **原样还在**；
+2. **没有**机器本地记录时，投影输出与输入**逐字节相同**（不做无谓重排）；
+3. 4 种坏输入被拒，**且诊断信息里不含任何密钥、且不带 cause**；
+4. 超 `1 MiB` → `CREDENTIAL_PROJECTION_LIMIT`；非法 UTF-8 → `CREDENTIAL_PROJECTION_ENCODING`
+   （两者都在解析前就挡住）。
+
+**它有两个只有真跑才会暴露的坑，都记在案**：
+
+- **必须用 `javac -encoding UTF-8` 显式编译**，不能走 `java xxx.java` 单文件启动 ——
+  后者不接受 `-encoding`，而本机平台默认字符集是 **US-ASCII**，文件里的中文注释会
+  报 `unmappable character`。所以由 `run-backup-jvm-tests.sh` 负责编译它。
+- **`java` 要带 `-Dfile.encoding=UTF-8`**，否则输出是乱码。
+- 顺带：我在这个 `.java` 文件里写过 Kotlin 的 `toByteArray(Charset)`，
+  而 Java 里叫 `getBytes`。**它不是设计错误，是「没跑就写」**（第 22 条补记）。
+
+用法（通常不单独跑，由上面那个脚本驱动）：
+`javac -encoding UTF-8 -cp "$CP" -d "$OUT" tools/check-credential-projection.java && java -Dfile.encoding=UTF-8 -cp "$CP:$OUT" CheckCredentialProjection`
+
+退出码：0 四组全过；1 有断言失败。
+
+### `check-exec-bits.py` — 脚本可执行位
+
+读 git 索引里的模式，对照 `governance/inherited-lint-baseline.json` 双向检查：
+
+- 不在继承基线的 `.sh` → 必须 `100755`（拦住本项目自己的疏漏）
+- 在继承基线的 `.sh` → 必须 `100644`（拦住基线失真）
+
+单方向检查做不到第二点：只查「非可执行就报错」的话，基线里的文件被 `chmod`
+成可执行反而放行，而真实状态已经和上游不一致。
+
+> 这个逻辑原先内联在 `verify-phase0.sh` 里，CI 另有一份更旧的实现。
+> 两份实现漂移的后果就是套件修好了、CI 仍红 —— 所以只留一份。
+
+用法：`python3 tools/check-exec-bits.py [--list]`
+退出码：0 全部符合；1 有不符项；2 不在 git 仓库里。
+
+
 ## 检查类（CI 会跑）
 
 ### `check-upstreams.py`
@@ -183,6 +346,257 @@ tools/apply-divergences.sh            # 施加 type=identity/config 的偏离
 
 ---
 
+## ⚠️ 关于套件自身的一个事故（值得每个写检查的人读）
+
+`verify-phase0.sh` 里的 `ok()` / `fail()` 两个计数器函数**一度根本不存在**。
+
+调用它们的地方不会报错退出 —— 脚本没有 `set -e`，`ok: command not found`
+只打到 stderr，不改变退出码。于是那些断言**静默变成了空操作**，
+而套件仍然打印「全部通过」。
+
+代价：`5d`（APK 产物身份）与 `5e`（许可状态）两节共 11 项断言全部没执行过。
+发现方式是加 `5f` 时看到输出里的 `fail: command not found`，
+再一查才意识到前面两节也是同样的空转。
+
+补上函数后，套件总数从 **92 项跳到 113 项** —— 多出来的 17 项不是新增的检查，
+而是**原本就写着、却从来没跑过**的检查。
+
+由此得到一条规则，已写进脚本注释：**检查器本身必须有测试。**
+一个什么都不查的检查，比没有检查更危险 —— 它提供虚假的信心。
+本套件现在对每个工具都做故障注入，原因就在这里。
+
+## 关于 authority：一条容易被漏掉的身份轴
+
+`applicationId` 决定「装的是哪个应用」，但 **ContentProvider 的 authority 是另一条
+独立的轴** —— Android 要求它全局唯一。两个已安装应用声明同一个 authority 时，
+后装的那个安装失败 -13（`INSTALL_FAILED_CONFLICTING_PROVIDER`），
+**跟 applicationId 是否不同无关**。
+
+这不是理论风险：阶段 1 改了 applicationId 之后 CI 全绿，真机上却装不上去，
+因为 FileProvider 的 authority 写死成了上游的值。见 DIV-0011。
+
+现在有两条检查盯着它，一条在源码层（构建前就报），一条在产物层（证明值真进了 APK）：
+
+```bash
+python3 tools/check-android-identity.py    # 源码：manifest 与代码里的 authority
+python3 tools/check-apk-identity.py a.apk  # 产物：APK 里每个 authority
+```
+
+**判断 authority 对不对，标准不是「值等于某个期望值」，而是「这个值是否派生自
+applicationId」。** 前者只对当前配置有效，后者在任何 applicationId 下都成立。
+
+## 产物核验类
+
+### `check-apk-identity.py`
+
+核验**构建产物** APK 的应用身份，而不只是构建配置：`applicationId`、
+`versionCode` / `versionName`、`application` 类、以及 `android:label`
+在**各语言下**解析成的应用名。顺带报告 APK 里有没有运行环境层。
+
+```bash
+tools/check-apk-identity.py <apk> [--expect-label DSHFusion]
+```
+
+只用标准库（`zipfile` + `struct`）解析二进制 `AndroidManifest.xml` 与
+`resources.arsc`，不依赖 aapt2 / apktool。
+
+**为什么需要它**：配置写对了不等于打进 APK 的东西对了 —— 中间还有资源合并、
+资源 ID 分配、字符串池去重。阶段 1 实测过这个区别：
+`versionCode`/`versionName` 在 gradle 里是上游的 `8` / `1.4.0`，
+配置与产物一致但两者都错；而 `android:label` 是资源引用 `0x7f0e001f`，
+不解 `resources.arsc` 就不知道它各语言下解析成什么。
+已接进 `android.yml`（DIV-0008），在 `assembleDebug` 之后运行。
+
+**断言 7（DIV-0015）：`dsh` 层必须是目标架构（arm64）的。**
+会流式解开 APK 里嵌的层，检查 7 个按平台分发的包是否齐全、有没有 x64 混入。
+这一条是真机失败之后补的 —— 2026-10-14 的产物**通过了当时全部断言**，
+包括专为「层能不能用」写的断言 6，然后在真机上报
+`host preparation failed: No usable native binding found for
+node-addon-require-builtin-linux-arm64-gnu`。原因是 CI 跑在 x86_64 上，
+npm 按宿主平台装了整套 `-linux-x64` 可选依赖。
+
+没有 `zstd` 命令时这条**判失败、不跳过** —— 「核验不了」不等于「没问题」。
+
+退出码：0 通过；1 有身份断言失败；2 用法错误或 APK 无法解析。
+
+### `make-apk-identity-fixture.py`
+
+造合成 APK 供上面那个检查器做隔离测试 —— 否则只能测到 argparse，
+测不到断言。
+
+```bash
+tools/make-apk-identity-fixture.py <输出 apk> <场景>
+```
+
+场景：`good`（应通过）、`upstream-id`、`upstream-ver`、`wrong-ns`、
+`wrong-label`、`bad-authority`、`no-layers`、`sidecar-only`、`gz-stripped`、
+`x64-layer`（都应退出 1）、`arm64-layer`（应通过）、`no-manifest`（应退出 2）。
+
+`x64-layer` / `arm64-layer` 成对存在，用来测断言 7：两者**只差层里那 7 个包**，
+所以「一个失败、一个通过」才能说明失败的原因是架构，
+而不是碰巧被别的断言拦下。它们需要 `zstd` 来造**真的**层
+（断言 7 会解压它），没有 `zstd` 时退出 3 表示跳过 —— 不造假层，
+假层会让这两个场景永远「通过」。
+
+> 加了断言 7 之后，原先所有场景用的 `_FAKE_ZSTD`（只有帧头、没有内容）不够用了：
+> `good` 也开始失败，因为假帧头解不开。那不是断言太严，是夹具失真 ——
+> 一个解不开的层本来就不该算合格产物。现在带 zstd 层的场景都造真层。
+
+手写 AXML 而不是用 aapt2：本机没有 Android SDK，CI 里也不该为造夹具装一整套；
+手写反而让「检查器读的到底是什么字节」完全明确。
+
+## 构建类
+
+这些工具**产出文件**，不参与 CI 的通过/失败判定。
+
+### `build-dsh-layer.sh`
+
+构建 DSH 运行环境层（`dsh/<version>.tar.zst` + `.sha256`），补上审计中的
+**运行环境风险 R1**：上游把 DSH 层当独立发布产物（`bundle.yaml` 明确写
+「bundle 不得包含 DSH」），却没有生成它的脚本 —— `runtime-bundle/scripts/install_dsh.sh`
+是设计成在 Debian 沙箱**内部**跑的片段，没有调用方，克隆仓库后无法直接执行。
+结果是新克隆一份代码构建出的 APK 不含 DSH 层，装上也起不了 DSH。
+
+```bash
+tools/build-dsh-layer.sh [输出目录]      # 默认 ./runtime/android-assets
+```
+
+- **版本取自 `governance/upstreams.json`** 的 `tracked_version`，不在这里写死默认值。
+  上游 `install_dsh.sh` 默认 `0.1.0-rc.6`、实际适配 `0.2.0-rc.2`（风险 R3，已由 DIV-0010 取消默认值）
+  因此取消默认值（DIV-0010）：未显式指定 `DSH_VERSION` 就报错退出。
+  注意这不是「消除了 R3」—— 新脚本只是新增了一条正确路径，
+  原来那个默认值仍在上游文件里，直到 DIV-0010 才处理。
+- 装完后**核对版本**，不一致直接失败 —— 版本对不上的层会让「已适配 X」变成假话。
+- 有 `node lib/bin.js --version` 冒烟测试（`DSH_SKIP_SMOKE=1` 可跳过）。
+- **必须有 `zstd`，没有就退出 2。** 不退回 gzip，见下面 `build-runtime-assets.sh`
+  一节里「为什么必须是 zstd」—— 一句话：**AGP 会解压 `.gz` 资源并去掉扩展名**，
+  于是 `.tar.gz` 层进 APK 后变成应用侧找不到的 `.tar`，等于白建。
+- **必须显式声明目标平台（DIV-0015）。** 此处原先写着
+  「不需要 arm64 主机：`@deepseek-ai/dsh` 是纯 JS 的 npm 包，无原生扩展、
+  无 `os`/`cpu` 约束」—— **后半句是错的，而且它就是这个 bug 的成因**。
+  `@deepseek-ai/dsh` 包本身确实是纯 JS，但依赖树里有 7 个按平台分发的可选包
+  （`optionalDependencies`），npm 按**构建宿主**挑选：
+
+  ```
+  node-addon-require-builtin-linux-<arch>-gnu   ← dsh-app-boot 启动时必需
+  @deepseek-ai/node-addon-system-linux-<arch>
+  @img/sharp-linux-<arch> / @img/sharp-libvips-linux-<arch>
+  @koromix/koffi-linux-<arch>
+  @vscode/ripgrep-linux-<arch>
+  sherpa-onnx-linux-<arch>
+  ```
+
+  在 x86_64 上建层会得到整套 `-linux-x64`，装到 arm64 手机上 DSH 会在
+  host preparation 阶段致命退出。修法是 npm 的交叉挑选参数
+  （`--os=linux --cpu=arm64 --libc=glibc`，npm ≥ 10.4），
+  由 `DSH_TARGET_ARCH` 控制（默认 `arm64`）。
+  装完有**平台自检**：7 个包必须齐全、且不得混入另一架构，否则拒绝产出。
+  CI 上的 `check-apk-identity.py` 断言 7 会对产物再查一遍。
+- 压缩优先用系统 `zstd` CLI（`-19 -T0`）；没有 CLI 时退回 node 的
+  `zlib.createZstdCompress`，两者都没有才退 2 —— **绝不产出 gzip**。
+  ⚠️ node 的 zstd **忽略 `level` 参数**（实测 level 1/3/9/19/22 输出字节数完全相同），
+  所以走那条路产物会大约 32%（84973267 B → 111809043 B）。脚本会打印警告。
+  CI 有 CLI，不走这条路。
+
+实测（arm64 层，zstd CLI -19）：**84973267 B（81.0 MB）**，
+sha256 `2183017cc8f1122f410194fd9ab0e0b59a2e52de27e12dc801e42d02d4c4b238`。
+与上游 v1.4.0 Release 里的官方层逐包对照，**520 个真实包完全一致**。
+
+退出码：0 成功；1 构建/核对/冒烟/平台自检失败；2 用法或环境错误（缺 node、缺 zstd、版本读不到）。
+
+### `build-runtime-assets.sh`
+
+组装**能内嵌进 APK 的**运行环境层：`android-side` + `dsh`，各带 `.sha256` 侧车。
+这是补 `build-dsh-layer.sh` 之后剩下的那一半 —— 光有层、没人把它放进 APK，等于没有。
+
+```bash
+tools/build-runtime-assets.sh [输出目录]   # 默认 <repo>/runtime/android-assets
+```
+
+输出布局**刻意与 `assets.srcDirs` 对齐**，所以 `DSHFUSION_RUNTIME_ASSETS`
+指到这个目录就能直接打包：
+
+```
+<输出目录>/runtime/android-side.tar.zst    → APK 内 assets/runtime/android-side.tar.zst
+<输出目录>/dsh/<版本>.tar.zst              → APK 内 assets/dsh/<版本>.tar.zst
+```
+
+- `android-side` 从 `app/src/main/jniLibs/arm64-v8a` 组装（4 个文件）：
+  `libproot.so`→`bin/proot`、`libproot-loader.so`→`libexec/proot/loader`、
+  `libandroid-shmem.so`→`lib/libandroid-shmem.so`、`libtalloc.so`→`lib/libtalloc.so`。
+  这四个路径必须与 `DefaultSandboxManager` 的 `prootBinary()` / `prootLibDir()` /
+  `prootLoaderFile()` 一致，否则装上了也起不来。
+- **显式 `chmod 755` 全部四个文件**，不信任检出后的工作区模式：
+  实测 jniLibs 在工作区是 `-rwx------`（700）而 git 索引记的是 `100755`，
+  直接打包会让产物随检出方式漂移。
+- 带**布局自检**：解出条目列表与预期 4 项逐项比对，多一个少一个都失败。
+  （这个自检自己出过一次假阴性：`tar -tzf | sed 's#^\./##'` 会把开头的
+  `./` 条目留成**空行**，而空行不匹配 `grep -v '/$'`。已补 `sed '/^$/d'`。）
+- 带**魔数自检**：产物头 4 字节必须是 `28 b5 2f fd`。
+- `dsh` 层委托 `build-dsh-layer.sh`，不重复实现。
+- `SKIP_DSH=1` 只建 android-side（本地快速验证用）。
+- 环境变量：`DSHFUSION_RUNTIME_ASSETS`（默认输出目录）、`ANDROID_SIDE_SRC`、
+  `DSH_VERSION`。
+
+实测（gzip 时代，**这批数据对应的产物是坏的**，保留作记录）：
+`android-side.tar.gz` 125930 B、`dsh/0.2.0-rc.2.tar.gz` 124380096 B。
+
+#### 为什么必须是 zstd —— 以及一条「想当然」是怎么害人的
+
+我一度在这里写下过：「`BundleManager.extractTarGz` 按**魔数**分派格式
+（zstd / bzip2 / xz / 纯 tar，gzip 是 else 兜底分支），从不看扩展名。
+所以 `.tar.gz` 是一等受支持格式，不是『退而求其次』。」
+
+**这段话本身没有错，但它答错了问题。** 应用侧确实按魔数嗅探 ——
+可层不是直接交给应用侧的，它得先过 **AGP 的资源打包**，而
+**AGP 会解压 `.gz` 资源并去掉 `.gz` 扩展名**：
+
+```
+runtime/android-side.tar.gz  (125930 B, gzip)
+        ↓ 过一遍 AGP
+assets/runtime/android-side.tar  (337920 B, 裸 tar)
+```
+
+而应用侧的查找条件（`OnlineRuntimeImportManager.kt:769`）是
+
+```kotlin
+names.firstOrNull { it.startsWith("android-side.tar.") }
+```
+
+`"android-side.tar"` **不以 `"android-side.tar."` 开头**（少那个点）。
+层进了 APK，应用永远看不见 —— **等于没建。**
+
+所以结论不是「gzip 压缩率差一点」，而是 **`.tar.gz` 根本不是能过 AGP 的容器**。
+脚本因此**失败关闭**：没有 zstd 就退 2 并解释原因，绝不静默降级。
+一个必然被剥坏的产物，比一个明确的报错危险得多。
+
+上游发布包用的就是 `.tar.zst`。这一点**以产物为准、不以脚本默认值为准**：
+真机上装的官方 DSHBox 里是 `assets/runtime/android-side.tar.zst`（113245 B）、
+`assets/dsh/0.2.0-rc.2.tar.zst`（85893395 B）和 `libzstd-jni-1.5.7-15.so`；
+而上游 `tools/pack_runtime.sh` 的默认值却是 gzip，注释还说 zstd-jni 解析不到 ——
+**那段注释是过时的**，DSHFusion 自己也把 `libs/zstd-jni-1.5.7-15-classes.jar`
+接进了 `app` 与 `sandbox-manager`。
+
+顺带一提，zstd 还更小：113245 B vs gzip 的 125930 B。
+
+退出码：0 成功；1 构建或自检失败；2 用法或环境错误（**缺 zstd 走这条**）。
+
+### `make-brand-assets.py`
+
+生成自有品牌图形 8 个（应用图标 1 个密度、助手标识 5 个密度、启动标记 2 个密度）。
+DSHBox 的 `TRADEMARK.md` 禁止复用其名称与品牌图形，**也禁止使用其设计构造方法**，
+所以这些图必须自绘。用纯 Python（`zlib`，不依赖 Pillow）渲染 SDF。
+
+```bash
+tools/make-brand-assets.py            # 生成
+tools/make-brand-assets.py --check    # 重新渲染并逐字节比对，CI 用这个
+```
+
+`--check` 会在临时目录里重渲染再比对，不落盘到仓库 —— 这样 CI 能验证
+「提交的图确实由脚本生成」，而不会因为 CI 自己改了文件而变脏。
+
+退出码：0 一致；1 不一致或生成失败。
+
 ## 验证类
 
 ### `verify-phase0.sh`
@@ -196,7 +610,7 @@ bash tools/verify-phase0.sh 2>&1 | tee verification.log
 
 **退出码**：`0` 全部通过；`1` 有失败项。
 
-覆盖 13 组检查。项数随环境伸缩：依赖齐全、有审计副本与上游镜像时 **67 项**；
+覆盖 21 组检查。项数随环境伸缩：依赖齐全、有审计副本与上游镜像时 **113 项**；
 干净克隆里 **60 项**。其中 **3 项**依赖可选依赖
 （PyYAML、actionlint、shellcheck），其余依赖上游审计副本或镜像存在：
 
@@ -210,10 +624,12 @@ bash tools/verify-phase0.sh 2>&1 | tee verification.log
 | 4b | 偏离重放的成功路径 + 7 种失败场景（夹具） | 无条件（隔离夹具） |
 | 4c | 锚点预检：真实上游 1 项 + 夹具 6 项 | 真实上游项依赖审计副本；夹具项无条件 |
 | 4d | 阶段 1 导入器：分支保护、上游校验、完整导入、导入后自洽 | 整段依赖审计副本 |
-| 5 | 静态检查：shell 语法、Python 编译、JSON 解析、许可哈希 | 无条件 |
+| 4e | 继承 lint 基线的两种失败模式（新增告警 / 基线过期） | 无条件 |
+| 4f | 导入保真度：逐 blob 对照上游，差异必须已登记 | 需审计副本 |
+| 5 | 静态检查：shell 语法、Python 编译、JSON 解析、许可哈希、隐私审计 | 无条件 |
 | 5b | 工作流验证：PyYAML 解析 + actionlint + shellcheck | 需对应工具 |
 | 6 | 上游仓库工作树仍干净（只读审计承诺） | 需审计副本 |
-| 7 | 所有 `.sh` 在 git 索引里是 `100755` | 非 git 检出时 SKIP |
+| 7 | `.sh` 索引模式对照继承基线（双向），并验证检查本身会失败 | 非 git 检出时 SKIP |
 
 > **第 7 组为什么存在**：本套件通过 `run_tool()` 用解释器显式调用脚本，
 > 因此**永远测不到可执行位**。CI 的 `contracts.yml` 却会查 `-x`，
@@ -225,7 +641,7 @@ bash tools/verify-phase0.sh 2>&1 | tee verification.log
 只代表这次没验证。脚本会打印「通过 / 失败 / 跳过 / 合计」四项计数，
 并在有跳过项时提示 **"本次运行并未验证全部 N 项"**（N 按本次实际项数算），避免把跳过误读成通过。
 
-因此结果有多种，都是正确的：依赖齐全且有审计副本时 **67 通过 / 0 失败 / 0 跳过**；
+因此结果有多种，都是正确的：依赖齐全且有审计副本时 **80 通过 / 0 失败 / 0 跳过**；
 无审计副本、无 PyYAML 时约 **53 通过 / 0 失败 / 7 跳过**。
 
 **3b 与 4b 为什么在夹具里跑**：`--record` 是唯一会改 `upstreams.json` 的动作，
@@ -241,7 +657,7 @@ bash tools/verify-phase0.sh 2>&1 | tee verification.log
 为 `--record` 的四项校验构造隔离测试夹具。
 
 ```bash
-tools/make-record-fixture.sh /tmp/fixture
+tools/make-record-fixture.sh "$(mktemp -d)"
 ```
 
 产出 `mirrors/DSHBox.git`（假上游：main 有推进、side 是旁支、orphan 无共同祖先、
@@ -255,7 +671,7 @@ rewound 在 main 上但非锁定提交后代）与 `repo/`（假 DSHFusion 仓�
 为偏离重放构造「上游已导入」的测试夹具，按场景制造偏差。
 
 ```bash
-tools/make-divergence-fixture.sh /tmp/fixture <场景>
+tools/make-divergence-fixture.sh "$(mktemp -d)" <场景>
 ```
 
 场景：`normal`（全部可施加）、`drift`（上游改了 `applicationId` 写法）、

@@ -326,11 +326,21 @@ CHANGED="$(git -C "$MIRROR" diff --name-only "$LOCKED" "$TARGET")"
     echo "## 3. ⚠️ 冲突预警（变更文件 ∩ 已登记偏离）"
     echo
     if [ -f "$DIVERGENCES_JSON" ]; then
-        printf '%s\n' "$CHANGED" | grep . > /tmp/dshfusion-changed.txt || true
-        python3 - "$DIVERGENCES_JSON" <<'PY'
+        # 变更清单经临时文件传给 Python。
+        # 不能走管道：`python3 - <<'PY'` 里的 heredoc 会**覆盖**管道输入
+        # （shellcheck SC2259），Python 读到的是脚本自身，清单等于没传 ——
+        # 这不是风格问题，是我改这里时真引入过的功能 bug，被 CI 的
+        # 静态检查门禁拦住。用 mktemp 而不是写死文件名：并发同步不会
+        # 互相覆盖，也不在源码里留下会被隐私审计报出的本机路径。
+        # 提醒：本文件里注释行不要以「井号 + shellcheck」开头，
+        # 那会被当成 lint 指令解析并报「无法解析的指令」。
+        CHANGED_LIST="$(mktemp)"
+        trap 'rm -f "$CHANGED_LIST"' EXIT
+        printf '%s\n' "$CHANGED" | grep . > "$CHANGED_LIST" || true
+        python3 - "$DIVERGENCES_JSON" "$CHANGED_LIST" <<'PY' || true
 import json, sys
 from pathlib import Path
-changed = set(Path("/tmp/dshfusion-changed.txt").read_text(encoding="utf-8").split())
+changed = set(Path(sys.argv[2]).read_text(encoding="utf-8").split())
 doc = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 hits = []
 for state in ("applied", "planned"):

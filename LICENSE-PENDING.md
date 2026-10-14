@@ -1,6 +1,16 @@
-# 许可状态：待定（私有自用）
+# 许可状态：待定（私有自用）—— 详细依据
+
+> **根目录 [LICENSE](LICENSE) 是面向外的简短声明**（GitHub 读的是那个文件）。
+> 本文件是它背后的详细依据与待办清单。
 
 **DSHFusion 目前没有对外许可证。这不是疏忽，是一个明确的、有期限的状态。**
+
+> **变更（2026-10-13，DIV-0009）**：根目录原先放的是上游的 GPL-3.0 全文，
+> GitHub 因此把本仓库显示成「GPL-3.0」—— 那是一个**本仓库并未做出的许可承诺**。
+> 现已替换为状态说明。**GPL-3.0 原文没有被删除**，它按原样保存在
+> [governance/upstream-licenses/DSHBox/LICENSE](governance/upstream-licenses/DSHBox/LICENSE)，
+> 受 `governance/upstream-license-hashes.json` 的 SHA-256 保护，
+> 并由 `tools/check-license-hashes.py` 在每次 CI 中核验。
 
 ## 现状
 
@@ -34,10 +44,13 @@ MIT 的义务由**分发时的许可与版权声明保留**触发。同样不触
 
 公开**之前**（不是之后），按以下顺序处理：
 
-1. **改成本仓库顶层 `LICENSE` 为 GPL-3.0 全文**。
+1. **把根 `LICENSE` 换回 GPL-3.0 全文**（原文已在
+   `governance/upstream-licenses/DSHBox/LICENSE`，直接取用即可）。
    这是唯一能同时合法容纳两边代码的选择：MIT 代码可以并入 GPL-3.0 作品，
    反过来不行。DSHBox 的 Kotlin 模块（手机助手内核、插件市场、沙箱管理、
    终端模块）都受 GPL-3.0 约束。
+   注意：这一步等于**撤销 DIV-0009**，因此要同时更新 `governance/divergences.json`，
+   否则下一次同步重放会把根 LICENSE 又改回状态说明。
 2. **补全署名**：按 [governance/ATTRIBUTION.md](governance/ATTRIBUTION.md) 的清单，
    在 `THIRD_PARTY_NOTICES.md` 中列出 DSHBox、DSHA、interlock-relay、
    Termux、proot/talloc、DSH 及全部传递依赖的版权与许可。
@@ -54,3 +67,4 @@ MIT 的义务由**分发时的许可与版权声明保留**触发。同样不触
 | 日期 | 事件 |
 |---|---|
 | 2026-10-13 | 项目创建，许可状态定为"待定（私有自用）" |
+| 2026-10-13 | 根目录不再放 GPL-3.0 全文（DIV-0009），改为状态说明；GPL 原文移入 `governance/upstream-licenses/` 并受哈希保护 |
