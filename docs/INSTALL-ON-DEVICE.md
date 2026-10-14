@@ -11,21 +11,37 @@
 **会得到**：一个能安装、能启动、能在设置里看到「DSHFusion v0.1.0」的应用，
 它能与 DSHBox 并存安装（不同的 applicationId）。
 
-**不会得到**：一个装完就能用的 DSH。原因不是缺陷，是上游的设计：
-
-| 层 | 在 CI 产出的 APK 里吗 |
-|---|---|
-| `android-side`（JNI 库） | ✅ 在（`assets/dshbox/libdshbox-link.so`） |
-| `dsh`（DSH 本体，纯 JS） | ❌ 不在 |
-| `base`（Debian 根文件系统） | ❌ 不在 |
-| `node` | ❌ 不在 |
-
-APK 里只有 `assets/runtime-online/`（在线获取的引导骨架：apt 源、dpkg 元数据、
-`bootstrap.index`）和 `assets/terminal-packages/`（24 个终端用 `.deb`）。
-
-**所以首次启动后需要让 app 自己把运行环境拉下来**，见第 4 步。
-这一步依赖网络，而且 Debian 源用的是清华镜像
+**不会得到**：一个装完就能用的 DSH。**首次启动后需要让 app 自己把 base 与 node 拉下来**，
+见第 4 步。这一步依赖网络，而且 Debian 源用的是清华镜像
 （`mirrors.tuna.tsinghua.edu.cn`，见 `assets/runtime-online/bootstrap/etc/apt/sources.list`）。
+
+> ⚠️ **下面这张表在 2026-10-14 更正过，两行都曾写错。**
+> 更正前的说法是「`android-side` ✅ 在（`assets/dshbox/libdshbox-link.so`）」——
+> 那个 67 KB 的 `.so` 是 PRoot 的 `link()` 垫片，**不是** 784 KB 的 android-side 层；
+> 而 `dsh` 那行的「❌ 不在」当时是事实，但成因被记轻了：不是「需要在线补」，
+> 而是**当时没有任何一条路能补上**。
+
+各层在 APK 里的真实情况（`e676e38` 之后）：
+
+| 层 | 在 APK 里吗 | 路径 |
+|---|---|---|
+| `android-side`（PRoot + loader + shmem + talloc，4 个文件） | ✅ 在 | `assets/runtime/android-side.tar.gz`（126 KB） |
+| `dsh`（DSH 本体，纯 JS） | ✅ 在 | `assets/dsh/<版本>.tar.gz`（约 119 MB） |
+| `base`（Debian 根文件系统） | ❌ 不在 | 首次启动时在线获取 |
+| `node` | ❌ 不在 | 同上 |
+
+> **在 `e676e38` 之前，前两层也都不在**，而且**两条获取途径都是死的**：
+> 在线获取会在下载完几百 MB 之后才失败（`OnlineRuntimeImportManager.kt:458`），
+> 离线基线则静默什么都不做（`provisionBundledDshBaseline` 第 733 行直接 return）。
+> 也就是说，**修复前的 APK 装上去永远起不了 DSH**。
+> 详见 [AGENTS.md](../AGENTS.md) 的「APK 不含运行环境层」专节。
+>
+> 顺带说明为什么是 `.tar.gz` 而不是上游发布包用的 `.tar.zst`：本仓库的构建环境
+> 没有 `zstd`。这**不是降级** —— `BundleManager.extractTarGz` 按**魔数**分派格式
+> （zstd / bzip2 / xz / 纯 tar / gzip 兜底），`.tar.gz` 本来就是受支持的一等格式。
+
+APK 里还有 `assets/runtime-online/`（在线获取的引导骨架：apt 源、dpkg 元数据、
+`bootstrap.index`）和 `assets/terminal-packages/`（24 个终端用 `.deb`）。
 
 ---
 

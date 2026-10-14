@@ -326,6 +326,48 @@ tools/build-dsh-layer.sh [输出目录]      # 默认 ./runtime/android-assets
 
 退出码：0 成功；1 构建/核对/冒烟失败；2 用法或环境错误（缺 node、版本读不到）。
 
+### `build-runtime-assets.sh`
+
+组装**能内嵌进 APK 的**运行环境层：`android-side` + `dsh`，各带 `.sha256` 侧车。
+这是补 `build-dsh-layer.sh` 之后剩下的那一半 —— 光有层、没人把它放进 APK，等于没有。
+
+```bash
+tools/build-runtime-assets.sh [输出目录]   # 默认 <repo>/runtime/android-assets
+```
+
+输出布局**刻意与 `assets.srcDirs` 对齐**，所以 `DSHFUSION_RUNTIME_ASSETS`
+指到这个目录就能直接打包：
+
+```
+<输出目录>/runtime/android-side.tar.gz     → APK 内 assets/runtime/android-side.tar.gz
+<输出目录>/dsh/<版本>.tar.gz               → APK 内 assets/dsh/<版本>.tar.gz
+```
+
+- `android-side` 从 `app/src/main/jniLibs/arm64-v8a` 组装（4 个文件）：
+  `libproot.so`→`bin/proot`、`libproot-loader.so`→`libexec/proot/loader`、
+  `libandroid-shmem.so`→`lib/libandroid-shmem.so`、`libtalloc.so`→`lib/libtalloc.so`。
+  这四个路径必须与 `DefaultSandboxManager` 的 `prootBinary()` / `prootLibDir()` /
+  `prootLoaderFile()` 一致，否则装上了也起不来。
+- **显式 `chmod 755` 全部四个文件**，不信任检出后的工作区模式：
+  实测 jniLibs 在工作区是 `-rwx------`（700）而 git 索引记的是 `100755`，
+  直接打包会让产物随检出方式漂移。
+- 带**布局自检**：解出条目列表与预期 4 项逐项比对，多一个少一个都失败。
+  （这个自检自己出过一次假阴性：`tar -tzf | sed 's#^\./##'` 会把开头的
+  `./` 条目留成**空行**，而空行不匹配 `grep -v '/$'`。已补 `sed '/^$/d'`。）
+- `dsh` 层委托 `build-dsh-layer.sh`，不重复实现。
+- `SKIP_DSH=1` 只建 android-side（本地快速验证用）。
+- 环境变量：`DSHFUSION_RUNTIME_ASSETS`（默认输出目录）、`ANDROID_SIDE_SRC`、
+  `DSH_VERSION`。
+
+实测（本机全量）：`android-side.tar.gz` 125930 B、`dsh/0.2.0-rc.2.tar.gz` 124380096 B，
+两份 sha256 侧车均一致；两层都是 gzip（本环境无 `zstd`）。
+
+**为什么 gzip 不是降级**：`BundleManager.extractTarGz` 按**魔数**分派格式
+（zstd / bzip2 / xz / 纯 tar，gzip 是 else 兜底分支），从不看扩展名。
+所以 `.tar.gz` 是一等受支持格式，不是「退而求其次」。
+
+退出码：0 成功；1 构建或自检失败；2 用法或环境错误。
+
 ### `make-brand-assets.py`
 
 生成自有品牌图形 8 个（应用图标 1 个密度、助手标识 5 个密度、启动标记 2 个密度）。

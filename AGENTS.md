@@ -23,7 +23,12 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 **「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
-18 处差异全部能对上已登记的偏离。
+23 处差异全部能对上已登记的偏离（其中 22 处是代码偏离，1 处是继承 lint 基线）。
+
+> 两个方向都要查，缺一不可：`check-import-fidelity.py` 抓「多出来的改动」，
+> `apply-divergences.sh --check` 抓「已登记却没生效的偏离」。实测过 ——
+> 把 DIV-0011 第三个文件的改动撤掉后，保真度检查是**通过**的
+> （该文件已在 `target_files` 里，于是不再比对），只有重放检查报错。
 
 > ⚠️ **构建已验证；真机安装已验证（第二次成功）；启动与运行还没验证。**
 >
@@ -37,10 +42,12 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 > 按 DIV-0011 修复后第二次**成功**。
 > **但「装上」不等于「能用」** —— 启动、运行环境获取、DSH 起来都还没验证过。
 >
-> 另外：CI 产出的 APK **不含任何运行环境层**（无
-> `base/node/android-side/dsh` 的 `.tar.zst`），因为上游不把 `runtime/` 提交进仓库。
-> 所以即便装上，也**起不了 DSH**，除非先通过「运行环境在线获取」或离线整包导入补上。
-> 不要把这个状态读成「装上就能用」。
+> **已修复（2026-10-14，提交 `e676e38`）**：此前 CI 产出的 APK
+> **不含任何运行环境层** —— 而且这不只是「还得在线装一次」那么轻。
+> 见下方「APK 不含运行环境层」专节：**两条获取途径都是死的**。
+> 现已补上 `tools/build-runtime-assets.sh` 并接进 CI，
+> 新产物内嵌 `assets/runtime/android-side.tar.gz` + `assets/dsh/<版本>.tar.gz`，
+> 且 `check-apk-identity.py` 会把「缺层」直接判失败（不再是备注）。
 > 见 [docs/PHASE0-VERIFICATION.md](docs/PHASE0-VERIFICATION.md) 的诚实性声明。
 
 阶段 1 的未完成项（**不要误认为已完成**）：
@@ -54,7 +61,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | APK **产物**身份核验（DIV-0008） | ✅ **已通过**（run 38483533327 第 15 步）—— 对 CI 真实产物解二进制清单核验 |
 | 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
 | 生成的 APK 装到真机上验证 | ✅ **已通过**（2026-10-14，修复后第二次尝试）—— 见下方专节；**但启动与运行尚未验证** |
-| APK 内含运行环境层（能真正跑起 DSH） | ❌ 不含 —— 仓库未提交 `runtime/`，CI 只做编译 |
+| APK 内含运行环境层（能真正跑起 DSH） | ⚠️ **已修复但尚未在真机验证** —— `e676e38` 起 CI 会建层并内嵌；见下方专节 |
 | `upstream-watch.yml` 真实运行 | ✅ **已跑通**（run 38483621472，手动触发）—— 检出 DSHA 有新提交并建了 Issue #2 |
 
 ### 首次真实 CI 运行（2026-10-13）暴露的问题
@@ -201,6 +208,62 @@ DSHFusion : com.dshfusion.app.shizuku
 **仍然没有验证的**：应用能否启动、能否获取运行环境、DSH 能否真正跑起来。
 「装上」只是第一步。
 
+### APK 不含运行环境层（2026-10-14 发现，`e676e38` 修复）—— 两条路都是死的
+
+这一条我一开始记成了「APK 不含运行环境层 ❌，需要在线获取或离线导入补上」。
+**这个记法是错的，而且错得危险**：它把「装不上层」写成了「还没装层」，
+读起来像是有一条能走通的路。实际上**两条获取途径都走不通**。
+
+事实：CI 产出的 APK 里 `assets/` 顶层只有
+`dshbox` / `plugins` / `relay` / `runtime-online` / `terminal-packages` 五项，
+**没有 `runtime/`，也没有 `dsh/`**。于是：
+
+| 途径 | 代码位置 | 实际结果 |
+|---|---|---|
+| 在线获取 | `OnlineRuntimeImportManager.kt:458` | 下载完几百 MB 之后才硬失败（`ONLINE_ASIDE`）—— 因为 `prepareAndroidSide` 的两个来源（已有的 android-side、`assets/runtime/`）都不存在 |
+| 离线基线 | `provisionBundledDshBaseline` `:733` | `assets.list("dsh")` 拿到 null 直接 `return`，**一句日志都不打**，静默无操作 |
+
+也就是说：这个 APK 能装上、能打开、界面正常，**但永远起不了 DSH**，
+而且在线获取也救不了它 —— 用户会白等一次几百 MB 的下载才看到失败。
+
+**根因是我抄上游 `android.yml` 时漏了一步。** 上游不把 `runtime/` 提交进仓库，
+它的发布流程在**树外**把层建到 `../../runtime/android-assets` 再指给 gradle
+（`app/build.gradle.kts:78` 的 `assets.srcDirs`）。我只抄了编译步骤，没抄建层步骤。
+
+> 这暴露了一个更一般的教训：**「仓库里没有」不等于「构建时没有」**。
+> 上游把这一步放在仓库之外，我从仓库内容推断构建输入，于是漏掉了它。
+> 与 `Unresolved reference 'R'` 那次同源 —— 都是**从静态阅读推断构建结果**。
+
+修复（提交 `e676e38`）：
+
+- 新增 `tools/build-runtime-assets.sh`：从 `jniLibs` 组装 `android-side` 层
+  （4 个文件：`bin/proot`、`libexec/proot/loader`、`lib/libandroid-shmem.so`、
+  `lib/libtalloc.so`；显式 `chmod 755` 以对齐 git 索引里的 `100755`，
+  不信任检出后的工作区模式），再委托 `tools/build-dsh-layer.sh` 建 `dsh` 层。
+  带布局自检与 sha256 侧车。
+- `android.yml` 在 `assembleDebug` 前插入该步骤，并把 `DSHFUSION_RUNTIME_ASSETS`
+  指到同一目录。
+- `check-apk-identity.py` 把「缺层」**从备注提升为断言 6** —— 这是关键的一条：
+  以前它如实备注了「不含任何运行环境层」，然后 CI 照样全绿，
+  缺层的 APK 一路走到了真机。**一个发现了问题却不判失败的检查，等于没有检查。**
+  另加 `--allow-missing-runtime-layers` 逃生口给确实不该带层的场景。
+- 夹具新增 `no-layers` 场景（身份全部正确、只缺层），套件 5d 独立断言它，
+  确保它只因为「缺层」这一条失败，而不是碰巧被别的断言拦下。
+
+本机全量实测产物（非推断）：
+
+```
+runtime/android-side.tar.gz       125930 B   sha256 侧车一致
+dsh/0.2.0-rc.2.tar.gz          124380096 B   sha256 侧车一致
+```
+
+两层都是 gzip（魔数 `1f8b08`）。这不是降级：`BundleManager.extractTarGz`
+按**魔数**分派而非扩展名，zstd / bzip2 / xz / 纯 tar 各有分支，
+**gzip 是 else 兜底分支**，本来就是受支持的一等格式。
+
+**仍未验证的**：新 APK 在真机上是否真能装层、DSH 是否真能起来。
+层进了 APK 只是必要条件，不是充分条件。
+
 ## 决策依据（不要重新推翻）
 
 主干选择基于 2026-10-13 的只读审计，完整证据见 [docs/AUDIT.md](docs/AUDIT.md)。结论摘要：
@@ -292,9 +355,10 @@ dshfusion/
 │   ├── check-android-identity.py  namespace 对得上 R 引用与 manifest 相对类名
 │   ├── make-brand-assets.py     生成自有品牌图形 8 个（--check 逐字节核验）
 │   ├── build-dsh-layer.sh       构建 DSH 运行环境层（版本取自 upstreams.json）
+│   ├── build-runtime-assets.sh  组装可内嵌 APK 的层（android-side + dsh，产出 sha256 侧车）
 │   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 113 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 114 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）

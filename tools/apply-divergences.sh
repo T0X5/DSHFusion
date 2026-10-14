@@ -508,6 +508,102 @@ def handle_div_0006(entry) -> tuple[str, str]:
     return OK, "已为 android.yml 补上顶层 permissions: contents: read"
 
 
+def handle_div_0012(entry) -> tuple[str, str]:
+    """android.yml 必须构建运行环境层，且必须在 assembleDebug **之前**。
+
+    上游 android.yml 只有 assembleDebug，不建层 —— 层是上游在树外建好、
+    通过 assets.srcDirs 指进来的。抄了编译步骤而没抄建层步骤的后果不是
+    「少一层」：prepareAndroidSide 会在下载完几百 MB 之后才失败，
+    provisionBundledDshBaseline 会静默 return，**两条获取途径都是死的**。
+
+    顺序是这条偏离的一部分：把建层放在 assembleDebug 之后，gradle 读到的
+    就是空目录，等于没建。所以这里不检查「有没有出现」，而是检查
+    「出现在哪一行之前」。
+    """
+    yml = ROOT / ".github" / "workflows" / "android.yml"
+    script = ROOT / "tools" / "build-runtime-assets.sh"
+    if not yml.exists():
+        return PENDING, "android.yml 尚未导入"
+    if not script.exists():
+        return FAILED, "tools/build-runtime-assets.sh 不存在（本项目自有文件，不该缺失）"
+
+    text = read(yml)
+    has_call = "tools/build-runtime-assets.sh" in text
+    has_env = "DSHFUSION_RUNTIME_ASSETS" in text
+
+    i_build = text.find("tools/build-runtime-assets.sh")
+    i_asm = text.find("assembleDebug")
+    ordered = i_build != -1 and i_asm != -1 and i_build < i_asm
+
+    if has_call and has_env and ordered:
+        return OK, "android.yml 在 assembleDebug 之前构建运行环境层"
+
+    if CHECK_ONLY:
+        which = []
+        if not has_call:
+            which.append("缺少 build-runtime-assets.sh 调用")
+        if not has_env:
+            which.append("缺少 DSHFUSION_RUNTIME_ASSETS 环境变量")
+        if has_call and i_asm != -1 and not ordered:
+            which.append("建层步骤出现在 assembleDebug 之后（等于没建）")
+        return FAILED, "android.yml 未正确构建运行环境层：" + "、".join(which)
+
+    # 只做插入，不改写上游已有的步骤 —— 这样合并上游时冲突面最小。
+    # 锚点用 assembleDebug 那一步的 name 行，插入到它前面。
+    anchor = "      - name: Assemble debug APK\n"
+    if anchor not in text:
+        return FAILED, "android.yml 找不到 assembleDebug 步骤的锚点，需人工确认"
+
+    # 这段文字必须与仓库里现有的那一段**逐字一致** —— 否则「重放后字节一致」
+    # 这个性质就不成立，而那是判断重放正确与否的唯一客观依据。
+    # 第一次写这个 handler 时两段文字不同，我做的反向验证因此是假的：
+    # 注入正则按 handler 的文字去找、没找到，于是「什么都没删」，
+    # 检查却报「已生效」—— 测试通过只是因为文件本来就没被改动。
+    step = (
+        "      # 构建可嵌入 APK 的运行环境层（android-side + dsh）。\n"
+        "      #\n"
+        "      # 上游 DSHBox 不把 runtime/ 提交进仓库：它的发布流程在仓库外构建好，\n"
+        "      # 放到 ../../runtime/android-assets，由 app/build.gradle.kts 读取。\n"
+        "      # DSHFusion 的 CI 原先只照搬了 android.yml，**没搬这一步**，\n"
+        "      # 于是 APK 一层都没有 —— 而这不只是「少点东西」：\n"
+        "      # OnlineRuntimeImportManager.prepareAndroidSide() 在缺\n"
+        "      # assets/runtime/android-side.tar.* 时硬失败，且它在**下载之后**才执行，\n"
+        "      # 所以「在线获取运行环境」这条补救路径同样走不通（2026-10-14 真机发现）。\n"
+        "      - name: Build runtime assets\n"
+        "        run: tools/build-runtime-assets.sh\n"
+        "\n"
+    )
+    new_text = text.replace(anchor, step + anchor, 1)
+
+    # 环境变量：加在 assembleDebug 步骤的 env 里；没有 env 就建一个
+    env_anchor = "      - name: Assemble debug APK\n"
+    after = new_text[new_text.find(env_anchor):]
+    if "DSHFUSION_RUNTIME_ASSETS" not in after:
+        old_run = "        run: ./gradlew assembleDebug --stacktrace\n"
+        new_run = (
+            "        env:\n"
+            "          # 与上一步的输出目录保持一致 —— 不一致的话 gradle 读到空目录\n"
+            "          DSHFUSION_RUNTIME_ASSETS: ${{ github.workspace }}/runtime/android-assets\n"
+            "        run: ./gradlew assembleDebug --stacktrace\n"
+        )
+        if old_run not in new_text:
+            return FAILED, "android.yml 找不到 assembleDebug 的 run 行，需人工确认"
+        new_text = new_text.replace(old_run, new_run, 1)
+
+    write(yml, new_text)
+
+    # 不谎报成功：写完必须复核「存在」与「顺序」两件事
+    t2 = read(yml)
+    j_build = t2.find("tools/build-runtime-assets.sh")
+    j_asm = t2.find("assembleDebug")
+    if j_build == -1 or j_asm == -1 or j_build >= j_asm or "DSHFUSION_RUNTIME_ASSETS" not in t2:
+        revert(yml, text)
+        return FAILED, "写入后复核未通过（已还原）"
+
+    files_changed.append(str(yml))
+    return OK, "已在 android.yml 的 assembleDebug 之前插入运行环境层构建步骤"
+
+
 def handle_div_0011(entry) -> tuple[str, str]:
     """FileProvider authority 必须从 applicationId 派生。
 
@@ -916,6 +1012,7 @@ HANDLERS = {
     "DIV-0009": handle_div_0009,
     "DIV-0010": handle_div_0010,
     "DIV-0011": handle_div_0011,
+    "DIV-0012": handle_div_0012,
 }
 
 

@@ -185,6 +185,23 @@
       "reapply": "由 tools/apply-divergences.sh 的 handle_div_0011 校验：manifest 与 ExternalOpener.kt 两处都必须从 applicationId 派生，任一处写死即失败；SandboxFilePickerDialog.kt 的 KDoc 不得再出现写死的 `com.dshbox.app.fileprovider`。",
       "conflict_risk": "low",
       "note": "上游 DSHBox 自身也有这个隐患（manifest 与 DshWebViewScreen 用了两种写法，只是恰好相等）。这是**上游缺陷**，但我们不向上游提改动，只在本仓库内适配。"
+    },
+    {
+      "id": "DIV-0012",
+      "title": "android.yml 增加运行环境层构建步骤（上游根本没有这一步）",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        ".github/workflows/android.yml",
+        "tools/build-runtime-assets.sh"
+      ],
+      "change": "在 `assembleDebug` 之前插入一步 `Build runtime assets`（跑 `tools/build-runtime-assets.sh`），并给 `assembleDebug` 加上环境变量 `DSHFUSION_RUNTIME_ASSETS: ${{ github.workspace }}/runtime/android-assets`。同时新增 `tools/build-runtime-assets.sh`（本项目自有文件，不对应任何上游文件）。",
+      "rationale": "**上游 android.yml 根本不建运行环境层。** 实测确认：上游 `.github/workflows/android.yml` 里只有 `assembleDebug`（第 87 行），没有任何 runtime 层构建步骤；上游仓库只有 `android.yml` 与 `pages.yml` 两个 workflow，也没有别的 workflow 承担这件事。\n\n上游的发布流程是在**树外**把层建到 `../../runtime/android-assets`，再由 `app/build.gradle.kts:78` 的 `assets.srcDirs` 读进来。也就是说：**克隆上游仓库直接跑它的 CI，产出的 APK 不含任何运行环境层。**\n\n我抄 android.yml 时只抄了编译步骤，于是 DSHFusion 的 APK 也没有层 —— 后果比「少一层」严重得多：`prepareAndroidSide`（OnlineRuntimeImportManager.kt:458）会在下载完几百 MB 之后才失败，而 `provisionBundledDshBaseline`（第 733 行）会静默 return。**两条获取途径都是死的**，这个 APK 装上去永远起不了 DSH。\n\n所以这不是「给上游补个便利步骤」，而是让产物具备最小可用性的必要改动。",
+      "detection": "tools/check-apk-identity.py 断言 6：APK 里必须同时存在 `assets/runtime/android-side.tar.*` 与 `assets/dsh/*.tar.{zst,gz}`，缺任一即失败（`--allow-missing-runtime-layers` 可降级为备注，供确实不该带层的场景使用）。\n夹具 `no-layers` 场景：身份全部正确、只缺层 —— 确保它只因为「缺层」失败，不是被别的断言顺带拦下。套件 5d 独立断言它。\n**这条断言才是这次修复的关键**：在此之前，缺层只被记为「备注」，CI 照样全绿，缺层的 APK 一路走到了真机。一个发现了问题却不判失败的检查等于没有检查。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0012 校验：android.yml 必须含 `tools/build-runtime-assets.sh` 调用与 `DSHFUSION_RUNTIME_ASSETS` 环境变量，且该步骤必须出现在 `assembleDebug` **之前** —— 顺序反了等于没建层。",
+      "conflict_risk": "medium —— 上游若调整 android.yml 的步骤结构，锚点会失效。但我们是**插入**而非改写上游已有步骤，合并时冲突面很小，通常能自动合入。",
+      "note": "上游不提交 runtime/ 是刻意的判断（层是可再生构建产物，118 MB 不该进 git），我们沿用 —— DSHFusion 的 `.gitignore` 同样忽略 `/runtime/`。区别只在于：上游把建层留在树外的人工流程里，我们把它放进 CI，否则「克隆即可构建」不成立。"
     }
   ]
 }
