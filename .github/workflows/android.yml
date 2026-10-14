@@ -129,15 +129,15 @@ jobs:
               problems.append(f"{codes} 没有运行（本机无 kotlinc，它只可能在这里跑）")
           elif classes[codes] != 8:
               problems.append(f"{codes} 跑了 {classes[codes]} 条，期望 8 条")
-          # 下限 = 阶段 2.4b 的**预期**总数 96，即「不允许净减少」。
-          # 推导过程（不是数出来的）：阶段 2.4a CI 实测 85（Java 42 + Kotlin 43）。
-          # 2.4b 在**本机真跑**得到 Java 53 条（42 + HostRestoreMappingTest 的 11），
-          # Kotlin 侧未动仍是 43 ⇒ 53 + 43 = 96。
-          # 53 是本机实测（tools/run-backup-jvm-tests.sh），43 是上一阶段 CI 实测。
-          # 这两个数拼起来的 96 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
-          # 若 CI 报的不是 96，先信 CI（docs/INCIDENTS.md 第 27 条）。
-          if total < 96:
-              problems.append(f":backup 只有 {total} 条测试，低于阶段 2.4b 的预期总数 96")
+          # 下限 = 阶段 2.4b-② 的**预期**总数 105，即「不允许净减少」。
+          # 推导过程（不是数出来的）：阶段 2.4b-① CI 实测 96（Java 53 + Kotlin 43）。
+          # 2.4b-② 在**本机真跑**得到 Java 62 条（53 + HostRestoreCommitTest 的 9），
+          # Kotlin 侧未动仍是 43 ⇒ 62 + 43 = 105。
+          # 62 是本机实测（tools/run-backup-jvm-tests.sh），43 是上一阶段 CI 实测。
+          # 这两个数拼起来的 105 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
+          # 若 CI 报的不是 105，先信 CI（docs/INCIDENTS.md 第 27 条）。
+          if total < 105:
+              problems.append(f":backup 只有 {total} 条测试，低于阶段 2.4b-② 的预期总数 105")
           # 2.4 的恢复核心是**会毁数据**的那条路径，所以单独钉住它的类。
           # 「总数够了」不代表「新那 8 条在里面」（第 26 条的同族）。
           restore = "com.deepseekharness.app.backup.NativeRestorePlanTest"
@@ -152,6 +152,12 @@ jobs:
               problems.append(f"{mapping} 没有运行（落点映射没跑 = 2.4b 没有证据）")
           elif classes[mapping] != 11:
               problems.append(f"{mapping} 跑了 {classes[mapping]} 条，期望 11 条")
+          # 2.4b-② 的提交/回切是最危险的一段（它真的动活动目录），单独钉住。
+          commit = "com.dshbox.app.backup.HostRestoreCommitTest"
+          if commit not in classes:
+              problems.append(f"{commit} 没有运行（提交/回切没跑 = 2.4b-② 没有证据）")
+          elif classes[commit] != 9:
+              problems.append(f"{commit} 跑了 {classes[commit]} 条，期望 9 条")
           if problems:
               sys.exit("::error::" + "；".join(problems))
           print(":backup 的测试确实跑了，且新测试在位。")

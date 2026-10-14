@@ -1854,3 +1854,173 @@ if ! cmp -s "$MEMBER_BAK" "$MEMBER_TEST"; then
 >
 > **放宽一条检查时，同时加一条注入证明放宽是有界的。**
 > 只放宽、不加注入，等于把「放宽」和「弄瞎」混成同一个提交。
+
+---
+
+## 31. 故障注入没注到它以为的地方 —— **三个用例全是绿的，却一个都没测到它名字说的事**
+
+> 这是第 16 条的原样复发，换了机理。第 16 条是「写进去的字节本来就是空格」，
+> 这一条是「被计数的动作串被内部调用污染了」。
+> 两次的形态完全一样：**注入先失效，用例再给绿。**
+
+### 怎么发现的
+
+阶段 2.4b-② 的提交/回切有三条故障注入用例，各自要证明一件事：
+
+| 用例 | 它声称证明的 |
+|---|---|
+| `faultBeforeTheFirstMoveLeavesTheActiveTreeUntouched` | 第 1 次换出失败 → 活动目录一动不动 |
+| `faultBetweenTheTwoMovesIsRolledBack` | 第 2 次换入失败 → 旧内容从 aside 挪回来 |
+| `recoverRestoresTheOriginalFromTheCrashWindow` | 从第 2 次起全失败 → 日志留下 → `recover()` 救回 |
+
+三条第一次跑**全过**。但第三条过不了 —— 它在 `assertTrue(failure.getSuppressed().length > 0)`
+上红了，而那句断言的意思是「回切**也**失败了」。红了之后我去看为什么，
+才发现 `FaultFs` 的计数和我以为的不一样。
+
+### 根因
+
+`FaultFs` 第一版是这样计数的：
+
+```java
+public void move(File a, File b) throws IOException {
+  if (++moves == failMove) throw new IOException("PROCESS_INTERRUPTED");
+  delegate.move(a, b);
+}
+```
+
+而 `fs.atomic()` —— 写日志用的那个原语 —— **内部自己也会 `move`**：
+它要把临时文件发布成正式名，还要把旧记录轮转成 `.previous`。
+
+于是 `commit()` 里的 move 序列实际是：
+
+| 次序 | 谁发的 | 我以为是 |
+|---|---|---|
+| 1 | `writeJournal()` → `fs.atomic()` 发布日志 | `move(active, aside)` |
+| 2 | `move(active, aside)` | `move(candidate, active)` |
+| 3 | `move(candidate, active)` | 回切 |
+
+所以 `failAt=2` 打在的是 **`move(active, aside)`**，不是「候选进不来」。
+
+后果逐条对上：
+
+- 用例 1（`failAt=1`）实际打在**日志发布**上 —— 那时还没进 try 块，连回切都没有。
+  它绿了，但证明的是「写日志失败时活动目录没动」，**不是它名字说的那件事**。
+- 用例 2（`failAt=2`）打在**第 1 次换出**上 —— 什么都没挪走，回切自然无事可做。
+  它绿了，但证明的是用例 1 声称的那件事。
+- 用例 3 想要「回切也失败」，可 `failFrom=MAX` 意味着**回切是成功的** ——
+  于是 `getSuppressed()` 是空的，红了。
+
+**三条用例里，两条绿得没有意义，一条红得没有意义。**
+
+### 修法：两层
+
+**① 按语义识别动作，不数位置。**
+
+```java
+private boolean isSwap(File source, File target) {
+  return source.equals(active) || target.equals(active) || target.equals(aside);
+}
+```
+
+一次 `move` 只要有一端是活动目录或 aside，才算「换入/换出」。
+日志自己的 move 因为两端都在任务目录下，被自然排除 —— 不需要知道 `atomic()` 内部
+到底做了几次 move。**这是关键：让判据依赖「这个动作是什么」，而不是「它是第几个」。**
+
+**② 注入必须自证。**
+
+```java
+assertEquals("PROCESS_INTERRUPTED", failure.getMessage());
+assertEquals("应当正好尝试过 1 次换出", 1, fault.swaps);
+```
+
+`fault.swaps` 是**实际发生过的换入/换出次数**。把它钉进断言之后，
+「注入没生效」这件事自己就会让用例变红 —— 而不是等着某个下游断言碰巧发现。
+
+用例 2 钉的是 `3`（换出成功 → 换入失败 → 回切挪回），
+用例 3 钉的是 `3` 且 `getSuppressed().length > 0`。
+
+### 教训
+
+**「我注入了故障」和「故障注在我以为的那一步」是两件事。**
+第 16 条教的是前者要自证（文件哈希确实变了），这一条教的是后者也要自证
+（动作计数确实是那个数）。
+
+只要注入的判据是**位置**，而那个位置的计数被任何内部调用影响过，
+注入就会静默地打偏 —— 而**打偏的注入比没有注入更危险**，因为它给的是一个绿。
+
+> **注入的判据要描述「这个动作是什么」，不要描述「它是第几个」。**
+>
+> **每一条注入都要断言它自己的计数** —— 让「没注进去」自己变红，
+> 而不是指望下游某条断言碰巧发现。
+
+---
+
+## 32. 我自己的检查器**把正确的实现判失败了** —— 规则比它的意图宽
+
+> 与第 15 条、第 20 条补记二同族：**钉了「我以为的形态」，而不是「必须成立的性质」。**
+> 与第 18 条互为镜像：第 18 条是检查器**漏抓**它存在的那件事，这一条是它**多抓**了正确的东西。
+
+### 怎么发现的
+
+阶段 2.4b-② 写完，跑套件，`check-backup-contract.py` 报：
+
+```
+✗ backup/src/test/java/com/dshbox/app/backup/HostRestoreCommitTest.java:315
+  限定名后直接跟 new —— 机械替换留下了悬空限定名（如 java.nio.file.new String(…))
+```
+
+第 315 行是：
+
+```java
+return new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+```
+
+**这一行正是那条规则自己的错误信息里逐字推荐的写法。**
+
+### 根因
+
+```python
+DANGLING_QUALIFIER = re.compile(r"[A-Za-z0-9_.]\s*new\s+String\(\s*(?:java\.nio\.file\.)?Files\.readAllBytes\(")
+```
+
+规则的本意是「限定名后面直接跟 `new`」，真实要抓的形态是
+`java.nio.file.new String(...)` —— 一个**点**后面跟 `new`。
+
+但它写的是 `[A-Za-z0-9_.]`，一个**字符类**，其中包含了普通标识符字符。
+于是 `return new String(...)` 里的 `n`（`return` 的最后一个字母）就满足了它。
+
+规则原本的注释还写着「合法的 `outer.new Inner()` 不会被误伤」——
+它担心的误伤离现场很远，**真正的误伤是它自己推荐的那一行**。
+
+### 为什么之前一直没暴露
+
+这条规则此前只在三份**适配过的 DSHA 测试文件**上跑过，而那些文件里的
+替换产物前面要么是 `=`，要么是 `(`，都不是标识符字符。我的新文件里
+写了 `return new String(...)` —— 才第一次踩到。
+
+**一条检查没红过，不代表它是对的；它可能只是还没有遇到那个输入。**
+
+### 修法：要求一个真正的点，并且两个方向都注入
+
+```python
+DANGLING_QUALIFIER = re.compile(r"[A-Za-z0-9_]\s*\.\s*new\s+String\(…")
+```
+
+- `java.nio.file.new String(` → 有点 → **仍被判红** ✓
+- `return new String(` → 没有点 → **不再被判红** ✓
+
+两个方向都固化进 `tools/verify-phase0.sh` 的 5p 节：写入一个真的悬空限定名，
+检查器必须变红；同时断言推荐写法在树里存在且检查器为绿。
+
+**改了检查器就必须证明它仍然有界** —— 和第 30 条（放宽反向扫描要加注入）
+是同一条规矩，只是这次改的不是「放宽」而是「收紧」，而**收紧也会出错**。
+
+### 教训
+
+**套件红了，第一反应不该是「改代码让它变绿」。** 这一次红的是一行
+**检查器自己推荐我写**的代码 —— 那说明红的原因在检查器一侧。
+
+> **规则要描述「什么形态是非法的」，不要描述「看起来像什么」。**
+> `[A-Za-z0-9_.]` 看起来像「限定名的结尾」，实际是「任意标识符的结尾」。
+>
+> **改了检查器，两个方向都要注入** —— 漏抓和误抓都要有会红的输入。

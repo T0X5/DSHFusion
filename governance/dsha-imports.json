@@ -404,6 +404,16 @@
         "local_path": "backup/src/test/java/com/dshbox/app/backup/HostRestoreMappingTest.java",
         "why": "上面那个映射的测试。最重要的两条是**串起来**与**注入**：① 用我们自己的 HostSnapshot 打归档、再用我们自己的 mapping 预检并构建候选 —— 2.1 → 2.4a → 2.4b 第一次端到端跑通（「两个模块各自的单测都过」证明不了它们能对接）；② 预检之后改动活动目录，构建候选必须报 TARGET_CHANGED 且**不留下候选树**。",
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真跑）"
+      },
+      {
+        "local_path": "backup/src/main/java/com/dshbox/app/backup/HostRestoreCommit.java",
+        "why": "阶段 2.4b-② 的提交与回切。**不是移植** —— 上游把这一步放在 HostDataTransaction 里，而那个类依赖它自己的 ConfigStore/KeyVault，没搬。原子性靠同文件系统 rename：候选树在活动目录之外建好、逐文件校验过，再两次 move 换进去，所以活动树不会半新半旧。要处理的是「两次 rename 之间目标不存在」与「aside 残留」，靠 fs.atomic() 写的日志恢复；**恢复判定看摘要不看相位**。有一条必须先断言的前提：task 与活动目录必须同设备（CROSS_DEVICE），否则 move 退化成拷贝、原子性静默消失。",
+        "verified_by": "tools/run-backup-jvm-tests.sh（本机真跑，含故障注入）"
+      },
+      {
+        "local_path": "backup/src/test/java/com/dshbox/app/backup/HostRestoreCommitTest.java",
+        "why": "上面那个提交/回切的测试。关键是**故障注入真的注进去了**：第一版数的是「第 N 次 move」，而 fs.atomic() 内部也在 move，于是 failAt=2 实际打在 move(active, aside) 上 —— 三个用例当时都绿，却一个都没测到它名字说的事（事故表第 16 条的形态）。现在按语义识别换入/换出动作，并且每条注入都自证 fault.swaps 的期望值。崩溃现场由**真实代码路径**产生（从第 2 次换起全失败 → 回切也失败 → 日志留下），不是在测试里手搭一个现场。",
+        "verified_by": "tools/run-backup-jvm-tests.sh（本机真跑）"
       }
     ]
   }

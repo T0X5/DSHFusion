@@ -190,9 +190,15 @@ def check_no_jdk_only_apis() -> int:
 # 留了下来，变成 `java.nio.file.new String(...)` —— 而它在**本机静态检查里长得完全正常**
 # （`Files.readString(` 已经消失了），只有真实编译器会报 `symbol: class nio`。
 #
-# 这一条专治那个形态：**限定名后面直接跟 `new`**。合法的 `outer.new Inner()` 不会被误伤，
-# 因为我锚定在 `new String(Files.readAllBytes(` 这个替换产物上。
-DANGLING_QUALIFIER = re.compile(r"[A-Za-z0-9_.]\s*new\s+String\(\s*(?:java\.nio\.file\.)?Files\.readAllBytes\(")
+# 这一条专治那个形态：**限定名后面直接跟 `new`**，也就是 `new` 前面有一个**点**。
+#
+# 🔴 更正（2026-10-14，阶段 2.4b-②）：这里原本写的是 `[A-Za-z0-9_.]\s*new`，
+# 而那个字符类**会匹配任意标识符的最后一个字符** —— 于是 `return new String(Files.readAllBytes(`
+# 这种**本条规则自己推荐的写法**也被判红。它不是「误伤 outer.new Inner()」那么远：
+# 它误伤的是本文件错误信息里逐字推荐的那一行。已改成必须有一个真正的点。
+# 两个方向都做了注入（见 tools/verify-phase0.sh 5p 节）：真的悬空限定名仍须变红，
+# 推荐写法必须不再变红。
+DANGLING_QUALIFIER = re.compile(r"[A-Za-z0-9_]\s*\.\s*new\s+String\(\s*(?:java\.nio\.file\.)?Files\.readAllBytes\(")
 
 
 def check_no_dangling_qualifier() -> int:

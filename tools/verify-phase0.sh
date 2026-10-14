@@ -1927,8 +1927,8 @@ M_LOG=$(mktemp)
 if bash tools/run-backup-jvm-tests.sh > "$M_LOG" 2>&1; then
     M_TOTAL=$(grep -o 'OK ([0-9]* tests)' "$M_LOG" | grep -o '[0-9]*' | head -1)
     ok "本机真跑恢复落点：${M_TOTAL:-0} 条 Java 测试（含端到端往返）"
-    if [ "${M_TOTAL:-0}" -lt 53 ]; then
-        fail "本机 Java 测试只有 ${M_TOTAL:-0} 条，低于阶段 2.4b 的预期 53 条"
+    if [ "${M_TOTAL:-0}" -lt 62 ]; then
+        fail "本机 Java 测试只有 ${M_TOTAL:-0} 条，低于阶段 2.4b 的预期 62 条（2.4b-① 53 + 2.4b-② 9）"
         CR_BAD=1
     fi
 else
@@ -2032,6 +2032,142 @@ if grep -q '原子性' docs/FUSION-PLAN.md; then
     ok "FUSION-PLAN 如实登记了「候选树与活动树之间的原子性未验证」"
 else
     fail "FUSION-PLAN 没有登记 2.4b 的未验证项"
+    CR_BAD=1
+fi
+
+section "5p. 提交与回切：候选树换进活动目录（阶段 2.4b-②）"
+
+# 为什么这一节必须存在：
+# 这是本模块**唯一真的会动活动目录**的代码。2.4a 的 buildCandidates 只写
+# task/candidate/，一次都不碰活动目录 —— 安全，但也因此没有提交。
+# 这一段补上它，于是「会不会毁数据」第一次变成一个真问题。
+
+COMMIT="backup/src/main/java/com/dshbox/app/backup/HostRestoreCommit.java"
+COMMIT_TEST="backup/src/test/java/com/dshbox/app/backup/HostRestoreCommitTest.java"
+
+if [ -f "$COMMIT" ] && grep -q 'public List<String> commit(' "$COMMIT" \
+   && grep -q 'public List<String> recover(' "$COMMIT"; then
+    ok "提交与崩溃恢复都在场"
+else
+    fail "缺少 $COMMIT，或它没有 commit()/recover()"
+    CR_BAD=1
+fi
+
+# 原子性的**前提**必须被断言，而不是被假设：跨设备时 move 退化成拷贝，
+# 原子性会静默消失，而没有任何报错。
+if grep -q 'CROSS_DEVICE' "$COMMIT" && grep -q 'device != taskDevice' "$COMMIT"; then
+    ok "跨文件系统的 move 在动手之前就被拒（原子性前提被断言，不是被假设）"
+else
+    fail "缺少 CROSS_DEVICE 前提检查 —— 跨设备时原子性会静默消失"
+    CR_BAD=1
+fi
+
+# 提交前必须**重新**核验 before，而不是只信 buildCandidates 当时算的那一次。
+# 少了它，提交会静默覆盖用户在等待期间写进去的东西。
+if grep -q 'TARGET_CHANGED' "$COMMIT"; then
+    ok "提交前重新核验活动目录摘要（不静默覆盖等待期间写入的数据）"
+else
+    fail "提交前没有重新核验 before —— 会静默覆盖"
+    CR_BAD=1
+fi
+
+# 恢复判定必须看摘要。只认相位（PREPARED/COMMITTED）是不够的：相位本身可能过期。
+if grep -q 'RECOVERY_AMBIGUOUS' "$COMMIT"; then
+    ok "摘要既非原件也非候选时拒绝恢复（不猜、不覆盖）"
+else
+    fail "缺少 RECOVERY_AMBIGUOUS —— 恢复会在信息不足时猜一个动作"
+    CR_BAD=1
+fi
+
+# 回切必须知道每一步做没做。只靠「aside 在不在」推不出来，
+# 分不清的后果很具体：把原件挪进 failed/，用户看到的是数据没了。
+if grep -q 'asidePlaced' "$COMMIT" && grep -q 'installed' "$COMMIT"; then
+    ok "回切按「每一步做没做」的标记精确回退（不会把原件挪进 failed/）"
+else
+    fail "回切没有逐步标记 —— 可能在什么都没做的情况下把原件挪走"
+    CR_BAD=1
+fi
+
+# 目录**缺了才建**：fs.directory() 在已存在时抛（后端是 Files.createDirectory）。
+# 直接用会把「提交」变成「建目录失败」，而这个错在真机上才第一次出现。
+if grep -q 'ensureDirectory' "$COMMIT"; then
+    ok "目录缺了才建（fs.directory 对已存在的目录会抛）"
+else
+    fail "直接用了 fs.directory —— 已存在的目录会让提交失败"
+    CR_BAD=1
+fi
+
+# 删树要递归：fs.delete() 只删空目录，而 aside/candidate 都有内容。
+if grep -q 'removeOwned' "$COMMIT"; then
+    ok "删树走 removeOwned（fs.delete 只删空目录）"
+else
+    fail "用 fs.delete 删有内容的目录会抛 DirectoryNotEmptyException"
+    CR_BAD=1
+fi
+
+# 反面：它必须是「我们自己的」，不是 DSHA 那套的改写。只看代码，不看注释 ——
+# 这个文件的 javadoc 里必须能写「上游把这一步放在 HostDataTransaction 里」。
+if grep -vE '^[[:space:]]*(\*|//|/\*)' "$COMMIT" \
+     | grep -qE 'ConfigStore|KeyVault|CredentialRead|logicalKind|dsh-child'; then
+    fail "提交/回切的**代码**里出现了 DSHA 自己的子系统（ConfigStore/KeyVault/…）—— 方向错了"
+    CR_BAD=1
+else
+    ok "提交/回切的代码用的是本仓库的词汇（注释里的对比说明不算）"
+fi
+
+# **注入必须自证。** 第一版数的是「第 N 次 move」，而 fs.atomic() 内部也在 move，
+# 于是 failAt=2 实际打在了别的地方 —— 三个用例当时都绿，却一个都没测到它名字说的事。
+# 现在每条注入都断言 fault.swaps 的期望值；这三条断言就是「注入真的注进去了」的证据。
+if grep -q 'fault.swaps' "$COMMIT_TEST" && [ "$(grep -c 'fault.swaps' "$COMMIT_TEST")" -ge 3 ]; then
+    ok "三条故障注入各自自证（断言 fault.swaps 的期望值）"
+else
+    fail "故障注入没有自证 —— 注入没生效时用例照样会绿（事故表第 16 条）"
+    CR_BAD=1
+fi
+# 而语义识别换入/换出动作，正是让上面那个自证有意义的前提。
+if grep -q 'isSwap' "$COMMIT_TEST"; then
+    ok "注入按语义识别换入/换出动作（不数第几次 move）"
+else
+    fail "注入按位置计数 —— fs.atomic() 内部的 move 会让计数偏掉"
+    CR_BAD=1
+fi
+# 崩溃现场必须由真实代码路径产生，不能在测试里手搭（手搭的会和源码各说各话）。
+if grep -q 'crashedMidSwap' "$COMMIT_TEST"; then
+    ok "崩溃现场由真实代码路径产生（回切也失败 → 日志留下）"
+else
+    fail "崩溃现场是手搭的 —— 会与源码各说各话（事故表第 17 条）"
+    CR_BAD=1
+fi
+
+# **改了检查器，就必须证明它仍然有界。**
+# 我把 check-backup-contract.py 的「悬空限定名」规则从 `[A-Za-z0-9_.]\s*new` 改成
+# `[A-Za-z0-9_]\s*\.\s*new`（旧的那个字符类会匹配 `return` 的最后一个字母，于是把
+# **规则自己推荐的写法**判红）。改完必须两个方向都验：
+# ① 真的悬空限定名仍须变红；② 推荐写法必须不再变红。
+DANGLE_PROBE="backup/src/main/java/com/dshbox/app/backup/DanglingProbe.java"
+printf 'package com.dshbox.app.backup;\n\nimport java.io.*;\n\nfinal class DanglingProbe {\n  static String p(File f) throws IOException {\n    return java.nio.file.new String(Files.readAllBytes(f.toPath()));\n  }\n}\n' > "$DANGLE_PROBE"
+if python3 tools/check-backup-contract.py >/dev/null 2>&1; then
+    fail "注入的悬空限定名没有被判失败 —— 改完规则后它变瞎了"
+    CR_BAD=1
+else
+    ok "注入的悬空限定名仍被判失败（改规则没有把这条检查弄瞎）"
+fi
+rm -f "$DANGLE_PROBE"
+# ② 推荐写法（`return new String(Files.readAllBytes(…)`）必须通过 ——
+#    这正是旧规则误伤的那一行，而它就在 HostRestoreCommitTest 里。
+if grep -q 'return new String(Files.readAllBytes(' "$COMMIT_TEST" \
+   && python3 tools/check-backup-contract.py >/dev/null 2>&1; then
+    ok "推荐写法（new String(Files.readAllBytes(…))）不再被判失败（误伤已修）"
+else
+    fail "推荐写法被判失败，或契约核验未通过 —— 规则仍在误伤正确实现"
+    CR_BAD=1
+fi
+
+COMMIT_COUNT=$(grep -c '@Test' "$COMMIT_TEST" 2>/dev/null || echo 0)
+if [ "$COMMIT_COUNT" = "9" ]; then
+    ok "HostRestoreCommitTest 有 9 条 @Test"
+else
+    fail "HostRestoreCommitTest 有 $COMMIT_COUNT 条 @Test，期望 9"
     CR_BAD=1
 fi
 
