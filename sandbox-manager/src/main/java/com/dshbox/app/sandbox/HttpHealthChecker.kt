@@ -34,6 +34,29 @@ import java.net.URL
  *
  * 拿不到 token 时**判为未就绪**，而不是退回「任何响应都算活」：宁可让上层继续等
  * （启动有 120s 窗口），也不要再产生一次无法归因的假成功。
+ *
+ * ## ⚠️ [path] 必须是 DSH 打印的那个路径（实测约束，不是随便写的）
+ *
+ * 判据「状态码 ≠ 401」**只在探测的是 DSH 打印出来的那个 URL 时成立**。实测
+ * （DSH 0.2.0-rc.2，本机）：
+ *
+ * ```
+ * GET /?token=<正确>            → 303   ← 判为「是我的」
+ * GET /?token=<错误>            → 401
+ * GET /                            → 401
+ * GET /api/health?token=<正确>  → 401   ← ⚠️ 换路径就变 401
+ * GET /api/health               → 401
+ * ```
+ *
+ * 也就是说：**换个看起来更"正规"的健康检查路径，会让这个判据永久失败**，
+ * 而那会退化成上游踩过的另一个坑 —— 一直判未就绪 → 120s 超时 → 销毁进程
+ * （上游最初的写法只认 200..299，正是被 DSH 的 401 打中才放宽的）。
+ * 上游放宽是对的，只是放宽成了「任何响应」，于是又丢了身份判据；
+ * 现在的做法是**把 token 带上**，而不是再放宽一次。
+ *
+ * `SandboxConfig.healthPath` 的默认值因此必须是 `"/"`。这条约束由
+ * `tools/verify-phase0.sh` 的 5g 节钉住（改掉会被拦下，而不是等到真机上超时）。
+ * DSH 若改了 URL 形态，`DshWebLaunchParserTest` 与这条断言会先报出来。
  */
 class HttpHealthChecker(
     private val host: String = Constants.DSH_DEFAULT_HOST,

@@ -1115,6 +1115,25 @@ else
     fail "缺占位文案的语言：$MISSING_LANG"
 fi
 
+# 判据「状态码 != 401」只在探测路径是 DSH 打印的那个 URL 时成立 —— 实测
+# （DSH 0.2.0-rc.2）：GET /?token=<对> → 303，而 GET /api/health?token=<对> → 401。
+# 也就是说，换个看起来更「正规」的健康检查路径，会让判据**永久失败**，
+# 退化成上游踩过的另一个坑（一直未就绪 → 120s 超时 → 销毁进程）。
+# 所以 healthPath 必须保持 "/"，且不能被别处覆盖。
+CFG_KT="sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxConfig.kt"
+if grep -q 'val healthPath: String = "/"' "$CFG_KT"; then
+    ok "healthPath 默认值是 /（与 DSH 打印的 URL 路径一致）"
+else
+    fail "healthPath 不再是 / —— 401 判据会永久失败，见 HttpHealthChecker 的 KDoc"
+fi
+OVERRIDE=$(grep -rn 'healthPath *=' --include=*.kt app/src sandbox-manager/src 2>/dev/null \
+    | grep -v 'val healthPath' || true)
+if [ -z "$OVERRIDE" ]; then
+    ok "没有任何地方覆盖 healthPath"
+else
+    fail "healthPath 被覆盖：$(printf '%s' "$OVERRIDE" | head -2)"
+fi
+
 # 反向验证：检查器必须能拦住真实故障。
 # 本项目已经吃过三次「检查器自己骗自己」的亏，所以每条断言都要证明它会失败。
 cp "$POLICY_KT" "$SCRATCH/policy14.bak"

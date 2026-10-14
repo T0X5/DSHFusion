@@ -444,6 +444,30 @@ dsh web: http://127.0.0.1:42797/?token=8OMeQzE98nRyjCPBhqSu4_sVBhKFQdbq8mCP-9qf5
 拿不到 token 时一律判**未就绪**，而不是退回「任何响应都算活」：
 宁可继续等（启动有 120s 窗口），也不要再产生一次无法归因的假成功。
 
+#### ⚠️ 这个判据有一个实测出来的前置条件：探测路径必须是 `/`
+
+把 token 带上之后我又测了一遍**换个路径会怎样**（同一台 DSH，0.2.0-rc.2）：
+
+```
+GET /?token=<正确>            → 303   ← 判为「是我的」
+GET /api/health?token=<正确>  → 401   ← ⚠️ 换路径就变 401
+GET /api/health               → 401
+```
+
+**`/api/health` 看起来更"正规"，但它会让判据永久失败。** 那会退化成上游踩过的
+另一个坑：一直判未就绪 → 120s 超时 → 销毁进程。上游最初只认 200..299，
+正是被 DSH 的 401 打中才放宽的 —— 放宽是对的，只是放宽成了「任何响应」，
+于是丢了身份判据。正确做法是**把 token 带上**，而不是再放宽一次。
+
+所以 `SandboxConfig.healthPath` 必须保持 `"/"`。已用两条套件断言钉住
+（默认值 + 无任何覆盖），并做过故障注入：改成 `/api/health`、以及在
+`ServiceLocator` 里覆盖它，两条都被拦下。
+
+> 这里留了一个**有意不做的改进**：更彻底的做法是让探测路径也来自 DSH 打印的
+> 那一行（既然端口和 token 都从那里学，路径同理），这样结构上就不可能与 DSH 不一致。
+> 但 `healthPath` 是上游的配置项，现在改成派生会扩大偏离面；
+> 当前用「断言钉住 + 文档写明」把风险降到可接受，记在 DIV-0014 的 `note` 里备查。
+
 #### 修复（DIV-0014，跨 22 个文件）
 
 - 端口：`DSH_DEFAULT_PORT`/`DSH_BASE_URL` 删除 → `DSH_PORT_AUTO = 0` +
@@ -464,7 +488,7 @@ dsh web: http://127.0.0.1:42797/?token=8OMeQzE98nRyjCPBhqSu4_sVBhKFQdbq8mCP-9qf5
 
 #### 验证状态
 
-- 源码断言：`verify-phase0.sh` 新增 5g 节（11 项），全套 **134 项通过 / 0 失败**。
+- 源码断言：`verify-phase0.sh` 新增 5g 节（13 项），全套 **136 项通过 / 0 失败**。
 - 偏离重放：`apply-divergences.sh --check` → **14 项已生效、0 失败**，
   `handle_div_0014` 有 **21 项断言**。
 - 反向验证：注入 12 种故障逐一确认被拦；其中 **2 条第一轮漏过**并已收紧
@@ -583,7 +607,7 @@ dshfusion/
 │   ├── build-runtime-assets.sh  组装可内嵌 APK 的层（android-side + dsh，产出 sha256 侧车）
 │   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 134 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 136 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）

@@ -64,7 +64,12 @@ internal data class DshWindowState(
 /** 单轮判定的输入。 */
 internal data class DshHealthProbe(
     val nowMs: Long,
-    /** 端口可连且 HTTP 有响应（任何状态码）。 */
+    /**
+     * 是否**证明了应答者是本实例的 DSH**（端口可连、且本实例的 launchToken 被接受）。
+     *
+     * ⚠️ 不是「端口有 HTTP 响应」——上游曾是这个含义，那正是 DIV-0014 的假就绪成因：
+     * 另一个 DSH 应用占着同一个端口时，端口有响应，但那是**别人的**服务。
+     */
     val webUiReady: Boolean,
     /** 进程句柄是否存活。 */
     val processAlive: Boolean,
