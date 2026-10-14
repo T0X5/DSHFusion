@@ -223,6 +223,27 @@ bash tools/run-backup-jvm-tests.sh     # 编译并运行 backup 的全部 .java 
 它核验的是**行为**：机器本地记录真的消失了、provider 凭据真的还在、`version: 1` 真的还在、
 没有机器记录时真的逐字节不变、坏输入的诊断里真的没有密钥。
 
+### Kotlin 测试只能在 CI 跑 —— 而 CI 的绿**不**作证它们跑过
+
+`tools/run-backup-jvm-tests.sh` 只编译 `.java`（本机没有 kotlinc），所以
+`CredentialProjectionCodesTest.kt` 这 7 条**只能**在 `android.yml` 里跑。
+而 `Run unit tests` 那一步通过**不能**说明它们跑了 ——
+**Gradle 只在测试失败时打印名字**，通过的一律沉默。整份 CI 日志里 grep
+`CredentialProjectionCodesTest` 是 **0 次**。
+
+所以 `android.yml` 里另加了一步，解析 `backup/build/test-results/**/*.xml`：
+
+- 打印**每个测试类各跑了多少条**（把「跑了什么」变成日志里的可见事实）；
+- `CredentialProjectionCodesTest` 必须出现，且必须是 **7 条**；
+- 总数不得低于阶段 2.2 的基线 **62** 条。
+
+> 这一步做过反向验证（从 YAML 里把那段 Python 原样抽出来，配四组夹具）：
+> 正确→通过；新测试缺席→红；只有 6 条→红；总数缩到 17→红。
+> 详见 [../docs/INCIDENTS.md](../docs/INCIDENTS.md) 第 26 条。
+
+**推广规则：任何新增的、本机跑不到的测试，都必须同时加一条「它确实跑了」的断言** ——
+否则测试数量可以降到 0 而 CI 依然全绿。
+
 > ⚠️ **诚实边界**：`app/proguard-rules.pro` 里给 SnakeYAML 加的
 > `-keep class org.yaml.snakeyaml.**` 是**保险，不是修复** ——
 > 它的**效果没有被验证**：CI 只构建 debug（`assembleDebug`），
