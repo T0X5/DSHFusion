@@ -110,6 +110,10 @@ class SandboxProcessRunner(
          * 我们用它注入自己需要的覆盖层（功能开关层 / 插件管理停用层 / 绝对安全模式层）——
          * 不修改 DSH 源码、不动 profile 文件。
          * 调用方只在文件确实存在时才传入，否则 dsh 会因找不到 patch 文件而启动失败。
+         *
+         * ⚠️ 这些层会被拼在 `--profile <name>` **紧跟其后**的位置，且必须保持在
+         * `--host` / `--port` 之前 —— 原因见 `buildProotDshCommand` 里的顺序说明
+         * 与 DIV-0014。改动这里的拼接位置会直接让 DSH 起不来。
          */
         dshPatchGuestPaths: List<String> = emptyList(),
         /** 手机助手暴露给 guest 的宿主子树，见 [SandboxConfig.pilotEntryDir]。空则不绑。 */
@@ -153,11 +157,25 @@ class SandboxProcessRunner(
         val patches = dshPatchGuestPaths
             .filter { it.isNotBlank() }
             .joinToString("") { " --patch $it" }
+        // ⚠️ 参数顺序有硬约束，不要按「可读性」重排（DIV-0014）。
+        // dsh 启动器只解析它自己的旗标（`--profile` / `--patch` / `--dump-*`），
+        // **遇到第一个不认识的旗标，就把剩下的原样转交给被启动的应用**
+        // （`@deepseek-ai/dsh/lib/bin.js` 的模块注释：「Launcher flags therefore
+        // come first: the first token this parser does not recognize starts the
+        // inner arguments」）。`--host` / `--port` 属于 web 应用、不属于启动器，
+        // 所以 `--patch` 必须排在它们**之前** —— 排在后面时它会被当成 web 应用
+        // 自己的旗标，web 应用不认识，直接打印 `error: unknown option '--patch'`
+        // 并退出。
+        //
+        // 这不是理论推演：2026-10-14 真机上 DSH 每次启动都死在这里
+        // （`process-dsh.log` 里连续 6 次 `error: unknown option '--patch'`）。
+        // 上游把 `$patches` 紧贴在 `--profile` 之后，正是靠这个顺序才成立；
+        // DIV-0014 为了修端口而把 `--host`/`--port` 插到中间，打断了这个隐含前提。
         add(
             "exec /usr/local/bin/node --expose-internals$shim " +
                 "/opt/dshapp/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js " +
-                "--profile ${Constants.DSH_WEB_PROFILE} --host ${Constants.DSH_DEFAULT_HOST} " +
-                "--port $port$patches",
+                "--profile ${Constants.DSH_WEB_PROFILE}$patches " +
+                "--host ${Constants.DSH_DEFAULT_HOST} --port $port",
         )
     }
 

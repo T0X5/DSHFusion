@@ -24,6 +24,8 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 **「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
 46 处差异全部能对上已登记的偏离（其中 45 处是代码偏离，1 处是继承 lint 基线）。
+**2026-10-14 更新：现在是 47 处** —— 给 `SandboxProcessRunnerTest.kt`（上游文件）
+补了参数顺序的回归单测，该文件因此也进入 DIV-0014 的 `target_files`。
 
 > 两个方向都要查，缺一不可：`check-import-fidelity.py` 抓「多出来的改动」，
 > `apply-divergences.sh --check` 抓「已登记却没生效的偏离」。实测过 ——
@@ -73,7 +75,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
 | 生成的 APK 装到真机上验证 | ✅ **已通过**（2026-10-14，修复后第二次尝试）—— 见下方专节；**但启动与运行尚未验证** |
 | APK 内含运行环境层（能真正跑起 DSH） | ✅ **已通过产物核验**（2026-10-14，run 38516880572）—— 见下方「修好了？没有」一节的结论 |
-| **自有 DSH 真正在真机上跑起来** | ❌ **仍未验证** —— 修复前实测「界面报就绪、DSH 根本没起」，见下方 DIV-0014 专节 |
+| **自有 DSH 真正在真机上跑起来** | ❌ **仍未验证** —— 已连续失败五次：v3「界面报就绪、DSH 根本没起」（DIV-0014）、v4「层是 x64」（DIV-0015）、v5「启动命令参数顺序」（并入 DIV-0014）。每次都在真机上又往前走了一层，见下方各专节 |
 | `upstream-watch.yml` 真实运行 | ✅ **已跑通**（run 38483621472，手动触发）—— 检出 DSHA 有新提交并建了 Issue #2 |
 
 ### 首次真实 CI 运行（2026-10-13）暴露的问题
@@ -488,9 +490,12 @@ GET /api/health               → 401
 
 #### 验证状态
 
-- 源码断言：`verify-phase0.sh` 新增 5g 节（13 项），全套 **136 项通过 / 0 失败**。
-- 偏离重放：`apply-divergences.sh --check` → **14 项已生效、0 失败**，
-  `handle_div_0014` 有 **21 项断言**。
+- 源码断言：`verify-phase0.sh` 新增 5g 节（13 项）。
+  **2026-10-14 更新：全套现在是 145 项通过 / 0 失败 / 0 跳过。**
+  （此前这里写的是「136 项通过 / 0 失败」，那是过期的数字；
+  加进 DIV-0015/0016/0017 之后本机其实有一条红断言 —— 见下方「启动命令的参数顺序」一节。）
+- 偏离重放：`apply-divergences.sh --check` → **17 项已生效、0 失败**，
+  `handle_div_0014` 有 **22 项断言**（2026-10-14 更新；原为 21 项）。
 - 反向验证：注入 12 种故障逐一确认被拦；其中 **2 条第一轮漏过**并已收紧
   （详见 `divergences.json` 里 DIV-0014 的 `detection` 字段）。
 - 单测：`DshWebLaunchParserTest` / `HttpHealthCheckerTest` / `DshHealthPolicyTest`
@@ -667,6 +672,110 @@ GitHub 上的 Secret 是唯一的工作副本，而**Secret 的值读不回来**
 > 当前指纹检查在 CI 步骤里，覆盖的是「还原的密钥库对不对」；
 > 「APK 实际用的是不是它」还没有产物级断言。已记入待办。
 
+### 启动命令的参数顺序 —— 第五次真机失败（2026-10-14 发现，并入 DIV-0014 修复）
+
+v5（arm64 层 + 固定签名）装到真机上、点启动，界面报 **「DSH 异常 / 地址待定」**。
+这次的报错**很短，而且一眼看上去不像我们的问题**：
+
+```
+WARNING: linker: Warning: failed to find generated linker configuration from "/linkerconfig/ld.config.txt"
+error: unknown option '--patch'
+```
+
+连续 6 次，每次启动都一样。
+
+**先确认了「不是 dsh 不认识 `--patch`」。** `@deepseek-ai/dsh/lib/bin.js` 里
+明明白白有 `.option("--patch <path>", …)`（repeatable），模块注释还专门解释了
+为什么它是 repeatable 而不是 variadic。所以问题不在「这个旗标存不存在」。
+
+**真正的原因就在同一段模块注释里：**
+
+> Launcher flags therefore come first: the first token this parser does not recognize
+> starts the inner arguments
+
+dsh 启动器只解析**它自己的**旗标（`--profile` / `--patch` / `--dump-*`），
+**遇到第一个不认识的旗标，就把剩下的原样转交给被启动的应用**。
+`--host` / `--port` 属于 web 应用、不属于启动器 —— 于是 `--patch` 一旦排在它们后面，
+就被当成 web 应用自己的旗标，web 应用不认识它，打印 `error: unknown option '--patch'` 并退出。
+
+**这是我改坏的。** 上游那一行是 `"--profile ${Constants.DSH_WEB_PROFILE}$patches"`，
+`$patches` 紧贴在 `--profile` 之后，靠的正是这个顺序。DIV-0014 为了修端口，
+在中间插进了 `--host` / `--port`，于是变成了
+`"--profile … --host … --port $port$patches"` —— 坏顺序。
+
+**上游不会撞上这个 bug**：它只在 overlay 文件存在时才拼 `--patch`
+（`dshOverlayGuestPaths()` 里逐项判断 `isFile && length() > 0`），
+而「DSH官方插件」那一层是**默认就会写**的，所以 DSHFusion 一装好就必然踩中。
+换句话说：上游把这段代码留着但（在它自己的默认路径上）从没走到，我走到了，就炸了。
+
+#### 本机复现与验证（不靠推断）
+
+| 命令 | 结果 |
+|---|---|
+| `dsh --profile web --host 127.0.0.1 --port 0 --patch <f>` | `error: unknown option '--patch'` ← 与真机逐字相同 |
+| `dsh --profile web --patch <f> --host 127.0.0.1 --port 0` | 正常解析 overlay（去读文件了） |
+
+修复后的整条命令也真跑了一遍（不带 proot，直接跑层里的 `bin.js`）：
+
+```
+$ node …/dsh/lib/bin.js --profile web --patch /tmp/ovl/official.yml --host 127.0.0.1 --port 0
+dsh web: http://127.0.0.1:37545/?token=qIFgjEK4ME2Y_8PEVtKBnanVOxgSuguE5_VTyaDO4zo
+```
+
+一次同时验掉四件事：`--host` 合法、`--port 0` 确实由内核分配（37545）、
+overlay 被接受、**以及打印出来的这一行格式正是 `DshWebLaunchParser` 要解析的**。
+
+overlay 的**内容**也单独验过（把 `OfficialPluginOverlay.render()` 的输出格式原样喂给 dsh）：
+
+```
+带 overlay：  disabled: false                                              ← 覆盖生效
+不带 overlay：disabled: !!js ctx.get('profileContext')?.name !== 'desktop' ← 上游默认
+```
+
+进程存活与健康判据同样复现了 DIV-0014 的实测结论（正确 token → 303、
+无 token → 401、错 token → 401），且 dsh 打印地址后**持续存活**，不是「打印完就退」——
+这一条重要，因为 `DshHealthPolicy` 的就绪要求 `webUiReady && processAlive`。
+
+#### 为什么检查器没拦住它
+
+**因为原来的断言查的是「有没有」，而这次坏的是「在哪」。**
+`handle_div_0014` 里钉的是 `--port $port` —— 一个**存在性**检查，
+坏顺序下它**照样通过**。补了三层：
+
+| 层 | 内容 |
+|---|---|
+| `handle_div_0014` | 增加下标比较：`--profile` < `$patches` < `--host`，且 `$patches` < `--port`。**只比对代码、不比对注释** —— 注释里必然引用这些旗标来解释原因，把注释算进去会让「解释」本身触发误判 |
+| 单测 | `SandboxProcessRunnerTest` 新增 `dshPatchOverlaysMustPrecedeAppFlags`（钉**生成出来的命令字符串**里的下标），另加 `dshCommandOmitsPatchWhenNoOverlays`（无层时不得拼 `--patch`） |
+| `verify-phase0.sh` 5g | 同一条顺序断言 + 「回归单测本身在位」的断言 —— 否则把单测删掉不会有任何东西变红 |
+
+故障注入：把 `$patches` 挪回 `--port` 之后 → `handle_div_0014` 报**缺少 2 项**、
+重放汇总变成 **16 项已生效 / 1 项失败**；恢复后回到 17 / 0。
+
+#### 顺带发现：一条红了很久却没人看见的断言
+
+修完上面的东西跑全套，发现 4d 节里那条「导入后偏离重放」是**红的** ——
+而它从 DIV-0015 加进来那天起就是红的：
+
+- 它的期望值是「失败数 = 登记总数 − 导入排除数」，隐含假设「除导入排除项外，
+  导入后每一项都该报失败」。
+- 但 DIV-0015 的断言查的是 `tools/build-dsh-layer.sh` 这类**本项目自有文件**，
+  导入器根本不碰它们，所以导入后它仍然**通过** —— 数字于是对不上。
+
+**为什么没人发现**：这一节需要 `../audit/DSHBox`（上游审计副本），而它**不在仓库里**。
+CI 里这一节走 `else` 分支，只记一项「跳过」，于是「CI 全绿」永远看不到这条红断言。
+**本机跑过才算数，而本机上一次跑它是什么时候已经不可考** ——
+这正是本项目反复栽的那个坑：把「没有坏消息」当成「好消息」。
+
+已改成**从真实数据推导**：期望的「已生效」集合 = 导入排除项 ∪
+（`target_files` 全都不在「本次导入实际改动的文件」里的项）。
+后者用 `git status --porcelain` 现算 —— 导入后恰好只有 46 个文件被改动，
+正是那些带偏离的文件。实测预测集合与实际集合完全一致（`{DIV-0005, DIV-0015}`），
+并加了「导入没有改动任何文件 ⇒ 夹具是空的」这条反空转断言。
+
+> **这一节真正的新教训**：前四次的病是「检查器查的东西与实际语义不等价」，
+> 这一次是它的变体 —— **检查器查的是「存在性」，而缺陷在「顺序」上**。
+> 同一个「东西在不在」的思维定式，换了一层皮又骗过了一遍。
+
 ## 决策依据（不要重新推翻）
 
 主干选择基于 2026-10-13 的只读审计，完整证据见 [docs/AUDIT.md](docs/AUDIT.md)。结论摘要：
@@ -761,7 +870,7 @@ dshfusion/
 │   ├── build-runtime-assets.sh  组装可内嵌 APK 的层（android-side + dsh，产出 sha256 侧车）
 │   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 143 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 145 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）

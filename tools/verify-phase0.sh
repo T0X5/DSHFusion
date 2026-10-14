@@ -512,29 +512,64 @@ if [ -d ../audit/DSHBox ]; then
         expect 0 "导入后许可原件哈希仍一致" \
             bash -c "cd '$IMP_CLONE' && python3 tools/check-license-hashes.py"
 
-        # 偏离重放此时应报「待处理项全部失败、排除项已生效」。设计如此，不是缺陷。
+        # 偏离重放此时应报「导入后天然仍成立的项 = 导入排除项 + 断言不依赖上游文件的项」，
+        # 其余全部报失败。设计如此，不是缺陷。
         #
-        # 断言不硬编码数量：早先写死「4 项失败」，新增 DIV-0006 后立刻失效，
-        # 而失效的原因是测试过期、不是代码出错 —— 这种误报会训练人忽略红灯。
-        # 改为从治理文件推导：凡是作为「导入排除」登记的偏离（见
-        # import-exclusions.json 的 excluded_paths[].divergence），导入后天然已生效；
-        # 其余都需要人工施加，导入后应全部报失败。新增偏离时测试自动跟上。
-        IMP_DIV="$(cd "$IMP_CLONE" && bash tools/apply-divergences.sh --check 2>&1 || true)"
-        EXP_FAIL="$(cd "$IMP_CLONE" && python3 -c "
-import json
-d=json.load(open('governance/divergences.json',encoding='utf-8'))
-x=json.load(open('governance/import-exclusions.json',encoding='utf-8'))
-excl={e.get('divergence') for e in x.get('excluded_paths',[])}
-print(sum(1 for e in d['planned'] if e['id'] not in excl))
-" 2>/dev/null || echo 5)"
-        if printf '%s' "$IMP_DIV" | grep -q "$EXP_FAIL 项失败" &&
-           printf '%s' "$IMP_DIV" | grep -q "DIV-0005"; then
-            printf '  [PASS] %-52s\n' "导入后偏离重放正确报出 $EXP_FAIL 项待处理"
-            PASS=$((PASS + 1)); RESULTS+=("PASS|导入后偏离重放|$EXP_FAIL 项失败 1 项已生效")
-        else
-            printf '  [FAIL] %-52s\n' "导入后偏离重放未报出预期的 $EXP_FAIL 项失败"
-            FAIL=$((FAIL + 1)); RESULTS+=("FAIL|导入后偏离重放|未报出预期失败项")
-        fi
+        # 断言**从真实数据推导**，既不硬编码数量，也不假设「除排除项外全都该失败」：
+        #  ① 导入排除项（import-exclusions.json 的 excluded_paths[].divergence）导入后天然已生效；
+        #  ② target_files 全都不在「本次导入实际改动的文件」里的偏离，其断言查的是本项目
+        #     自有文件（例如 DIV-0015 查 tools/ 下的脚本），导入没碰它们，因此仍然成立。
+        # 其余的都依赖上游文件，导入后必须报失败 —— 这正是本夹具要守的东西。
+        #
+        # ⚠️ 这里原先写的是「失败数 = 登记总数 − 排除数」。DIV-0015 加进来之后它立刻失效：
+        # DIV-0015 的断言查的是 tools/ 下本项目自有文件，导入后仍然通过，于是数字对不上。
+        # 那次失败**本机是红的、CI 里却看不见**（CI 没有 ../audit/DSHBox，整节只记一项跳过），
+        # 于是一条红着的断言躺了很久没人发现 —— 与「断言从未在 CI 里跑过」是同一个病。
+        # 改成集合推导后，新增偏离自动跟上，也不会因为「谁查自有文件」而误报。
+        IMP_DIV_VERDICT="$(cd "$IMP_CLONE" && python3 - <<'PYDIV'
+import json, re, subprocess
+
+out = subprocess.run(["bash", "tools/apply-divergences.sh", "--check"],
+                     capture_output=True, text=True).stdout
+d = json.load(open("governance/divergences.json", encoding="utf-8"))
+x = json.load(open("governance/import-exclusions.json", encoding="utf-8"))
+excl = {e.get("divergence") for e in x.get("excluded_paths", [])}
+
+changed = {l[3:] for l in subprocess.run(["git", "status", "--porcelain"],
+                                         capture_output=True, text=True).stdout.splitlines()
+           if len(l) > 3}
+if not changed:
+    print("夹具是空的：导入没有改动任何文件，这条断言没有意义")
+    raise SystemExit
+
+expect_applied = [e["id"] for e in d["planned"]
+                  if e["id"] in excl
+                  or not any(any(c == t or c.startswith(t) for c in changed)
+                             for t in (e.get("target_files") or []))]
+actual_applied = re.findall(r"\[已生效\]\s+(DIV-\d+)", out)
+actual_failed = re.findall(r"\[失败\s*\]\s+(DIV-\d+)", out)
+
+if len(actual_applied) + len(actual_failed) != len(d["planned"]):
+    print("重放没有对全部 %d 项给出结论（已生效 %d、失败 %d）"
+          % (len(d["planned"]), len(actual_applied), len(actual_failed)))
+elif sorted(actual_applied) != sorted(expect_applied):
+    print("已生效集合不符：期望 %s，实际 %s"
+          % (",".join(sorted(expect_applied)), ",".join(sorted(actual_applied))))
+else:
+    print("OK 已生效 %s；其余 %d 项如预期报失败"
+          % (",".join(sorted(actual_applied)), len(actual_failed)))
+PYDIV
+)"
+        case "$IMP_DIV_VERDICT" in
+            OK*)
+                printf '  [PASS] %-52s\n' "导入后偏离重放：$IMP_DIV_VERDICT"
+                PASS=$((PASS + 1)); RESULTS+=("PASS|导入后偏离重放|$IMP_DIV_VERDICT")
+                ;;
+            *)
+                printf '  [FAIL] %-52s\n' "导入后偏离重放：$IMP_DIV_VERDICT"
+                FAIL=$((FAIL + 1)); RESULTS+=("FAIL|导入后偏离重放|$IMP_DIV_VERDICT")
+                ;;
+        esac
     else
         printf '  [FAIL] %-52s\n' "无法建立一次性克隆"
         FAIL=$((FAIL + 1)); RESULTS+=("FAIL|导入器一次性克隆|建立失败")
@@ -1117,6 +1152,43 @@ if grep -q -- '--port \$port' "$RUNNER_KT"; then
     ok "dsh 启动命令行带 --port（端口真的传下去了）"
 else
     fail "dsh 启动命令行没传 --port —— 端口不会被内核分配"
+fi
+# ⚠️ 顺序也是判据（2026-10-14 真机失败后补）。`--patch` 必须排在 `--host` / `--port`
+# **之前**：dsh 启动器只解析它自己的旗标，遇到第一个不认识的旗标就把剩下的原样转交给
+# 被启动的应用，而 --host / --port 属于 web 应用。排在后面时 web 应用会打印
+# `error: unknown option '--patch'` 并退出 —— 真机上 DSH 每次启动都死在这里
+# （process-dsh.log 连续 6 次）。
+# 只查「命令里有没有 --patch」是抓不到它的（坏顺序下照样有），所以必须比下标。
+RUNNER_TEST="sandbox-manager/src/test/java/com/dshbox/app/sandbox/SandboxProcessRunnerTest.kt"
+ORDER_OK=$(python3 - "$RUNNER_KT" <<'PYORDER'
+import sys, pathlib
+# 只看代码不看注释：注释里必然会引用这些旗标来解释原因，
+# 把注释算进去会让「解释」本身触发误判。
+code = "\n".join(
+    ln.split("//", 1)[0]
+    for ln in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+    if not ln.strip().startswith("*") and not ln.strip().startswith("/*")
+)
+i_p = code.find("--profile ${Constants.DSH_WEB_PROFILE}")
+i_a = code.find("$patches", i_p if i_p >= 0 else 0)
+i_h = code.find("--host ${Constants.DSH_DEFAULT_HOST}")
+i_t = code.find("--port $port")
+print("yes" if 0 <= i_p < i_a < i_h and i_a < i_t else "no")
+PYORDER
+)
+if [ "$ORDER_OK" = "yes" ]; then
+    ok "dsh 命令行参数顺序正确：--patch 排在 --host / --port 之前"
+else
+    fail "dsh 命令行的 --patch 被排到了 --host / --port 之后 —— DSH 会报 unknown option 起不来"
+fi
+# 回归单测也要有人在位。上面那条源码断言钉的是**源码文本的形状**，
+# 而单测钉的是**生成出来的命令字符串** —— 换了写法（比如重排变量）时，
+# 前者可能失效，后者仍然成立。两层都要。
+if grep -q 'fun dshPatchOverlaysMustPrecedeAppFlags' "$RUNNER_TEST" &&
+    grep -q 'patch < shell.indexOf("--host")' "$RUNNER_TEST"; then
+    ok "单测钉住参数顺序（钉下标，不钉存在性）"
+else
+    fail "缺参数顺序的回归单测，或它退化成只查存在性"
 fi
 if grep -q 'base\["PORT"\]' "$MGR_KT"; then
     fail "DefaultSandboxManager 又设了那个不起作用的 PORT 环境变量"

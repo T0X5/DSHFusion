@@ -81,4 +81,57 @@ class SandboxProcessRunnerTest {
         // DSH 入口标记必须保持——stop() 靠它定位进程树
         assertTrue(command.any { it.contains(Constants.DSH_START_SCRIPT) })
     }
+
+    /**
+     * `--patch` 必须排在 `--host` / `--port` **之前**（DIV-0014）。
+     *
+     * dsh 启动器只解析它自己的旗标，**遇到第一个不认识的旗标就把剩下的原样转交给
+     * 被启动的应用**；`--host` / `--port` 属于 web 应用，所以 `--patch` 一旦排在
+     * 它们后面，就会被当成 web 应用自己的旗标 —— web 应用不认识它，打印
+     * `error: unknown option '--patch'` 并退出。
+     *
+     * 2026-10-14 真机上 DSH 每次启动都死在这里（`process-dsh.log` 里连续 6 次）。
+     *
+     * 这条断言钉的是**位置**而不是**存在性**：上游原样导入的代码里 `--patch`
+     * 一直都在，只是被后续改动挤到了后面。所以「命令里有没有 `--patch`」
+     * 这种查法是抓不到这个回归的 —— 必须比下标。
+     */
+    @Test
+    fun dshPatchOverlaysMustPrecedeAppFlags() {
+        val runner = SandboxProcessRunner(config)
+        val command = runner.buildProotDshCommand(
+            prootBinary = "/data/data/com.dshbox.app/files/runtime/runtime-current/proot",
+            rootfsDir = "/data/data/com.dshbox.app/files/runtime/runtime-current/debian",
+            workspaceBind = "/data/data/com.dshbox.app/files/user-data",
+            dshPatchGuestPaths = listOf(
+                "/root/projects/.dsh/official-plugin.patch.yml",
+                "/root/projects/.dsh/safe-mode.patch.yml",
+            ),
+        )
+        val shell = command.last()
+        assertTrue(
+            "两个层都要拼出来（--patch 可重复）",
+            shell.contains("--patch /root/projects/.dsh/official-plugin.patch.yml") &&
+                shell.contains("--patch /root/projects/.dsh/safe-mode.patch.yml"),
+        )
+        val patch = shell.indexOf("--patch")
+        assertTrue("--patch 必须排在 --profile 之后（它是启动器的旗标）", shell.indexOf("--profile") < patch)
+        assertTrue(
+            "--patch 必须排在 --host 之前，否则会被转交给 web 应用并报 unknown option",
+            patch < shell.indexOf("--host"),
+        )
+        assertTrue("--patch 必须排在 --port 之前", patch < shell.indexOf("--port"))
+    }
+
+    /** 没有层文件时不得拼出 `--patch` —— 传一个不存在的 patch 会让 dsh 启动直接失败。 */
+    @Test
+    fun dshCommandOmitsPatchWhenNoOverlays() {
+        val runner = SandboxProcessRunner(config)
+        val command = runner.buildProotDshCommand(
+            prootBinary = "/data/data/com.dshbox.app/files/runtime/runtime-current/proot",
+            rootfsDir = "/data/data/com.dshbox.app/files/runtime/runtime-current/debian",
+            workspaceBind = "/data/data/com.dshbox.app/files/user-data",
+        )
+        assertTrue("无层时不应出现 --patch", !command.last().contains("--patch"))
+    }
 }

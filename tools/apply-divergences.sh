@@ -1266,6 +1266,45 @@ def handle_div_0014(entry) -> tuple[str, str]:
         if 'name="home_dsh_address_unknown"' not in read(f):
             missing.append(f"app/src/main/res/{lang}/strings.xml: 缺 home_dsh_address_unknown")
 
+    # ⚠️ 位置断言（2026-10-14 真机失败后补）：`$patches` 必须排在 `--host` / `--port` **之前**。
+    #
+    # 这条不能用 REQUIRED 的「字符串在场」表达 —— 那是**存在性**检查，而真机上坏掉的
+    # 恰恰是**位置**：`--patch` 一直在命令里，只是被 `--host` / `--port` 挤到了后面，
+    # 于是被 dsh 启动器当成 web 应用自己的旗标，web 应用打印
+    # `error: unknown option '--patch'` 并退出（process-dsh.log 连续 6 次）。
+    # 上游原本把 `$patches` 紧贴在 `--profile` 之后才成立；DIV-0014 把
+    # `--host`/`--port` 插到中间，打断了一个隐含前提。
+    #
+    # 只比对**代码**，不比对注释：注释里必然会引用这些旗标来解释原因，
+    # 把注释算进去会让「解释」本身触发误判（本项目栽过这个跟头）。
+    runner_rel = "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxProcessRunner.kt"
+    runner = ROOT / runner_rel
+    if not runner.is_file():
+        return PENDING, f"{runner_rel} 尚未导入"
+    code_only = "\n".join(
+        ln.split("//", 1)[0]
+        for ln in read(runner).splitlines()
+        if not ln.strip().startswith("*") and not ln.strip().startswith("/*")
+    )
+    i_profile = code_only.find("--profile ${Constants.DSH_WEB_PROFILE}")
+    i_patch = code_only.find("$patches", i_profile if i_profile >= 0 else 0)
+    i_host = code_only.find("--host ${Constants.DSH_DEFAULT_HOST}")
+    i_port = code_only.find("--port $port")
+    if i_profile < 0 or i_patch < 0:
+        missing.append(f"{runner_rel}: 找不到 `--profile …$patches` 的拼装（这条偏离的锚点）")
+    elif i_host < 0 or i_port < 0:
+        missing.append(f"{runner_rel}: 找不到 --host / --port 的拼装")
+    else:
+        if not (i_profile < i_patch < i_host):
+            missing.append(
+                f"{runner_rel}: `$patches` 必须紧跟 --profile、排在 --host 之前 —— "
+                "否则 --patch 会被转交给 web 应用并报 unknown option（真机实测）"
+            )
+        if not (i_patch < i_port):
+            missing.append(f"{runner_rel}: `$patches` 必须排在 --port 之前")
+        if i_profile < i_patch < i_host and i_patch < i_port:
+            present.append("dsh 命令行参数顺序（--patch 在 --host / --port 之前）")
+
     if not missing:
         return OK, f"动态端口与身份核验均在场（{len(present)} 项断言通过）"
 
