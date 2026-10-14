@@ -144,7 +144,8 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 | 2.2 | 范围备份（全量 / 只对话 / 只插件 / 只设置） | DSHA `BackupScope`＋枚举/写入侧 | ✅ PR #6（CI 通过 run 38633884134） | 依赖 2.1；范围是纯逻辑，好测 |
 | 2.3 | 凭据排除（机器本地记录 **投影**掉，而不是整份删除） | DSHA `CredentialProjection`＋`CredentialFileBackupSource` | ✅ **已通过真实 CI**（run [38643847540](https://github.com/T0X5/DSHFusion/actions/runs/38643847540)，commit `19e95bd`，**24/24 步全绿**；`:backup` **76 条测试**、产物 128,791,472 字节）。分支 `phase-2.3/credential-exclusion`，PR #8 | 安全项，独立可测 |
 | 2.4a | **恢复核心**：预检 + 候选构建 + 校验（`NativeRestorePlan`/`BackupTree`） | DSHA `NativeRestorePlan`＋`BackupTree`＋`DataFormatEvidence`＋`RuntimeDescriptor` | ✅ **已通过真实 CI**（run [38647873314](https://github.com/T0X5/DSHFusion/actions/runs/38647873314)，commit `0629409`，**24/24 步全绿**；`:backup` **85 条测试 / 12 个类**、产物 128,789,848 字节）。分支 `phase-2.4/restore-core`，PR #10 | 会毁数据的那条路径，必须先能本机真跑 |
-| 2.4b | 恢复的落点与本机映射 + 隔离试运行 + 失败回切（**落在 `user-data/` 的成员上，不是 runtime 槽**） | DSHA `NativeRestoreTargets` **不导入**（见下）；只取 `RuntimeTrial` 的**思路** | 审计已完成（2026-10-14），未开始实现 | 依赖 2.4a；落点已由审计改正 |
+| 2.4b-① | **恢复的落点**：逻辑根 → 本机路径映射（**落在 `user-data/` 的成员上，不是 runtime 槽**） | DSHA `NativeRestoreTargets` **不导入**（见下），另写 `HostRestoreMapping.java` | ✅ **已实现**（2026-10-14，同一分支）。本机真跑 **53 条** Java 测试（42 → 53），含**端到端往返**与**改动注入**；成员表与 `DshBackupScope` 的一致性由 `check-backup-contract.py` 逐项核验并做过漂移注入 | **一个成员一个 group**：`read` 指向成员自己，于是候选树不把整个 `.dsh` 卷进来 |
+| 2.4b-② | **提交候选树到活动目录 + 失败回切** | 无上游可搬 | 🔴 **未做**。`buildCandidates()` 只写 `task/candidate/`，提交这一步不存在 | ⚠️ 候选树与活动树之间的**原子性没有测试覆盖** —— 提交若被进程杀死，活动树会半新半旧。**已知缺口，不是已解决项** |
 | 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA `AutomaticBackups` | 未开始 | 最后做，依赖 2.1–2.4 |
 
 **2.2 落地时校正了本表的两处假设**（都是对照真实代码后改的，不是推测）：
@@ -260,7 +261,7 @@ return digestTree(fs, root, control);          // ← 通用回退，功能完�
 DSHBox 的 `runtime-current/` ↔ `runtime-new/` 切换是它自己的机制。
 具体怎么落，等它自己的审计做完再定；**不要因为 `RuntimeTrial` 长得像就搬。**
 
-### 2.4b 的只读审计结论（2026-10-14，**已审计、未实施**）
+### 2.4b 的只读审计结论（2026-10-14）—— **审计已实施，落点映射已实现；提交与回切未做**
 
 2.4b 要做的是「把候选树提交到本机真实位置，失败能回切」。审计推翻了本文件自己
 先前的两处写法，也推翻了「复用 DSHA 的落点实现」这个默认假设。
@@ -350,6 +351,32 @@ DSH_HOME = /root/projects/.dsh  →  宿主 filesDir/user-data/.dsh
   再逐文件覆盖」，提交时若进程被杀，活动树可能半新半旧。这不是 2.4a 的缺陷
   （它不写活动目录），但它是 2.4b **必须有**的东西 —— 而且**目前没有任何测试覆盖它**。
 - 真机上「恢复后 DSH 能否读回会话」未验证（还没有界面入口）。
+
+#### 审计之后实现了什么（2.4b-①）
+
+`backup/src/main/java/com/dshbox/app/backup/HostRestoreMapping.java`，**自写**（登记在
+`governance/dsha-imports.json` 的 `original` 段）。
+
+| 决定 | 内容 |
+|---|---|
+| 语言 | **Java**（不是 Kotlin）。本机有 JDK 17、**没有 kotlinc**，而这是会毁数据的那条路径 —— 只让 CI 编译它太贵。代价是破了语言约定，因此显式登记 |
+| group 粒度 | **一个成员一个 group**。DSHA 把 `.dsh` 的子条目并进一个 group，那要求 `read` 指向 group 根，于是**只恢复 sessions 也会把整个 `.dsh` 拷进候选**（含凭据、插件实体）。改成成员粒度后：`before`/`readBefore` 是成员级摘要（变更检测更准）、提交半径缩到一个成员、不再需要 `memberRead` |
+| `mergeSubdir` | **由 `path` 推导**，不再是构造参数。少一个来源就少一类分叉（事故表第 17/20 条） |
+| 认不出的根 | 跳过（`ROOT_NOT_IN_MEMBER_TABLE`），**不猜落点**；但认得出根、范围对不上就**报错**（`ROOT_SCOPE`） |
+| 落点越界 | 构造时就炸（`TARGET_OUTSIDE_APP`）。成员表是编译期常量，但它是**数据** |
+
+**验证方式（本机真跑，53 条）**：最重要的是两条，都不是字段断言 ——
+
+1. **端到端往返**：用我们**自己的** `HostSnapshot` 打归档 → 用**我们自己的** mapping
+   预检 → 构建候选 → **直接在磁盘上核对候选树的字节与位置**。
+   这是 2.1 → 2.4a → 2.4b 第一次串起来跑。「两个模块各自的单测都过」证明不了它们能对接。
+2. **注入**：预检之后改动活动目录，`buildCandidates` 必须报 `TARGET_CHANGED`
+   **且不留下候选树**。
+
+成员表在 Kotlin（权威）与 Java（本机镜像）各有一份，所以
+`tools/check-backup-contract.py` 逐项核验 6 个成员，并且**做过漂移注入自证**。
+为容纳自写文件而放宽 `check-dsha-imports.py` 的反向扫描时，同时加了一条注入证明
+**放宽是有界的**（未登记的 `.java` 仍须变红）—— 见 `docs/INCIDENTS.md` 第 30 条。
 
 ### 阶段 2 验收
 

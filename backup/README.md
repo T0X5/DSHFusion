@@ -1,4 +1,4 @@
-# `:backup` — v5 备份归档的格式、预检与恢复核心
+# `:backup` — v5 备份归档的格式、预检、恢复核心与落点映射
 
 阶段 2.1–2.4a 的落地模块。它**不**做备份计划、**不**做隔离试运行与失败回切、**不**碰运行环境；
 它负责四件事：**把「一份备份是不是完整、自洽、没被篡改」变成可判定的**（2.1）、
@@ -343,15 +343,104 @@ return digestTree(fs, root, control);          // ← 通用回退，功能完�
 - 普通文件的链接目标父目录仍被拒；链接目标的符号链接父目录**不被跟随**；
 - 可用链接目标仍会建立链接。
 
+## 阶段 2.4b 加了什么：落点映射（逻辑根 → 本机路径）
+
+**只做了第一半。** 2.4b 完整的样子是「落点映射 + 隔离试运行 + 失败回切」；
+这一节讲的是**落点映射**，提交与回切**尚未实现**（见本文件末尾的「不做什么」）。
+
+### 为什么这个类是**我们自写**的，而不是移植 DSHA 的
+
+DSHA 的对应实现是 `NativeRestoreTargets`（301 行）。第一版审计给它写的理由是
+「它依赖 `ConfigStore`/`KeyVault`」—— 而那甚至不是最强的理由。读完代码后：
+
+| # | 理由 | 证据 |
+|---|---|---|
+| ① | **逻辑根词汇根本不同（决定性）** | 归档根名 = `BackupSource.id()`（`HostSnapshot.java:43`/`:220`），而 `BackupSource.description()` 只给 `id`/`scope`/`external`（`BackupSource.java:62-68`）。DSHA 的 `target()` 第一句是 `BackupJson.string(root, "logicalKind")` —— **我们的根没有这个键，它会直接抛** |
+| ② | 目的地路径不同 | 它写 `runtime-current/base`、`files/user-data-v5/dsh`、`files/plugin-imports/<task>`；我们的是 `user-data/.dsh` |
+| ③ | 设置钩子不同 | 它走 `ConfigStore`（SharedPreferences + Keystore，817 行）；骨干是 Kotlin + DataStore |
+
+**这是两套归档词汇，不是同一套的两个实现。** DSHA 认的根是
+`dsh-home`/`dsh-child`/`native-settings`/`plugin-store`/…，其中 `dsh-child` 是
+「`.dsh` 的子条目**逐个成根**」；我们是「一个 `DshBackupMember` 一个根」。
+所以 `NativeRestoreTargets` 登记为 `not_imported`，我们另写
+[`HostRestoreMapping.java`](src/main/java/com/dshbox/app/backup/HostRestoreMapping.java)。
+
+### 为什么这个类是 Java，而不是像 `DshBackupScope.kt` 那样用 Kotlin
+
+**为了能本机真跑。** 本机有完整的 JDK 17，但**没有 kotlinc**（`docs/INCIDENTS.md` 第 21 条）。
+写成 Kotlin 的话，这个类只能由 CI 编译 —— 而它是**会毁数据的那条路径**（它决定往哪写）。
+`tools/run-backup-jvm-tests.sh` 只编译 `backup/src` 下的 `.java`，所以写 Java 换来的是
+「落点对不对」这个问题能在两秒内得到答案。
+
+代价是它破了「`.java` 在 `com/deepseekharness/app/`、我们的在 `com/dshbox/app/*.kt`」这条
+语言约定。**换来的是可验证性，这个交换是划算的**，但它必须被显式登记 ——
+`governance/dsha-imports.json` 的 `original` 段如实列了这两个文件（自写、无上游对应物），
+而 `check-dsha-imports.py` 的反向扫描据此把它们算作「已登记」而不是「上游文件漏登记」。
+
+> ⚠️ 那次放宽**必须**有界：一个既不在 `files`、也不在 `derived`、也不在 `original` 里的
+> `.java` **仍然会红**。`tools/verify-phase0.sh` 的 5o 节用一个真实注入证明这一点
+> （放一个 `UnregisteredProbe.java` 进去，检查器必须失败）。
+
+### 落点：`user-data/.dsh`（而且它只有一个事实来源）
+
+```
+guest /root/projects   ←PRoot bind→   宿主 filesDir/user-data      (SandboxFiles.PathMapper)
+DSH_HOME = /root/projects/.dsh        →  宿主 filesDir/user-data/.dsh (SandboxService.kt:1017)
+```
+
+所以 `DshBackupMember.path`（`.dsh`、`.dsh/sessions`、…）**可以直接当相对 `user-data`
+的宿主路径用** —— 不需要第二套映射表。2.2 写这句话时是对的，2.4b 复核后仍然成立。
+
+`mergeSubdir` 不再是构造函数参数，而是**由 `path` 推导**
+（`.dsh` → `""`，`.dsh/x/y` → `x/y`）。理由就是本仓库事故表第 17/20 条的成因：
+「同一个事实写两遍」迟早会分叉。少一个来源，就少一类事故。
+
+### 一个成员一个 group（与 DSHA 的一处刻意不同）
+
+`NativeRestorePlan.Target` 支持「多个根共享同一个活动目标」（`group` + `prefix`）。
+DSHA 用它把 `.dsh` 的子条目并进一个 group。**我们不这么做**：
+
+| | 整个 `.dsh` 一个 group | 一个成员一个 group（采用） |
+|---|---|---|
+| `read`（合并来源） | 必须是 group 根 → **只恢复 sessions 也会把整个 `.dsh` 拷进候选**（含凭据、插件实体） | 成员自己的路径 |
+| `before`/`readBefore` | 整个家目录一个摘要 → 任何改动都报 `TARGET_CHANGED` | **成员级**摘要 → 只有被动过的成员才报 |
+| 提交半径 | 整个家目录 | 一个成员 |
+| `memberRead` | 需要（为 group/prefix 那套准备） | 不需要，传 `null` |
+
+### `target()` 的三条判定（都有测试）
+
+1. **认不出的根 → 跳过，不猜。** 归档可能来自更新的版本。返回 `null` +
+   `skippedReason = "ROOT_NOT_IN_MEMBER_TABLE"`（刻意的**具体**码，不复用默认的
+   `ROOT_REQUIRES_DESTINATION` —— 「不在我的表里」与「需要用户先选目的地」是两件事）。
+2. **认得出的根、范围对不上 → 报错。** `ROOT_SCOPE`。那说明这份归档要么不是这个范围打的，
+   要么被人改过，两种情况都不该继续。
+3. **落点必须在 `user-data` 之内。** `TARGET_OUTSIDE_APP`。成员表是编译期常量，但它是
+   **数据** —— 一个手误的 `..` 会让恢复写到别人的目录里，所以构造时就炸。
+
+### 端到端往返：2.1 → 2.4a → 2.4b 第一次串起来
+
+`HostRestoreMappingTest` 里最重要的不是字段断言，而是两件事：
+
+1. **往返真的通**：用我们**自己的** `HostSnapshot` 打一份归档，再用**我们自己的** mapping
+   预检并构建候选，然后**直接在磁盘上核对候选树的字节与位置**。
+   「两个模块各自的单测都过」证明不了它们能对接 —— 这正是事故表第 17 条的形态。
+2. **注入**：预检之后改动活动目录，`buildCandidates` 必须报 `TARGET_CHANGED`，
+   **且不留下候选树**。这是「会毁数据的那条路径」最基本的自我保护，而且它是注入出来的。
+
+本机真跑：**53 条**（2.4a 是 42；新增 11 条）。成员表与 `DshBackupScope` 的一致性由
+`tools/check-backup-contract.py` 逐项核验（6 个成员），并且**做过漂移注入自证**。
+
 ## 这个模块**不**做什么
 
 明确划出去的部分，免得读者以为「格式与预检」等于「能备份能恢复」：
 
 | 不做的事 | 归属 | 为什么现在不做 |
 |---|---|---|
-| 逻辑根 → 本机路径的映射（`NativeRestoreTargets` 那一层） | 阶段 2.4b | 它依赖 DSHA 自己的设置/凭据子系统；本仓库要按骨干的设置模型另写 |
+| ~~逻辑根 → 本机路径的映射（`NativeRestoreTargets` 那一层）~~ | ✅ **阶段 2.4b-① 已做** | 见上：`HostRestoreMapping.java`（自写）。审计推翻了「依赖设置子系统」这个理由 —— 真正的原因是**逻辑根词汇不同** |
 | 凭据的**字段级**排除（`settings.yaml` 里的模型凭据、桥 token） | 仍未做 | 2.3 做的是**机器本地记录**的投影（见下）；`settings.yaml` 里是否有需要单独排除的字段，**要先在真机上确认它的实际内容**才能决定 |
-| 隔离试运行、失败回切（落在 DSHBox 的 `runtime-current/` ↔ `runtime-new/` 上） | 阶段 2.4b | 切口是 DSHA `NativeRestorePlan.Mapping` 接口；`RuntimeTrial` 的思路可借、代码不搬 |
+| **把候选树提交到活动目录，以及失败回切** | 🔴 **阶段 2.4b-② 未做** | 这是 2.4b 真正的后半：`NativeRestorePlan.buildCandidates()` **只写 `task/candidate/`，一次都不碰活动目录**（读完全部 405 行确认），所以 2.4a 是安全的，而**提交这一步还不存在**。
+| ⚠️ 候选树与活动树之间的**原子性没有测试覆盖** | 同上 | 「先拷贝、再逐文件覆盖」的提交若被进程杀死，活动树会半新半旧。**这是已知缺口，不是已解决项** |
+| ~~回切落在 `runtime-current/` ↔ `runtime-new/`~~ | ❌ **这个落点被审计推翻** | 那对槽换的是 base/node/dsh 三层**运行环境**（`BundleManager.promoteNewSlotToCurrent()`），而恢复写的是**用户数据** `user-data/.dsh`。用「换整个系统」去实现「换一个目录」是错的；环境更新属于阶段 3 |
 | 自动备份计划（每日 / 1–168h / 停止后，保留 3 份） | 阶段 2.5 | 依赖 2.1–2.4 |
 | 范围与排除的界面文案 | 阶段 2.4 | DSHA 的 `label()`/`describe()` 走它自己那套 i18n；本仓库用 Android 资源 |
 

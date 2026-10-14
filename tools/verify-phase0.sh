@@ -1884,6 +1884,157 @@ fi
 
 
 
+section "5o. 恢复落点：逻辑根 → 本机路径（阶段 2.4b）"
+
+# 为什么这一节必须存在：
+# 2.4b 的落点是**我们自写**的 —— DSHA 的 NativeRestoreTargets 不可复用（它的
+# target() 第一句就读 root 的 logicalKind，而我们的根只有 id/scope/external）。
+# 「自写」意味着**没有上游哈希可核**，所以这里只能核行为：
+# ① 它认的是我们自己的归档词汇；② 端到端往返真的跑通；③ 放进来的东西真的会被拒绝。
+
+MAPPING="backup/src/main/java/com/dshbox/app/backup/HostRestoreMapping.java"
+MAPPING_TEST="backup/src/test/java/com/dshbox/app/backup/HostRestoreMappingTest.java"
+
+# ① 映射在场，而且它没有把 DSHA 那套词汇顺手抄进来
+if [ -f "$MAPPING" ] && grep -q 'implements NativeRestorePlan.Mapping' "$MAPPING"; then
+    ok "恢复落点映射在场，并实现了 NativeRestorePlan.Mapping"
+else
+    fail "缺少 $MAPPING 或它没有实现 NativeRestorePlan.Mapping"
+    CR_BAD=1
+fi
+# 反面：它必须是「我们自己的」映射，不是 DSHA 那套的改写。DSHA 的词汇是
+# dsh-child / logicalKind / ConfigStore —— 出现任何一个都说明方向错了。
+# 只看**代码**，不看注释：这个文件的 javadoc 里必须能写「DSHA 用的是 logicalKind，
+# 我们不是」—— 否则审计结论就没地方放。第一版没剔注释，于是这条断言被一个**提及**
+# 骗过（它红了，但红的原因是错的）。剔除 `//`、`/* */` 与 javadoc 的 `*` 行。
+if grep -vE '^[[:space:]]*(\*|//|/\*)' "$MAPPING" \
+     | grep -qE 'logicalKind|dsh-child|dsh-home|ConfigStore'; then
+    fail "映射的**代码**里出现了 DSHA 的逻辑根词汇（logicalKind/dsh-child/dsh-home/ConfigStore）—— 方向错了"
+    CR_BAD=1
+else
+    ok "映射的代码用的是本仓库的成员词汇（注释里的对比说明不算）"
+fi
+# 落点必须是 user-data/.dsh，而且它是**推导**出来的（mergeSubdir 没有第二个来源）
+if grep -q '"\.dsh"' "$MAPPING" && grep -q 'mergeSubdir()' "$MAPPING"; then
+    ok "落点是 user-data/.dsh，且 mergeSubdir 由 path 推导（同一事实不写两遍）"
+else
+    fail "映射没有钉住 .dsh 落点，或 mergeSubdir 变成了第二份来源"
+    CR_BAD=1
+fi
+
+# ② 端到端往返：本机真编译真跑（2.1 → 2.4a → 2.4b 第一次串起来）
+M_LOG=$(mktemp)
+if bash tools/run-backup-jvm-tests.sh > "$M_LOG" 2>&1; then
+    M_TOTAL=$(grep -o 'OK ([0-9]* tests)' "$M_LOG" | grep -o '[0-9]*' | head -1)
+    ok "本机真跑恢复落点：${M_TOTAL:-0} 条 Java 测试（含端到端往返）"
+    if [ "${M_TOTAL:-0}" -lt 53 ]; then
+        fail "本机 Java 测试只有 ${M_TOTAL:-0} 条，低于阶段 2.4b 的预期 53 条"
+        CR_BAD=1
+    fi
+else
+    fail "本机真编译真运行 :backup 失败 —— 见 tools/run-backup-jvm-tests.sh 输出"
+    cat "$M_LOG" >&2
+    CR_BAD=1
+fi
+rm -f "$M_LOG"
+# 单独钉住新测试类的条数：总数够了不代表新的那几条在里面（事故表第 26 条）。
+M_COUNT=$(grep -c '@Test' "$MAPPING_TEST" 2>/dev/null || echo 0)
+if [ "$M_COUNT" = "11" ]; then
+    ok "HostRestoreMappingTest 有 11 条 @Test"
+else
+    fail "HostRestoreMappingTest 有 $M_COUNT 条 @Test，期望 11"
+    CR_BAD=1
+fi
+# 「拒绝改动过的活动目录」这条必须真的存在 —— 它是写入路径最基本的自我保护
+if grep -q 'TARGET_CHANGED' "$MAPPING_TEST"; then
+    ok "有「预检后活动目录被改动 → 拒绝」的注入用例"
+else
+    fail "缺少「活动目录被改动就必须拒绝」的用例"
+    CR_BAD=1
+fi
+# 成员表在本机（没有 kotlinc）只能复制一份，所以必须有一条断言盯着两边一致
+if grep -q 'check-backup-contract.py' tools/verify-phase0.sh 2>/dev/null &&
+   python3 tools/check-backup-contract.py >/dev/null 2>&1; then
+    ok "成员表与 DshBackupScope 的一致性由 check-backup-contract.py 核验"
+else
+    fail "check-backup-contract.py 未通过 —— 成员表可能已经和 DshBackupScope 漂移"
+    CR_BAD=1
+fi
+
+# ③ 注入自证：放宽「谁是上游」之后，检查器**不能**变成瞎的。
+#    上面把 original 里的自写文件从反向扫描里减掉了；一个既不在 files、
+#    也不在 derived、也不在 original 里的 .java 仍然必须变红。
+PROBE="backup/src/main/java/com/dshbox/app/backup/UnregisteredProbe.java"
+if [ -e "$PROBE" ]; then
+    fail "注入前 $PROBE 就已存在 —— 上一次注入没有清理干净"
+    CR_BAD=1
+else
+    printf 'package com.dshbox.app.backup;\npublic final class UnregisteredProbe {}\n' > "$PROBE"
+    if python3 tools/check-dsha-imports.py >/dev/null 2>&1; then
+        fail "放进未登记的 .java 后导入核验竟然还是通过 —— 反向扫描已经被放宽成瞎的"
+        CR_BAD=1
+    else
+        ok "未登记的 .java 仍被判失败（放宽只限于「谁是上游」，没有变瞎）"
+    fi
+    rm -f "$PROBE"
+    if python3 tools/check-dsha-imports.py >/dev/null 2>&1; then
+        ok "移除注入后导入核验重新通过"
+    else
+        fail "移除注入后导入核验仍未通过 —— 注入破坏了工作区状态"
+        CR_BAD=1
+    fi
+fi
+
+# ④ 注入自证：成员表漂移必须被判失败。
+#    「有一条检查」不等于「那条检查会红」（事故表第 16/18/24 条）。
+#    这里把 Java 镜像表里一个成员的 path 改掉，检查器必须报出来；然后复原。
+MEMBER_TEST="backup/src/test/java/com/dshbox/app/backup/HostRestoreMappingTest.java"
+MEMBER_BAK=$(mktemp)
+cp "$MEMBER_TEST" "$MEMBER_BAK"
+if python3 - "$MEMBER_TEST" <<'INJECT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+t = p.read_text(encoding="utf-8")
+a = 'new HostRestoreMapping.Member("dsh-profiles", ".dsh/profiles", "plugins")'
+b = 'new HostRestoreMapping.Member("dsh-profiles", ".dsh/plugins", "plugins")'
+if t.count(a) != 1:
+    sys.exit(2)
+p.write_text(t.replace(a, b), encoding="utf-8")
+INJECT
+then
+    if python3 tools/check-backup-contract.py >/dev/null 2>&1; then
+        fail "成员表被改坏后契约核验竟然还是通过 —— 那条检查没有在真的比对"
+        CR_BAD=1
+    else
+        ok "成员表漂移被判失败（注入已自证生效并复原）"
+    fi
+else
+    fail "成员表注入失败（锚点没命中）—— 这条自证本身无效"
+    CR_BAD=1
+fi
+cp "$MEMBER_BAK" "$MEMBER_TEST"
+# 复原必须**逐字节**核对，不能只看「检查又绿了」——
+# 绿了也可能是因为别的原因，而文件已经被写坏。（我第一版在这里写了一个
+# 把文件跟自己比的假断言，等于什么都没查。）
+if ! cmp -s "$MEMBER_BAK" "$MEMBER_TEST"; then
+    fail "复原后 $MEMBER_TEST 与备份不一致 —— 注入破坏了工作区状态"
+    CR_BAD=1
+elif python3 tools/check-backup-contract.py >/dev/null 2>&1; then
+    ok "复原后契约核验重新通过，且文件与备份逐字节一致"
+else
+    fail "复原后契约核验仍未通过"
+    CR_BAD=1
+fi
+rm -f "$MEMBER_BAK"
+
+# 4b 仍未实现「提交」：这一条要如实留在文档里，不能因为测试绿了就当成做完了
+if grep -q '原子性' docs/FUSION-PLAN.md; then
+    ok "FUSION-PLAN 如实登记了「候选树与活动树之间的原子性未验证」"
+else
+    fail "FUSION-PLAN 没有登记 2.4b 的未验证项"
+    CR_BAD=1
+fi
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do

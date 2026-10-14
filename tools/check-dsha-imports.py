@@ -251,12 +251,25 @@ def main() -> int:
             mismatched.append((relative, str(entry.get("upstream_bytes")),
                                f"{len(body)} 字节（与登记不符）"))
 
-    # 反向：导入目录里不允许出现未登记的 .java
+    # 反向：导入目录里不允许出现未登记的 .java。
+    #
+    # 三类身份都算「已登记」：逐字节副本（files）、改写适配（derived）、
+    # 以及**本仓库自写**（original）。第三类必须减掉 —— 否则我们自己写的
+    # 映射/测试会被误报成「上游文件漏登记」，而那正好是这套检查最怕的
+    # 那种误报（它逼人把自写文件塞进 files[] 或干脆不写）。
+    #
+    # ⚠️ 这里放宽的是**「谁是上游」这个集合**，不是「要不要登记」：
+    # 一个既不在 files 也不在 derived、也不在 original 里的 .java 仍然会红。
+    # verify-phase0.sh 的 5o 节用一个真实注入证明这一点（只放宽、没变瞎）。
+    original_paths = {
+        str(entry.get("local_path", ""))
+        for entry in ((doc.get("original") or {}).get("items") or [])
+    }
     on_disk = {
         path.relative_to(ROOT).as_posix()
         for path in IMPORT_ROOT.rglob("*.java")
     }
-    unregistered = sorted(on_disk - set(registered) - derived_paths)
+    unregistered = sorted(on_disk - set(registered) - derived_paths - original_paths)
     # 登记了但不在导入目录里的（写错路径）也一并报出来
     stray = sorted(set(registered) - on_disk - set(missing))
 

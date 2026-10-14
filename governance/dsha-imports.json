@@ -388,12 +388,22 @@
   ],
   "provenance_note": "两种来源头，对应两种身份：`provenance_header` = 逐字节副本（files[]），`adapted_header` = 只做机械等效替换的适配副本（derived 里 kind=adapted）。本检查器**强制**两者各自出现在对的文件上 —— 否则「原样复制」这句话可以由文件自己随便写，而没有任何东西会不同意。",
   "original": {
-    "note": "本仓库自己写的、**不对应任何上游文件**的测试。它们存在的理由是上游那一条断言太弱 —— 诚实起见单列一段，不混进 derived（derived 的语义是「改写了上游的什么」）。",
+    "note": "本仓库自己写的、**不对应任何上游文件**的文件。单列一段，不混进 derived（derived 的语义是「改写了上游的什么」，而这些文件根本没有上游对应物）。**这一段的另一个作用是否定性的**：`:backup` 模块里并非所有文件都来自 DSHA，把自写文件显式列出来，才能挡住「backup/ 底下都是 DSHA 的」这个错误信念。",
     "items": [
       {
         "local_path": "backup/src/test/java/com/dshbox/app/backup/CredentialProjectionCodesTest.kt",
         "why": "上游 CredentialProjectionTest 对 5 种坏输入只断言 startsWith(\"CREDENTIAL_PROJECTION_\")，只能证明「被拒绝了」，证明不了「因为正确的原因被拒绝」。这条按**实测**的具体错误码逐条钉住，并如实记录 anchor/tag/deep-nesting 三类实际抛 _FAILED（读源码会推成 _ALIAS/_TAG/_LIMIT，三个全错）。",
         "verified_by": "tools/check-credential-projection.java（本机与 CI 真跑）"
+      },
+      {
+        "local_path": "backup/src/main/java/com/dshbox/app/backup/HostRestoreMapping.java",
+        "why": "阶段 2.4b 的落点：逻辑根 → 本机路径（user-data/.dsh）。**不是移植** —— DSHA 的 NativeRestoreTargets 不可复用，最强理由不是「依赖 android」而是**逻辑根词汇不同**：它第一句就读 root 的 logicalKind，而我们的根（BackupSource.description()）只有 id/scope/external，会直接抛。写成 Java 而非 Kotlin 是刻意的：本机没有 kotlinc，只有 Java 侧能真编译真跑。",
+        "verified_by": "tools/run-backup-jvm-tests.sh（本机真跑，含端到端往返）"
+      },
+      {
+        "local_path": "backup/src/test/java/com/dshbox/app/backup/HostRestoreMappingTest.java",
+        "why": "上面那个映射的测试。最重要的两条是**串起来**与**注入**：① 用我们自己的 HostSnapshot 打归档、再用我们自己的 mapping 预检并构建候选 —— 2.1 → 2.4a → 2.4b 第一次端到端跑通（「两个模块各自的单测都过」证明不了它们能对接）；② 预检之后改动活动目录，构建候选必须报 TARGET_CHANGED 且**不留下候选树**。",
+        "verified_by": "tools/run-backup-jvm-tests.sh（本机真跑）"
       }
     ]
   }

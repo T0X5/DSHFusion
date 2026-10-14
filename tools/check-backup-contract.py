@@ -206,6 +206,74 @@ def check_no_dangling_qualifier() -> int:
     return hits
 
 
+# ── 成员表：Kotlin 是权威，Java 侧那份只是为了本机能跑 ──────────────────────────
+#
+# 阶段 2.4b 的落点映射（HostRestoreMapping）是 Java，因为它要被
+# tools/run-backup-jvm-tests.sh 真编译真跑 —— 而本机**没有 kotlinc**，
+# 权威表 DshBackupScope.members 是 Kotlin。于是同一份事实存在两处。
+#
+# 「同一个事实写两遍」正是本仓库事故表第 17/20 条的成因（测试手抄魔数、
+# 夹具与源码各说各话）。这里不能靠人记得同步，必须有一条检查盯着。
+#
+# 顺带核验那条**推导不变式**：mergeSubdir 必须等于 path 去掉 ".dsh/" 前缀。
+# 这个不变式是 Java 类自己算出来的（Member.mergeSubdir()），Kotlin 侧却是一个
+# 写死的字段 —— 两边都要对得上，否则「推导」和「声明」会悄悄分叉。
+MIRRORED_MEMBERS = 0
+SCOPE_MEMBER = re.compile(r'DshBackupMember\(\s*"([^"]+)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)')
+JAVA_MEMBER = re.compile(r'new\s+HostRestoreMapping\.Member\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)')
+
+
+def check_member_table_matches_scope() -> int:
+    global MIRRORED_MEMBERS
+    problems = 0
+    scope = read(ROOT / "backup" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "backup" / "DshBackupScope.kt")
+    java = read(ROOT / "backup" / "src" / "test" / "java" / "com" / "dshbox" / "app" / "backup" / "HostRestoreMappingTest.java")
+    kotlin = {}
+    for id_, path, merge, scope_name in SCOPE_MEMBER.findall(scope):
+        if id_ in kotlin:
+            fail(f"DshBackupScope 里成员 id 重复：{id_}")
+            problems += 1
+        kotlin[id_] = (path, merge, scope_name)
+        expected = "" if path == ".dsh" else path.removeprefix(".dsh/")
+        if merge != expected:
+            fail(f"DshBackupScope 的 {id_}：mergeSubdir={merge!r}，但 path={path!r} 推导出来是 {expected!r}")
+            problems += 1
+    # 只看那张**权威镜像表**（MEMBERS = List.of(…)），不扫整个测试文件：
+    # 测试里的负面用例（例如「成员 x 在 .dsh 之外」）用的也是同一个构造器，
+    # 把它们算进来会让这条检查变成一个必然失败的噪音源。
+    # 第一版就是这么写的，而它当场就红了 —— 这是检查器在自证它真的在读东西。
+    if "MEMBERS =" not in java:
+        fail("HostRestoreMappingTest.java 里找不到 MEMBERS 表")
+        return problems + 1
+    block = java.split("MEMBERS =", 1)[1].split(";", 1)[0]
+    mirrored = {}
+    for id_, path, scope_name in JAVA_MEMBER.findall(block):
+        mirrored[id_] = (path, scope_name)
+    if not kotlin:
+        fail("没有从 DshBackupScope.kt 里解析到任何成员 —— 正则或文件结构变了")
+        return problems + 1
+    if not mirrored:
+        fail("没有从 HostRestoreMappingTest.java 里解析到任何成员 —— Java 侧那份表没了")
+        return problems + 1
+    for id_ in sorted(set(kotlin) - set(mirrored)):
+        fail(f"成员 {id_} 只在 DshBackupScope 里有，Java 侧的镜像表漏了它")
+        problems += 1
+    for id_ in sorted(set(mirrored) - set(kotlin)):
+        fail(f"成员 {id_} 只在 Java 镜像表里有，DshBackupScope 里没有 —— 恢复会认一个不该认的根")
+        problems += 1
+    MIRRORED_MEMBERS = len(kotlin)
+    for id_ in sorted(set(kotlin) & set(mirrored)):
+        k_path, _, k_scope = kotlin[id_]
+        j_path, j_scope = mirrored[id_]
+        if k_path != j_path:
+            fail(f"成员 {id_} 的 path 两边不一致：Kotlin={k_path!r} Java={j_path!r}")
+            problems += 1
+        if k_scope != j_scope:
+            fail(f"成员 {id_} 的 v5Scope 两边不一致：Kotlin={k_scope!r} Java={j_scope!r}")
+            problems += 1
+    return problems
+
+
 def main() -> int:
     real = check_magic_size()
     check_no_hardcoded_magic(real)
@@ -213,6 +281,7 @@ def main() -> int:
     check_asserted_codes(known)
     check_no_jdk_only_apis()
     check_no_dangling_qualifier()
+    members = check_member_table_matches_scope()
 
     if FAILURES:
         print("备份模块契约核验失败：", file=sys.stderr)
@@ -224,7 +293,8 @@ def main() -> int:
         f"（{len(real)} 字节）三处一致；测试未手抄魔数；"
         f"断言的错误码均在容器可抛出的 {len(known)} 个码之内；"
         f"未使用 android.jar 缺失的 {len(JAVA11_ONLY_FILES_APIS)} 个 Files API；"
-        f"替换未留下悬空限定名。"
+        f"替换未留下悬空限定名；"
+        f"落点成员表与 DshBackupScope 的 {MIRRORED_MEMBERS} 个成员逐项一致。"
     )
     return 0
 
