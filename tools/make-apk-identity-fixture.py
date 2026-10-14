@@ -53,6 +53,7 @@ ATTR_LABEL = 0x01010001
 ATTR_NAME = 0x01010003
 ATTR_VERSION_CODE = 0x0101021B
 ATTR_VERSION_NAME = 0x0101021C
+ATTR_AUTHORITIES = 0x01010018
 
 NO_INDEX = 0xFFFFFFFF
 
@@ -159,6 +160,15 @@ def build_axml(scenario: str) -> bytes:
     else:
         label = "DSHFusion"
 
+    # authority 场景。
+    #
+    # 每个场景都要有一个 provider —— 检查器现在要求「至少有一个 authority」
+    # 且「每个都从 applicationId 派生」，缺了 provider 会命中前一条。
+    if scenario == "bad-authority":
+        authority = "com.dshbox.app.fileprovider"
+    else:
+        authority = f"{package}.fileprovider"
+
     # 字符串池。索引顺序是刻意安排的：资源映射按字符串索引对齐。
     strings = [
         "android",            # 0  命名空间 URI（这里不真正使用）
@@ -173,6 +183,9 @@ def build_axml(scenario: str) -> bytes:
         version_name,         # 9
         app_class,            # 10
         label,                # 11
+        "provider",           # 12
+        "authorities",        # 13
+        authority,            # 14
     ]
     S = {s: i for i, s in enumerate(strings)}
 
@@ -182,6 +195,7 @@ def build_axml(scenario: str) -> bytes:
     res_map[S["versionName"]] = ATTR_VERSION_NAME
     res_map[S["name"]] = ATTR_NAME
     res_map[S["label"]] = ATTR_LABEL
+    res_map[S["authorities"]] = ATTR_AUTHORITIES
 
     chunks = bytearray()
     chunks += build_start_element(
@@ -201,6 +215,14 @@ def build_axml(scenario: str) -> bytes:
             (S["label"], ATTR_LABEL, S[label], TYPE_STRING, S[label]),
         ],
     )
+    # FileProvider：检查器会核对它的 authority 是否从 applicationId 派生。
+    chunks += build_start_element(
+        S["provider"],
+        [
+            (S["authorities"], ATTR_AUTHORITIES, S[authority], TYPE_STRING, S[authority]),
+        ],
+    )
+    chunks += build_end_element(S["provider"])
     chunks += build_end_element(S["application"])
     chunks += build_end_element(S["manifest"])
 
@@ -220,7 +242,8 @@ def main() -> int:
     out_path = Path(sys.argv[1])
     scenario = sys.argv[2] if len(sys.argv) > 2 else "good"
 
-    known = {"good", "upstream-id", "upstream-ver", "wrong-ns", "wrong-label", "no-manifest"}
+    known = {"good", "upstream-id", "upstream-ver", "wrong-ns", "wrong-label",
+             "bad-authority", "no-manifest"}
     if scenario not in known:
         print(f"未知场景 {scenario!r}；可用：{sorted(known)}", file=sys.stderr)
         return 2

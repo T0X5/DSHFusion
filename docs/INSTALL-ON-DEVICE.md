@@ -79,6 +79,7 @@ applicationId  : com.dshfusion.app
 versionCode    : 1
 versionName    : 0.1.0
 application    : com.dshbox.app.DshApp
+authority      : com.dshfusion.app.fileprovider, com.dshfusion.app.shizuku, com.dshfusion.app.androidx-startup
 应用名（android:label = 0x7f0e001f）在各语言下的解析结果：
   ar         = 'DSHFusion'  ✅
   default    = 'DSHFusion'  ✅
@@ -98,6 +99,24 @@ APK 身份核验通过 ✔
 ---
 
 ## 3. 安装
+
+> ### ⚠️ 2026-10-14 实测：第一次安装**失败**（-13），已修，待重新验证
+>
+> ```
+> 安装失败(-13)
+> 失败原因：与已安装应用内容提供者冲突
+> ```
+>
+> **根因**：FileProvider 的 authority 写死成 `com.dshbox.app.fileprovider`，
+> 与已装的 DSHBox 撞车。authority 是**独立于 applicationId 的另一条身份轴**，
+> Android 要求它全局唯一 —— 跟 applicationId 是否不同无关。
+>
+> 已按 DIV-0011 修复（两处 authority 都改为从 applicationId 派生），
+> 并补了源码层与产物层两道检查。
+>
+> **但下面的步骤还没有在修复后的构建上跑过。** 等你重新构建（或等 CI 出新的
+> artifact）之后再按本文件操作，并把结果回填到第 6 节。
+
 
 **方式 A：手机浏览器**
 
@@ -168,6 +187,7 @@ sha256 `747c0b619b2b52bb5b73f98357efb51452da3116cb1f36588274cbd3cae67b9`。
 | 设置页显示的版本号 | |
 | 应用名显示为 | |
 | 与 DSHBox 并存安装？ | |
+| authority 冲突是否已消失？ | |
 | 运行环境获取结果 | |
 | 若失败，logcat 关键行 | |
 

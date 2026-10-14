@@ -64,7 +64,7 @@ DSHA 并非劣质项目——它的功能面更宽（备份 v5、LAN、ADB 无�
 python3 tools/check-upstreams.py          # 治理契约检查
 python3 tools/check-references.py         # 引用完整性（断链、不存在的路径）
 python3 tools/check-license-hashes.py     # 上游许可原件哈希核验
-bash tools/verify-phase0.sh               # 阶段验证套件（工作区 109 项，含失败路径）
+bash tools/verify-phase0.sh               # 阶段验证套件（工作区 113 项，含失败路径）
 tools/sync-upstream.sh dshbox --fetch     # 拉取上游 + 生成变更摘要
 tools/apply-divergences.sh --check        # 检查已登记偏离的施加状态
 ```

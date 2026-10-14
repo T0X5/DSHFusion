@@ -167,6 +167,23 @@
       "scope_note": "本脚本在 DSHFusion 里**没有任何地方执行它**：app 走的是 SandboxManager.installDshFromNpm 的 Kotlin 路径，RuntimeUpdateManager/DshUpdateScreen 里对它的提及都只是注释。所以这个改动不影响运行，它修的是一个潜在的坑。",
       "reapply": "由 tools/apply-divergences.sh 的 handle_div_0010 校验：脚本含 DSH_VERSION 空值守卫，且正文里不再出现版本默认值。",
       "conflict_risk": "low"
+    },
+    {
+      "id": "DIV-0011",
+      "title": "FileProvider authority 从 applicationId 派生（真机安装失败 -13）",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "app/src/main/AndroidManifest.xml",
+        "app/src/main/java/com/dshbox/app/util/viewer/ExternalOpener.kt"
+      ],
+      "change": "1) app/src/main/AndroidManifest.xml：FileProvider 的 `android:authorities=\"com.dshbox.app.fileprovider\"` → `\"${applicationId}.fileprovider\"`。\n2) ExternalOpener.kt：`const val FILE_PROVIDER_AUTHORITY = \"com.dshbox.app.fileprovider\"` → `val FILE_PROVIDER_AUTHORITY = \"${BuildConfig.APPLICATION_ID}.fileprovider\"`（去掉 const，因为 APPLICATION_ID 随构建变体变化）。",
+      "rationale": "**这是第一次真机验证暴露的问题，而且是我的阶段 1 决策造成的。**\n\n真机安装报 `安装失败(-13)` / `与已安装应用内容提供者冲突`，即 INSTALL_FAILED_CONFLICTING_PROVIDER。\n\n根因：applicationId 只是「安装身份」的一条轴，ContentProvider 的 authority 是**另一条独立的轴** —— Android 要求它全局唯一，两个已安装应用声明同一个 authority 时后装的那个直接失败 -13，**跟 applicationId 是否不同无关**。\n\n阶段 1 把 applicationId 从 com.dshbox.app 改成 com.dshfusion.app，三条身份断言全过、CI 全绿，但 authority 写死成上游的值，与已装的 DSHBox 撞车。我此前把「并存安装必需」理解成只包含 applicationId / 应用名 / 版本号，**漏掉了 authority 这条轴**。\n\n第二重后果（即使装上了也会中）：上游代码里 authority 有两个来源，manifest 写死 `com.dshbox.app.fileprovider`，而 DshWebViewScreen.kt:449 用 `\"${context.packageName}.fileprovider\"` 计算 —— 在 DSHBox 里两者相等所以没事，在 DSHFusion 里 packageName 是 com.dshfusion.app，两者不等，getUriForFile 会抛异常（该文件第 168 行的注释正好警告过这个后果）。所以两处必须一起改。",
+      "detection": "补了两层检查，都做过反向验证：\n- tools/check-apk-identity.py 断言 4：APK 里每个 authority 都必须以 applicationId 开头，且至少存在一个。对那个装不上的真实 APK 跑 → 正确退出 1。\n- tools/check-android-identity.py 检查 4：源码层扫描所有 AndroidManifest.xml 的 android:authorities，以及代码里写死的 `com.dshbox.app.*fileprovider` 字面量。构建前就报，不用等 CI。\n- 夹具新增 bad-authority 场景，套件独立测这条断言（不靠别的断言顺带发现）。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0011 校验：两处都必须从 applicationId 派生，任一处写死即失败。",
+      "conflict_risk": "low",
+      "note": "上游 DSHBox 自身也有这个隐患（manifest 与 DshWebViewScreen 用了两种写法，只是恰好相等）。这是**上游缺陷**，但我们不向上游提改动，只在本仓库内适配。"
     }
   ]
 }

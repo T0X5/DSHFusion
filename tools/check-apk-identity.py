@@ -59,6 +59,7 @@ ATTR_ANDROID_NAME = 0x01010003
 ATTR_ANDROID_VERSION_CODE = 0x0101021B
 ATTR_ANDROID_VERSION_NAME = 0x0101021C
 ATTR_ANDROID_LABEL = 0x01010001
+ATTR_ANDROID_AUTHORITIES = 0x01010018
 
 NO_ENTRY = 0xFFFFFFFF
 
@@ -149,7 +150,36 @@ def parse_manifest(axml: bytes) -> dict:
             attr_start, attr_size, attr_count = struct.unpack_from(
                 "<HHH", axml, node + 8
             )
-            if tag in ("manifest", "application") and attr_count:
+            if tag == "provider" and attr_count:
+                # 收集 ContentProvider 的 authority。
+                #
+                # 为什么单独处理：authority 是**独立于 applicationId 与 namespace
+                # 的第三条身份轴**。Android 要求它全局唯一，两个已安装应用声明同一个
+                # authority 时安装直接失败 -13（INSTALL_FAILED_CONFLICTING_PROVIDER）——
+                # 跟 applicationId 是否不同无关。
+                #
+                # 阶段 1 只改了 applicationId，没有发现这个：真机上
+                # `com.dshbox.app.fileprovider` 与已装的 DSHBox 撞车，安装失败。
+                # 见 DIV-0011。
+                base = node + attr_start
+                for i in range(attr_count):
+                    a_off = base + i * attr_size
+                    _a_ns, a_name, a_raw, _a_typed = struct.unpack_from(
+                        "<iiiI", axml, a_off
+                    )
+                    if not (a_name < len(resource_ids)
+                            and resource_ids[a_name] == ATTR_ANDROID_AUTHORITIES):
+                        continue
+                    v_type, v_data = struct.unpack_from("<BI", axml, a_off + 15)
+                    if 0 <= a_raw < len(strings):
+                        auth = strings[a_raw]
+                    elif v_type == TYPE_STRING and v_data < len(strings):
+                        auth = strings[v_data]
+                    else:
+                        auth = f"<{v_type:#04x}:{v_data:#010x}>"
+                    result.setdefault("authorities", []).append(auth)
+
+            elif tag in ("manifest", "application") and attr_count:
                 base = node + attr_start
                 for i in range(attr_count):
                     a_off = base + i * attr_size
@@ -347,6 +377,9 @@ def main() -> int:
     print(f"versionCode    : {version_code}")
     print(f"versionName    : {version_name}")
     print(f"application    : {app.get('name', '?')}")
+    auths = manifest.get("authorities", [])
+    if auths:
+        print(f"authority      : {', '.join(auths)}")
     print()
 
     # --- 断言 1：应用标识必须是 DSHFusion 自己的 ---
@@ -374,7 +407,35 @@ def main() -> int:
             "（阶段 1 刻意不改 namespace）"
         )
 
-    # --- 断言 4：应用名（解 resources.arsc 才能知道）---
+    # --- 断言 4：每个 ContentProvider 的 authority 都必须从 applicationId 派生 ---
+    #
+    # 这条断言是**真机装不上之后补的**，加它的理由值得写清楚：
+    #
+    # applicationId 只是「安装身份」的一条轴。ContentProvider 的 authority 是
+    # 另一条**独立**的轴 —— Android 要求它全局唯一，两个已安装应用声明同一个
+    # authority 时，后装的那个直接失败 -13（INSTALL_FAILED_CONFLICTING_PROVIDER），
+    # 跟 applicationId 是否不同**完全无关**。
+    #
+    # 阶段 1 把 applicationId 从 com.dshbox.app 改成 com.dshfusion.app，
+    # 三条断言全过，CI 全绿 —— 但 APK 里 FileProvider 的 authority 是写死的
+    # `com.dshbox.app.fileprovider`，与已装的 DSHBox 撞车，真机上装不上去。
+    # 前面三条断言都查不到它，因为它们查的都是「值对不对」，
+    # 而这条要查的是「**这个值是不是从 applicationId 派生的**」。
+    authorities = manifest.get("authorities", [])
+    if not authorities:
+        problems.append(
+            "APK 里没有任何 ContentProvider authority —— 期望至少有 FileProvider 一个；"
+            "manifest 解析可能出了问题"
+        )
+    for auth in authorities:
+        if not auth.startswith(pkg + "."):
+            problems.append(
+                f"authority「{auth}」不是从 applicationId 派生的（期望以 {pkg}. 开头）—— "
+                "authority 全局唯一，与已安装的上游应用撞车会让安装失败 -13"
+                "（INSTALL_FAILED_CONFLICTING_PROVIDER）"
+            )
+
+    # --- 断言 5：应用名（解 resources.arsc 才能知道）---
     label_ref = manifest.get("label_ref")
     if label_ref is None:
         notes.append(

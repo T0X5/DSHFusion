@@ -508,6 +508,82 @@ def handle_div_0006(entry) -> tuple[str, str]:
     return OK, "已为 android.yml 补上顶层 permissions: contents: read"
 
 
+def handle_div_0011(entry) -> tuple[str, str]:
+    """FileProvider authority 必须从 applicationId 派生。
+
+    真机实测：写死 com.dshbox.app.fileprovider 会让安装失败 -13
+    （INSTALL_FAILED_CONFLICTING_PROVIDER）—— authority 全局唯一，与已装的
+    DSHBox 撞车，跟 applicationId 是否不同无关。
+
+    两处必须一起改，只改一处会让 getUriForFile 在运行时抛异常：
+      - manifest 的 android:authorities
+      - ExternalOpener.FILE_PROVIDER_AUTHORITY（代码里传给 getUriForFile 的值）
+    """
+    manifest = ROOT / "app" / "src" / "main" / "AndroidManifest.xml"
+    opener = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "util" / "viewer" / "ExternalOpener.kt"
+    if not manifest.exists() or not opener.exists():
+        return PENDING, "基线尚未导入"
+
+    m_text = read(manifest)
+    o_text = read(opener)
+
+    m_ok = 'android:authorities="${applicationId}.fileprovider"' in m_text
+    m_bad = 'android:authorities="com.dshbox.app.fileprovider"' in m_text
+
+    # 只看**代码行**，不看整篇文本。
+    #
+    # 第一版这里写的是 `'"com.dshbox.app.fileprovider"' in o_text and "原先写死" not in o_text`，
+    # 想用「注释里有没有『原先写死』」区分「上游写法」与「已适配」。
+    # 这个启发式是错的：本文件上方那段说明注释里就带着「原先写死」四个字，
+    # 于是上游写法被误判成已适配，重放只改了 manifest、漏了代码，
+    # 结果是「重放后仍然失败」。
+    # 教训与套件那次 ok/fail 事故同源：**判断依据要盯住被判断的那一行本身**，
+    # 不要用整篇文本的模糊特征去猜。
+    o_code = "\n".join(
+        ln for ln in o_text.splitlines() if not ln.lstrip().startswith(("//", "*", "/*"))
+    )
+    o_ok = 'FILE_PROVIDER_AUTHORITY = "${BuildConfig.APPLICATION_ID}.fileprovider"' in o_code
+    o_bad = 'FILE_PROVIDER_AUTHORITY = "com.dshbox.app.fileprovider"' in o_code
+
+    if m_ok and o_ok:
+        return OK, "两处 authority 都派生自 applicationId"
+    if CHECK_ONLY:
+        which = []
+        if not m_ok:
+            which.append("AndroidManifest.xml")
+        if not o_ok:
+            which.append("ExternalOpener.kt")
+        return FAILED, "authority 未从 applicationId 派生：" + "、".join(which)
+
+    changed = []
+    if m_bad:
+        write(manifest, m_text.replace(
+            'android:authorities="com.dshbox.app.fileprovider"',
+            'android:authorities="${applicationId}.fileprovider"', 1))
+        changed.append("AndroidManifest.xml")
+    if o_bad:
+        new_o = o_text.replace(
+            'const val FILE_PROVIDER_AUTHORITY = "com.dshbox.app.fileprovider"',
+            'val FILE_PROVIDER_AUTHORITY = "${BuildConfig.APPLICATION_ID}.fileprovider"', 1)
+        if new_o == o_text:
+            return FAILED, "ExternalOpener.kt 的 FILE_PROVIDER_AUTHORITY 锚点失效，需人工确认"
+        if "import com.dshbox.app.BuildConfig" not in new_o:
+            new_o = new_o.replace("import androidx.core.content.FileProvider\n",
+                                  "import androidx.core.content.FileProvider\nimport com.dshbox.app.BuildConfig\n", 1)
+        write(opener, new_o)
+        changed.append("ExternalOpener.kt")
+
+    if not changed:
+        return FAILED, "两处 authority 都既不是正确值也不是已知的错值，状态不明，需人工确认"
+
+    m2, o2 = read(manifest), read(opener)
+    if 'android:authorities="${applicationId}.fileprovider"' not in m2 or \
+       'FILE_PROVIDER_AUTHORITY = "${BuildConfig.APPLICATION_ID}.fileprovider"' not in o2:
+        return FAILED, "写入后复核未通过（已改动 " + "、".join(changed) + "）"
+    files_changed.extend(str(ROOT / p) for p in changed)
+    return OK, "已把 " + "、".join(changed) + " 的 authority 改为从 applicationId 派生"
+
+
 def handle_div_0010(entry) -> tuple[str, str]:
     """install_dsh.sh 取消默认 DSH 版本。
 
@@ -814,6 +890,7 @@ HANDLERS = {
     "DIV-0008": handle_div_0008,
     "DIV-0009": handle_div_0009,
     "DIV-0010": handle_div_0010,
+    "DIV-0011": handle_div_0011,
 }
 
 

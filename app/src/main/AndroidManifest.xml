@@ -96,10 +96,18 @@
              消除 exported 外部触发面。 -->
 
         <!-- 外部应用调用（VIEW/EDIT/SEND）的 content URI 支持，
-             四根精确 files-path 见 res/xml/file_paths.xml -->
+             四根精确 files-path 见 res/xml/file_paths.xml。
+
+             authority 必须是 ${applicationId}.fileprovider，不能写死 com.dshbox.app.fileprovider。
+             写死会导致两个后果，真机实测都出现过：
+               1) 安装直接失败 -13（INSTALL_FAILED_CONFLICTING_PROVIDER）——
+                  authority 全局唯一，与已装的 DSHBox 撞车，跟 applicationId 是否不同无关；
+               2) 即便装上了，DshWebViewScreen 的拍摄入口用 ${packageName}.fileprovider
+                  计算 authority，与写死的值不一致，getUriForFile 会抛异常。
+             见 DIV-0011。 -->
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="com.dshbox.app.fileprovider"
+            android:authorities="${applicationId}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data

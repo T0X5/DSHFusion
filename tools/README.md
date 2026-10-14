@@ -228,12 +228,32 @@ tools/apply-divergences.sh            # 施加 type=identity/config 的偏离
 发现方式是加 `5f` 时看到输出里的 `fail: command not found`，
 再一查才意识到前面两节也是同样的空转。
 
-补上函数后，套件总数从 **92 项跳到 109 项** —— 多出来的 17 项不是新增的检查，
+补上函数后，套件总数从 **92 项跳到 113 项** —— 多出来的 17 项不是新增的检查，
 而是**原本就写着、却从来没跑过**的检查。
 
 由此得到一条规则，已写进脚本注释：**检查器本身必须有测试。**
 一个什么都不查的检查，比没有检查更危险 —— 它提供虚假的信心。
 本套件现在对每个工具都做故障注入，原因就在这里。
+
+## 关于 authority：一条容易被漏掉的身份轴
+
+`applicationId` 决定「装的是哪个应用」，但 **ContentProvider 的 authority 是另一条
+独立的轴** —— Android 要求它全局唯一。两个已安装应用声明同一个 authority 时，
+后装的那个安装失败 -13（`INSTALL_FAILED_CONFLICTING_PROVIDER`），
+**跟 applicationId 是否不同无关**。
+
+这不是理论风险：阶段 1 改了 applicationId 之后 CI 全绿，真机上却装不上去，
+因为 FileProvider 的 authority 写死成了上游的值。见 DIV-0011。
+
+现在有两条检查盯着它，一条在源码层（构建前就报），一条在产物层（证明值真进了 APK）：
+
+```bash
+python3 tools/check-android-identity.py    # 源码：manifest 与代码里的 authority
+python3 tools/check-apk-identity.py a.apk  # 产物：APK 里每个 authority
+```
+
+**判断 authority 对不对，标准不是「值等于某个期望值」，而是「这个值是否派生自
+applicationId」。** 前者只对当前配置有效，后者在任何 applicationId 下都成立。
 
 ## 产物核验类
 
@@ -335,7 +355,7 @@ bash tools/verify-phase0.sh 2>&1 | tee verification.log
 
 **退出码**：`0` 全部通过；`1` 有失败项。
 
-覆盖 21 组检查。项数随环境伸缩：依赖齐全、有审计副本与上游镜像时 **109 项**；
+覆盖 21 组检查。项数随环境伸缩：依赖齐全、有审计副本与上游镜像时 **113 项**；
 干净克隆里 **60 项**。其中 **3 项**依赖可选依赖
 （PyYAML、actionlint、shellcheck），其余依赖上游审计副本或镜像存在：
 

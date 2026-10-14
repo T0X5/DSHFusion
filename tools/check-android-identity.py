@@ -170,7 +170,67 @@ def main() -> int:
         if not args.quiet:
             print()
 
-    # ---- 检查 4：阶段范围提醒（不是失败，只是显式报告）----
+    # ---- 检查 4：ContentProvider authority 必须从 applicationId 派生 ----
+    #
+    # 这条检查是**真机安装失败之后补的**，来源值得写下来：
+    #
+    # applicationId 只是「安装身份」的一条轴。ContentProvider 的 authority 是另一条
+    # **独立**的轴 —— Android 要求它全局唯一，两个已安装应用声明同一个 authority 时
+    # 后装的那个直接失败 -13（INSTALL_FAILED_CONFLICTING_PROVIDER），
+    # 跟 applicationId 是否不同**无关**。
+    #
+    # 阶段 1 改了 applicationId，前面几条检查全过、CI 全绿，但 FileProvider 的
+    # authority 写死成 `com.dshbox.app.fileprovider`，真机上与已装的 DSHBox 撞车。
+    # 这些检查查的都是「值对不对」，而 authority 要查的是
+    # 「**这个值是不是从 applicationId 派生的**」—— 所以它必须单独一条。
+    #
+    # 源码层拦一次，产物层（tools/check-apk-identity.py）再拦一次：
+    # 前者构建前就报，后者证明值真的进了 APK。
+    manifests = sorted(
+        p for p in ROOT.rglob("AndroidManifest.xml")
+        if ".git" not in p.parts and "build" not in p.parts
+    )
+    hardcoded: list[tuple[str, str]] = []
+    declared: list[tuple[str, str]] = []
+    for mf in manifests:
+        rel = mf.relative_to(ROOT).as_posix()
+        for m in re.finditer(r'android:authorities\s*=\s*"([^"]*)"', read(mf)):
+            value = m.group(1)
+            declared.append((rel, value))
+            if not value.startswith("${applicationId}"):
+                hardcoded.append((rel, value))
+
+    if not args.quiet:
+        print("ContentProvider authority：")
+        for rel, value in declared:
+            mark = "OK " if value.startswith("${applicationId}") else "✗  "
+            print(f"  {mark} {value:44s} （{rel}）")
+        print()
+
+    for rel, value in hardcoded:
+        problems.append(
+            f"{rel} 的 authority「{value}」写死了，不是从 applicationId 派生 —— "
+            f"authority 全局唯一，与已安装的上游应用撞车会让安装失败 -13。"
+            f"应写成 ${{applicationId}}{value[len(UPSTREAM_NAMESPACE):]}"
+            if value.startswith(UPSTREAM_NAMESPACE)
+            else f"{rel} 的 authority「{value}」没有用 ${{applicationId}} 前缀"
+        )
+
+    # 代码里同样不能写死 authority 字面量（FileProvider 的 authority 有两处来源：
+    # manifest 声明与代码里 getUriForFile 传入的值，两者必须相等）
+    for f in files:
+        rel = f.relative_to(ROOT).as_posix()
+        for line_no, line in enumerate(read(f).splitlines(), 1):
+            if line.lstrip().startswith(("//", "*", "/*")):
+                continue
+            m = re.search(r'"(com\.dshbox\.app\.[\w.]*)"', line)
+            if m and "fileprovider" in m.group(1):
+                problems.append(
+                    f"{rel}:{line_no} 把 authority「{m.group(1)}」写成了字面量 —— "
+                    f"应与 manifest 一致地派生自 applicationId（见 DIV-0011）"
+                )
+
+    # ---- 检查 5：阶段范围提醒（不是失败，只是显式报告）----
     if namespace != UPSTREAM_NAMESPACE and not args.quiet:
         print(
             f"注意：namespace 已偏离上游值 {UPSTREAM_NAMESPACE}。\n"

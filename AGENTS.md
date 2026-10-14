@@ -19,23 +19,27 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
 （`README.md`、`.gitignore`）→ **实际导入 765 个文件、25.4 MB**。
-10 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
+11 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
 
 **「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
 18 处差异全部能对上已登记的偏离。
 
-> ⚠️ **构建已真实验证，真机运行没有。**
+> ⚠️ **构建已验证；真机验证试过一次，失败了 —— 见下方专节。**
 >
 > 2026-10-13，上游 `android.yml` 在 DSHFusion 下首次真实运行**通过**：
 > 10 个模块的 `testDebugUnitTest`、`lintDebug`、`assembleDebug` 全部成功，
 > 产出 `dshapp-debug-apk`（39.0 MB 压缩 / 94.0 MB 解压，777 个条目）。
 > 这一步不再是「凭配置推断」。
 >
-> **但装到手机上还没做过** —— 没有设备连接。更要紧的是：CI 产出的 APK
-> **不含任何运行环境层**（无 `base/node/android-side/dsh` 的 `.tar.zst`），
-> 因为上游不把 `runtime/` 提交进仓库。所以它**能安装，但起不了 DSH**，
-> 除非先通过「运行环境在线获取」或离线整包导入补上。
+> 2026-10-14，第一次真机安装 —— **失败，报 -13**
+> （`INSTALL_FAILED_CONFLICTING_PROVIDER`）。根因是 FileProvider 的 authority
+> 写死成上游的值，与已装的 DSHBox 撞车。已按 DIV-0011 修复，
+> **但修复后尚未重新构建、也尚未重新真机验证**。
+>
+> 另外：CI 产出的 APK **不含任何运行环境层**（无
+> `base/node/android-side/dsh` 的 `.tar.zst`），因为上游不把 `runtime/` 提交进仓库。
+> 所以即便装上，也**起不了 DSH**，除非先通过「运行环境在线获取」或离线整包导入补上。
 > 不要把这个状态读成「装上就能用」。
 > 见 [docs/PHASE0-VERIFICATION.md](docs/PHASE0-VERIFICATION.md) 的诚实性声明。
 
@@ -49,7 +53,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ✅ **通过**（run 38478523535，含单元测试 / lint / APK 组装） |
 | APK **产物**身份核验（DIV-0008） | ✅ **已通过**（run 38483533327 第 15 步）—— 对 CI 真实产物解二进制清单核验 |
 | 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
-| 生成的 APK 装到真机上验证 | ❌ **未做** —— 步骤见 [docs/INSTALL-ON-DEVICE.md](docs/INSTALL-ON-DEVICE.md)，由用户手动执行 |
+| 生成的 APK 装到真机上验证 | ⚠️ **已试，首次失败** —— 2026-10-14 真机安装报 -13，根因见下方；修复待重新构建验证 |
 | APK 内含运行环境层（能真正跑起 DSH） | ❌ 不含 —— 仓库未提交 `runtime/`，CI 只做编译 |
 | `upstream-watch.yml` 真实运行 | ✅ **已跑通**（run 38483621472，手动触发）—— 检出 DSHA 有新提交并建了 Issue #2 |
 
@@ -104,6 +108,50 @@ APK 身份核验通过 ✔
 这份摘要同时验证了监测机制本身是有用的：它正确识别了「上游动了」，
 也正确判断出「这次不用管」。见
 [docs/UPSTREAM-SYNC.md](docs/UPSTREAM-SYNC.md)。
+
+### 首次真机验证（2026-10-14）—— 失败了，而且是我的错
+
+第一次把 APK 装到真机上，**安装直接失败**：
+
+```
+安装失败(-13)
+失败原因：与已安装应用内容提供者冲突
+处理建议：卸载当前已安装版本，再重新安装
+```
+
+-13 是 `INSTALL_FAILED_CONFLICTING_PROVIDER`。
+
+**根因**：`applicationId` 只是「安装身份」的一条轴。**ContentProvider 的 authority
+是另一条独立的轴** —— Android 要求它全局唯一，两个已安装应用声明同一个 authority 时，
+后装的那个直接失败，**跟 applicationId 是否不同完全无关**。
+
+APK 里 FileProvider 的 authority 写死成 `com.dshbox.app.fileprovider`，
+与已装的 DSHBox 撞车。阶段 1 把 applicationId 改成了 `com.dshfusion.app`，
+三条身份断言全过、CI 全绿 —— 但**它们查的都是「值对不对」，没有一条查
+「这个值是不是从 applicationId 派生的」**。
+
+我此前把「并存安装必需的改动」理解成只包含 applicationId、应用名、版本号，
+漏掉了 authority。已按 **DIV-0011** 修复：两处 authority 都改为从 applicationId 派生。
+
+> **第二重后果**（即使装上了也会中）：上游代码里 authority 有两个来源 ——
+> manifest 写死 `com.dshbox.app.fileprovider`，而 `DshWebViewScreen.kt:449` 用
+> `"${context.packageName}.fileprovider"` 计算。在 DSHBox 里两者恰好相等所以没事；
+> 在 DSHFusion 里 packageName 是 `com.dshfusion.app`，两者不等，
+> `getUriForFile` 会抛异常 —— 那个文件第 168 行的注释正好警告过这个后果。
+> 所以两处必须一起改。
+
+**补了两层检查，都做过反向验证**：
+
+| 检查 | 层次 | 反向验证 |
+|---|---|---|
+| `check-apk-identity.py` 断言 4 | APK 产物 | 对那个装不上的真实 APK 跑 → 正确退出 1 |
+| `check-android-identity.py` 检查 4 | 源码，构建前 | 分别把 manifest / 代码改回硬编码 → 都被拦下 |
+| 夹具 `bad-authority` 场景 | 套件隔离测试 | 套件独立断言，不靠别的断言顺带发现 |
+
+> 这次失败是有价值的，和之前那次 `Unresolved reference 'R'` 一样：
+> 它验证了「CI 全绿 ≠ 真机能用」。CI 只跑编译与单测，
+> 而 authority 冲突、签名、权限、运行时行为都只有真机能暴露。
+> **在这条修好并重新真机验证之前，不要声称阶段 1 的产物可用。**
 
 ## 决策依据（不要重新推翻）
 
@@ -198,7 +246,7 @@ dshfusion/
 │   ├── build-dsh-layer.sh       构建 DSH 运行环境层（版本取自 upstreams.json）
 │   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 109 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 113 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）

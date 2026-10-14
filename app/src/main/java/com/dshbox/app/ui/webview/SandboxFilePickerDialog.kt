@@ -87,7 +87,7 @@ import com.dshbox.app.common.R as CommonR
  * 而 `AndroidManifest.xml` 的 FileProvider 已经声明了
  * `<files-path name="user_data" path="user-data/" />`，
  * 所以本选择器选中的文件可以**直接**铸成
- * `content://com.dshbox.app.fileprovider/user_data/<相对路径>`
+ * `content://<applicationId>.fileprovider/user_data/<相对路径>`
  * 交给 WebView —— 零清单改动、零新增 Provider。
  *
  * 又因为 WebView 与 FileProvider 同进程同 UID，`exported=false` 不会造成读取障碍。

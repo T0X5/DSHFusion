@@ -779,12 +779,13 @@ printf 'not a zip' > "$SCRATCH/notzip.apk"
 expect 2 "失败路径：不是 zip" \
     run_tool tools/check-apk-identity.py "$SCRATCH/notzip.apk"
 
-# 六个场景。前五个是「断言应该通过/应该拦住」，最后一个是结构缺失。
+# 七个场景。第一个是「应该通过」，中间五个是「断言应该拦住」，
+# 最后一个是结构缺失（没有 manifest）。
 expect 0 "合成 APK：身份正确时应通过" \
     bash -c "python3 tools/make-apk-identity-fixture.py '$SCRATCH/good.apk' good >/dev/null && \
              python3 tools/check-apk-identity.py '$SCRATCH/good.apk'"
 
-for scen in upstream-id upstream-ver wrong-ns wrong-label; do
+for scen in upstream-id upstream-ver wrong-ns wrong-label bad-authority; do
     python3 tools/make-apk-identity-fixture.py "$SCRATCH/$scen.apk" "$scen" >/dev/null
 done
 
@@ -804,10 +805,33 @@ check_scenario() {
     esac
 }
 
-check_scenario upstream-id  "applicationId 仍是上游的"
-check_scenario upstream-ver "版本号仍是上游的"
-check_scenario wrong-ns     "期望在 com.dshbox.app 下"
-check_scenario wrong-label  "期望 'DSHFusion'"
+check_scenario upstream-id   "applicationId 仍是上游的"
+check_scenario upstream-ver  "版本号仍是上游的"
+check_scenario wrong-ns      "期望在 com.dshbox.app 下"
+check_scenario wrong-label   "期望 'DSHFusion'"
+# 这一条是真机装不上之后补的：authority 写死成上游的值会让安装失败 -13。
+# 它必须能独立拦住，而不是靠别的断言顺带发现。
+check_scenario bad-authority "不是从 applicationId 派生的"
+
+# 源码层的同一条检查（构建前就报，不用等 APK）
+python3 tools/check-android-identity.py >/dev/null 2>&1 \
+    && ok "源码 authority 全部派生自 applicationId" \
+    || fail "源码里仍有写死的 authority"
+
+# 注入：把 manifest 的 authority 改回硬编码，源码检查必须失败
+MF_BAK="$SCRATCH/manifest.bak"
+cp app/src/main/AndroidManifest.xml "$MF_BAK"
+sed -i 's|android:authorities="${applicationId}.fileprovider"|android:authorities="com.dshbox.app.fileprovider"|' \
+    app/src/main/AndroidManifest.xml
+if python3 tools/check-android-identity.py >/dev/null 2>&1; then
+    fail "注入：manifest authority 改回硬编码，源码检查没拦住"
+else
+    ok "注入：manifest authority 改回硬编码 → 源码检查拦下"
+fi
+cp "$MF_BAK" app/src/main/AndroidManifest.xml
+python3 tools/check-android-identity.py >/dev/null 2>&1 \
+    && ok "注入后恢复：源码检查回到通过" \
+    || fail "恢复后源码检查仍失败"
 
 expect 2 "失败路径：包里没有 AndroidManifest.xml" \
     bash -c "python3 tools/make-apk-identity-fixture.py '$SCRATCH/no-manifest.apk' no-manifest >/dev/null && \
