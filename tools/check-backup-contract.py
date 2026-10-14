@@ -156,6 +156,13 @@ def check_asserted_codes(known: set[str]) -> None:
 #
 # 诚实的边界：**只覆盖已知会犯的这一类**，不是「所有 android.jar 缺失 API」的通用检查。
 # 通用检查需要 android.jar 的 API 清单，本机没有。
+#
+# 这个边界不是敷衍 —— 那一轮 CI 的报错单**本身就是证据**：javac 会一次报出全部错误，
+# 而它只报了 `writeString` / `readString` 两个方法 16 处；
+# 同一批文件里的 `Path.of(...)`（JvmBackupFileSystem，Java 11）、
+# `"[".repeat(66)`（BackupArchiveTest，Java 11）、`List.of(...)`（BackupScopes，Java 9）
+# **一处都没报**，说明它们在 android.jar 36 里是有的。
+# 所以「已知会缺」的集合是有证据的两项，而不是「我猜的 Java 11 方法列表」。
 JAVA11_ONLY_FILES_APIS = ("Files.readString(", "Files.writeString(")
 
 
