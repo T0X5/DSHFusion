@@ -26,6 +26,24 @@
 用法：`python3 tools/check-import-fidelity.py [--list-diffs]`
 退出码：0 一致或上游未导入；1 有未登记的差异；2 配置错误。
 
+### `check-dsha-imports.py` — DSHA 导入副本核验
+
+核验从 DSHA **原样导入**的文件（阶段 2.1 起在 `backup/` 模块里）：
+文件必须**正好**以
+`governance/dsha-imports.json` 里那 3 行来源头开头，去掉头之后的**正文**
+sha256 必须与登记的 `upstream_sha256` 一致。两个断言互相独立，改哪边都会红。
+
+> 与上面那个保真度检查器有个**刻意的区别**：它的期望值**内嵌在仓库里**，
+> 因此**在 CI 里是真跑**。`check-import-fidelity.py` 需要仓库外的审计副本，
+> 在 CI 里只会走「跳过」分支 —— 这正是 [../docs/INCIDENTS.md](../docs/INCIDENTS.md)
+> 第 13 条记录的问题（一条红了很久没人看见的断言）。新增导入路径时刻意不再沿用那个模式。
+
+反向也查：导入目录里出现未登记的 `.java`、或登记的文件不在磁盘上，都报错。
+
+用法：`python3 tools/check-dsha-imports.py`
+      `python3 tools/check-dsha-imports.py --update`（仅复核过上游改动后使用；会警告正文已不再一致）
+退出码：0 一致；1 有差异。
+
 ### `check-exec-bits.py` — 脚本可执行位
 
 读 git 索引里的模式，对照 `governance/inherited-lint-baseline.json` 双向检查：

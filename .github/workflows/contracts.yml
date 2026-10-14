@@ -116,6 +116,15 @@ jobs:
           # 本工作区（有 ../audit/DSHBox）里会真正比对。
           python3 tools/check-import-fidelity.py
 
+      - name: DSHA import fidelity (source header + body)
+        run: |
+          set -euo pipefail
+          # 与上一步刻意不同：这里的期望值**内嵌在 governance/dsha-imports.json**，
+          # 不需要仓库外副本，因此在 CI 里是真跑 —— 上一步在 CI 里只会跳过。
+          # 它同时验证来源头（署名义务）与正文（「原样」必须可验证），
+          # 并反向检查导入目录里没有未登记的文件。
+          python3 tools/check-dsha-imports.py
+
       - name: Verify upstream mirrors are NOT tracked
         run: |
           set -euo pipefail

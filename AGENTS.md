@@ -15,17 +15,34 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 ## 这个仓库当前处于什么阶段
 
-**阶段 1：DSHBox 基线已导入分支 `phase-1/import-dshbox-base`（PR 待审，main 未动）。**
+**阶段 1 完成（分支 `phase-1/import-dshbox-base`，PR #1 待审，main 未动）；
+阶段 2 已开始（分支 `phase-2/backup-v5`，2.1 见下）。**
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
 （`README.md`、`.gitignore`）→ **实际导入 765 个文件、25.4 MB**。
-18 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
+19 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
 
 **「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
 46 处差异全部能对上已登记的偏离（其中 45 处是代码偏离，1 处是继承 lint 基线）。
-**2026-10-14 更新：现在是 47 处** —— 给 `SandboxProcessRunnerTest.kt`（上游文件）
-补了参数顺序的回归单测，该文件因此也进入 DIV-0014 的 `target_files`。
+**2026-10-14 更新：现在是 49 处** —— 先给 `SandboxProcessRunnerTest.kt`（上游文件）
+补了参数顺序的回归单测（进入 DIV-0014），再为阶段 2.1 碰了 `settings.gradle.kts`
+与 `gradle/libs.versions.toml`（进入 DIV-0019）。
+
+**阶段 2.1 已实现（2026-10-14，分支 `phase-2/backup-v5`）**：新增 `:backup` 模块，
+把 DSHA 的 **v5 备份归档格式与预检**整体搬了过来（DIV-0019）。这是**本项目第一次
+从 DSHA 引入代码**，因此引入了两种新的可核验性要求：
+
+- **导入副本的逐字节溯源**：`tools/check-dsha-imports.py` 核验「来源头在位 + 正文与
+  登记一致」。与骨干保真度检查器刻意不同 —— 它的期望值**内嵌在
+  `governance/dsha-imports.json`**，因此**在 CI 里是真跑**，而不是像骨干那个
+  依赖仓库外审计副本、在 CI 里走「跳过」分支（见 [docs/INCIDENTS.md](docs/INCIDENTS.md) 第 13 条）。
+- **`dsha-imports.json` 与 `divergences.json` 分工**：前者管「我们从 DSHA 拿了什么」，
+  后者管「我们改了骨干什么」。把导入本身也塞进后者会模糊它的本意（供同步重放）。
+
+**阶段 2.1 刻意没做**：范围备份（2.2）、凭据排除（2.3）、隔离试运行与失败回切（2.4）、
+自动计划（2.5），以及写入侧的目录枚举（属于 2.2 的范围决策）。逐条理由见
+[backup/README.md](backup/README.md) 与 `dsha-imports.json` 的 `not_imported`。
 
 > 两个方向都要查，缺一不可：`check-import-fidelity.py` 抓「多出来的改动」，
 > `apply-divergences.sh --check` 抓「已登记却没生效的偏离」。实测过 ——
@@ -120,8 +137,9 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 13 | 一条红了很久没人看见的断言 | — | 该节需要仓库外的审计副本，CI 里走「跳过」分支 | — | 从真实数据推导期望集合；本机跑过才算数 |
 | 14 | 自有 DSH 第一次跑起来 | ✅ **起来了** | — | — | 进程 uid + 端口 owner + 浏览器 ESTABLISHED 三重独立证据 |
 | 15 | 通知栏动作只剩一个字 | 4 个按钮显示为 `打…/启…/重…/停…` | **个数与长度相乘**：4 个动作把动作栏分成四份 × 6 个语言都是长文案；且「打开/启动」本该互斥 | **DIV-0018** | 动作随状态收敛到 ≤3 个 + 文案改短；断言要钉**性质**，别钉「我以为的实现形态」（第一版断言把正确实现判失败） |
+| 16 | 故障注入**自己没生效** | — | 给导入副本的第 200 字节写空格，而那个偏移**本来就是空格** | **DIV-0019** | 注入必须先自证（断言文件哈希确实变了）；没生效的注入会给出**完全虚假的安全感**，与「发现问题却只记成备注」同族 |
 
-**贯穿全部 15 条的同一个病**，值得单独记住：
+**贯穿全部 16 条的同一个病**，值得单独记住：
 
 | 发作形态 | 通过了的检查 |
 |---|---|
@@ -198,6 +216,7 @@ dshfusion/
 │   ├── divergences.json         对上游的每一处偏离登记
 │   ├── import-exclusions.json   阶段 1 导入的取舍清单（排除/归档/需改写）
 │   ├── upstream-license-hashes.json  受保护许可原件的 SHA-256（改动即 CI 失败）
+│   ├── dsha-imports.json        从 DSHA 原样导入的文件清单（来源头 + 正文 sha256）
 │   ├── ATTRIBUTION.md           署名与许可义务
 │   └── upstream-licenses/       上游许可原文（原样保留，勿改）
 ├── docs/
@@ -232,7 +251,10 @@ dshfusion/
 │   ├── build-runtime-assets.sh  组装可内嵌 APK 的层（android-side + dsh，产出 sha256 侧车）
 │   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 148 项）
+│   ├── check-dsha-imports.py    DSHA 导入副本核验（来源头 + 正文 sha256，CI 真跑）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 155 项）
+├── backup/                      阶段 2.1：v5 备份归档格式与预检（见其 README）
+│   └── src/main/java/com/deepseekharness/app/**  DSHA 原样导入（MIT，勿改正文）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）

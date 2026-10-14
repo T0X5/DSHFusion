@@ -118,6 +118,14 @@ ALLOW = [
     re.compile(r"C:" r"/\.\.\."),                            # 注释里说明「盘符式写法」的举例，非本机路径
     re.compile("ESO" "CKETTIMEDOUT"),                        # 上游 pnpm 错误码，被「设备序列号」正则误匹配
 
+    # —— 单测夹具：断言「Windows 盘符路径必须被拒」的负面用例（阶段 2.1 从 DSHA 导入）——
+    # `BackupArchiveTest.pathsDuplicatesAndTypeConflictsAreRejected` 里那串路径
+    # 是**要验证被拒绝的输入**，其中的盘符样例不是本机真实路径。
+    # 刻意把同一行的其它拒绝样例也纳入匹配，只放行这一条夹具，
+    # 不放宽任何「任意盘符路径」形态。
+    # 字面量拼接是必须的：本文件自身也在扫描范围内，直写就会自匹配。
+    re.compile(r'"\.\./escape".*"C:' r'/bad"'),
+
     # —— Debian 包元数据里的维护者字段（公开信息，与开发者无关；单测夹具）——
     re.compile(r"sanvila@debian\.org"),
 ]

@@ -1450,6 +1450,92 @@ else
     fail "缺少 DshNotifyActions.kt 或其单测"
 fi
 
+section "5j. v5 备份归档的格式与预检（阶段 2.1 / DIV-0019）"
+
+# 阶段 2 的第一块：从 DSHA 原样导入 v5 容器，并加上本项目的预检门面。
+# 这一节查四件事，缺任何一件都会以不同方式静默失败：
+#   ① 模块接入（不 include = 单测一次都不跑）
+#   ② Gson 下限（<2.11 时 Strictness 消失 = 重复键不再被拒，编译期不报错）
+#   ③ 导入副本的来源头与正文（署名义务 + 「原样」必须可验证）
+#   ④ 预检断言钉的是**具体错误码**，不是「抛了异常就行」
+BK_BAD=0
+
+if grep -q 'include(":backup")' settings.gradle.kts 2>/dev/null; then
+    ok "settings.gradle.kts 已包含 :backup 模块"
+else
+    fail "settings.gradle.kts 没有 include(\":backup\") —— 该模块的单测不会被 CI 执行"
+    BK_BAD=1
+fi
+
+if [ -f backup/build.gradle.kts ] && grep -q "libs.gson" backup/build.gradle.kts; then
+    ok "backup/build.gradle.kts 存在且依赖 libs.gson"
+else
+    fail "backup/build.gradle.kts 缺失或没有依赖 libs.gson"
+    BK_BAD=1
+fi
+
+# Gson 下限：BackupJson 用 Strictness.STRICT 拒绝重复键。低于 2.11 没有这个 API，
+# 退化是静默的（只在恶意输入下才看得出来），所以必须显式卡住。
+GSON_VER="$(sed -n 's/^gson *= *"\([^"]*\)".*/\1/p' gradle/libs.versions.toml)"
+if [ -z "$GSON_VER" ]; then
+    fail "版本目录里没有 gson 版本条目"
+    BK_BAD=1
+elif python3 - "$GSON_VER" <<'PYEOF'
+import sys
+parts = sys.argv[1].split(".")
+try:
+    major, minor = int(parts[0]), int(parts[1])
+except (IndexError, ValueError):
+    sys.exit(1)
+sys.exit(0 if (major, minor) >= (2, 11) else 1)
+PYEOF
+then
+    ok "Gson $GSON_VER 不低于 2.11（Strictness 可用）"
+else
+    fail "Gson $GSON_VER 低于 2.11 —— 重复键将不再被拒，且编译期不会报错"
+    BK_BAD=1
+fi
+
+# 导入副本的逐字节核验交给专门的检查器（它的期望值内嵌在仓库里，
+# 因此在 CI 中是真跑，而不是像骨干保真度检查那样走「跳过」分支）。
+if python3 tools/check-dsha-imports.py >/dev/null 2>&1; then
+    ok "DSHA 导入副本来源头与正文逐字节一致（$(python3 -c 'import json;print(len(json.load(open("governance/dsha-imports.json"))["files"]))') 个文件）"
+else
+    fail "DSHA 导入副本核验失败，详见 python3 tools/check-dsha-imports.py"
+    BK_BAD=1
+fi
+
+# 预检的负面用例必须钉**具体错误码**。阶段 2 的验收是「故意投喂损坏备份 →
+# 明确报错」——「明确」就是这个：用户拿到的得是能据以处理的分类。
+V5_TEST="backup/src/test/java/com/dshbox/app/backup/V5ArchiveTest.kt"
+V5_KT="backup/src/main/java/com/dshbox/app/backup/V5Archive.kt"
+if [ -f "$V5_TEST" ] && [ -f "$V5_KT" ]; then
+    missing_code=""
+    for code in PAYLOAD_CHECKSUM ARCHIVE_FOOTER ARCHIVE_VERSION FALSE_COMPLETE \
+                ROOT_SCOPE_MISMATCH MANIFEST_PAYLOAD_MISMATCH; do
+        grep -q "assertEquals(\"$code\"" "$V5_TEST" || missing_code="$missing_code $code"
+    done
+    if [ -n "$missing_code" ]; then
+        fail "V5ArchiveTest 没有钉住具体错误码：$missing_code"
+        BK_BAD=1
+    else
+        ok "预检负面用例钉住了 6 个具体错误码（不是「抛了异常就行」）"
+    fi
+    # forge 的正向对照：没有它，那些负面用例会因为「夹具坏了」而红，
+    # 结论就不可信（手写组装的容器本身必须能被读取侧接受）。
+    if grep -q "fun forgeProducesAContainerTheReaderAccepts" "$V5_TEST"; then
+        ok "手写组装的恶意容器有正向对照，负面用例的结论可信"
+    else
+        fail "V5ArchiveTest 缺少 forge 的正向对照"
+        BK_BAD=1
+    fi
+else
+    fail "缺少 V5Archive.kt 或 V5ArchiveTest.kt"
+    BK_BAD=1
+fi
+
+[ "$BK_BAD" = "0" ] && ok "v5 归档模块接入与预检断言齐备"
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do

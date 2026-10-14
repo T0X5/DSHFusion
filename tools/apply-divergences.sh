@@ -1568,6 +1568,72 @@ def handle_div_0018(entry) -> tuple[str, str]:
 
 
 
+def handle_div_0019(entry) -> tuple[str, str]:
+    """新增 :backup 模块与 Gson 依赖（DIV-0019）。
+
+    三处缺一不可，因为缺任何一处都会以不同方式「静默地」失败：
+      - 只加目录不 include -> 模块根本不在构建图里，单测一次都不跑；
+      - include 了但没有 Gson -> 导入的 BackupJson 编译不过；
+      - 有模块有依赖但没进版本目录 -> 依赖解析失败。
+
+    另外**卡 Gson 的下限**：BackupJson 用的是 strictness 严格模式，
+    低于 2.11 的 Gson 没有 Strictness，重复键不再被拒 —— 那是静默的安全退化，
+    编译期不会报错，只在恶意输入下才看得出来。
+    """
+    problems: list[str] = []
+
+    settings = ROOT / "settings.gradle.kts"
+    if not settings.exists():
+        return PENDING, "settings.gradle.kts 尚未导入"
+    if 'include(":backup")' not in read(settings):
+        problems.append('settings.gradle.kts 缺少 include(":backup")')
+
+    catalog = ROOT / "gradle" / "libs.versions.toml"
+    if not catalog.exists():
+        return PENDING, "gradle/libs.versions.toml 尚未导入"
+    text = read(catalog)
+    version_match = re.search(r'^gson\s*=\s*"([^"]+)"', text, re.M)
+    if not version_match:
+        problems.append("版本目录没有 gson 版本条目")
+    else:
+        version = version_match.group(1)
+        numbers = version.split(".")
+        try:
+            major, minor = int(numbers[0]), int(numbers[1])
+        except (IndexError, ValueError):
+            problems.append(f"gson 版本号无法解析：「{version}」")
+        else:
+            if (major, minor) < (2, 11):
+                problems.append(
+                    f"gson {version} 低于 2.11，Strictness 不可用 —— 重复键将不再被拒")
+    if not re.search(r'^gson\s*=\s*\{\s*group\s*=\s*"com\.google\.code\.gson"', text, re.M):
+        problems.append("版本目录没有 com.google.code.gson 库条目")
+
+    module = ROOT / "backup" / "build.gradle.kts"
+    if not module.exists():
+        problems.append("backup/build.gradle.kts 不存在")
+    elif "libs.gson" not in read(module):
+        problems.append("backup/build.gradle.kts 没有依赖 libs.gson")
+
+    # 导入副本与预检门面都要在位，否则模块是个空壳、构建能过但什么都没测。
+    imported = ROOT / "backup" / "src" / "main" / "java" / "com" / "deepseekharness" / "app" / "backup" / "BackupArchive.java"
+    if not imported.exists():
+        problems.append("backup 模块里没有导入的 BackupArchive.java")
+    facade = ROOT / "backup" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "backup" / "V5Archive.kt"
+    if not facade.exists():
+        problems.append("backup 模块里没有预检门面 V5Archive.kt")
+    registry = ROOT / "governance" / "dsha-imports.json"
+    if not registry.exists():
+        problems.append("governance/dsha-imports.json 不存在（导入副本无法核验）")
+
+    if not problems:
+        return OK, "v5 归档模块已接入（:backup + Gson ≥2.11 + 导入副本清单）"
+
+    detail = "；".join(problems[:4])
+    return FAILED, f"v5 归档模块接入不完整：{detail}"
+
+
+
 HANDLERS = {
     "DIV-0001": handle_div_0001,
     "DIV-0002": handle_div_0002,
@@ -1587,6 +1653,7 @@ HANDLERS = {
     "DIV-0016": handle_div_0016,
     "DIV-0017": handle_div_0017,
     "DIV-0018": handle_div_0018,
+    "DIV-0019": handle_div_0019,
 }
 
 

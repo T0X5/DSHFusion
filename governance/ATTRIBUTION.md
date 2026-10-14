@@ -40,6 +40,12 @@ Copyright (c) 2026 qiannianhuanxiang
 **义务**：MIT 要求在任何副本或实质部分中保留版权声明与许可原文。
 MIT 代码并入本 GPL-3.0 骨干在法律上是允许的方向（宽松 → 严格）。
 
+**已实际进入本仓库的 DSHA 代码**：阶段 2.1（2026-10-14）从 `467c7eb0`
+原样复制了 7 个文件到 `:backup` 模块（v5 备份归档的格式与预检，合计 33 KB）。
+逐文件的 DSHA 路径、锁定提交、blob 与正文 sha256 见
+[dsha-imports.json](dsha-imports.json)，由 `tools/check-dsha-imports.py` 核验。
+**在此之前，DSHA 在本仓库里只是"特性来源"，没有一行代码进来。**
+
 ## 二、传递上游（经 DSHBox 或 DSHA 进入）
 
 | 组件 | 版本 | 许可 | 进入路径 | 备注 |
@@ -59,6 +65,7 @@ MIT 代码并入本 GPL-3.0 骨干在法律上是允许的方向（宽松 → �
 | Sora Editor | 0.23.5 | **LGPL-2.1-or-later** | Gradle 依赖（未修改 aar） | 见下 |
 | Markwon + commonmark-java | 4.6.2 / 0.13.0 | Apache-2.0 / BSD-2-Clause | Gradle 依赖 | |
 | AndroidX / Compose / Kotlin / Coroutines | — | Apache-2.0 | Gradle 依赖 | |
+| Gson | 2.13.1 | **Apache-2.0** | Gradle 依赖（`:backup`） | 阶段 2.1（DIV-0019）；下限 2.11，因为用到了 `Strictness` |
 | dshmarket | — | MIT | **仅设计参照，重写** | 未分发其代码与资源 |
 | awesome-dsh-plugin / awesome-dsh-mobile-plugins | — | CC0-1.0 | **运行时读取，不分发数据** | |
 
@@ -78,17 +85,34 @@ DSHBox 的 `THIRD_PARTY_NOTICES.md` 已给出源码获取地址；**公开分发
 
 ## 三、本仓库自身的署名要求
 
-任何从 DSHA 移植到 DSHFusion 的文件，**必须在文件头标注来源**：
+任何从 DSHA 进入 DSHFusion 的文件，**必须在文件头标注来源**。两种情况的模板不同：
+
+**原样复制**（阶段 2.1 的 `:backup` 用的就是这一种）——正文一个字节都不改，
+来源头是唯一新增的内容：
 
 ```java
 // 来源：DSHA (https://github.com/DSH-APP/DSHA) — MIT
 // Copyright (c) 2026 qiannianhuanxiang
-// 移植到 DSHFusion，适配 DSHBox 骨干。修改点见 governance/divergences.json。
+// 原样复制进 DSHFusion（阶段 2.1），正文未做任何修改。见 governance/dsha-imports.json。
 ```
 
-任何修改过的上游文件，**必须**在 `divergences.json` 中登记，并在该条目里
-说明修改内容。这既是 GPL-3.0 §5(a) 的"显著修改标注"要求，
-也是同步时不丢改动的前提。
+**修改后移植** ——除来源头外，还必须登记进 `divergences.json` 并说明修改内容：
+
+```java
+// 来源：DSHA (https://github.com/DSH-APP/DSHA) — MIT
+// Copyright (c) 2026 qiannianhuanxiang
+// 移植到 DSHFusion，适配 DSHBox 骨干。修改点见 governance/divergences.json 的 DIV-XXXX。
+```
+
+**两种都由机器核验，不靠人记得**：
+
+- 原样复制的文件进 [`dsha-imports.json`](dsha-imports.json)：`tools/check-dsha-imports.py`
+  先断言文件**正好**以那 3 行头开头，再把去掉头之后的正文按 sha256 与登记比对。
+  所以「署名在位」与「正文未改」是两个独立断言。
+- 修改过的上游文件由 `tools/check-upstreams.py` 与 `tools/check-import-fidelity.py` 覆盖。
+
+这既是 MIT 的版权声明保留义务，也是 GPL-3.0 §5(a) 的"显著修改标注"要求（就本项目而言），
+更是同步时不丢改动的前提。
 
 ## 四、检查方式
 
@@ -97,5 +121,9 @@ DSHBox 的 `THIRD_PARTY_NOTICES.md` 已给出源码获取地址；**公开分发
 - `governance/upstreams.json` 中声明的每个 `license_file` 是否存在；
 - `upstream-licenses/` 下的许可原文是否与锁定提交处的上游原文一致（按 SHA-256）；
 - 每个 `divergences.json` 条目引用的文件是否真实存在。
+
+`tools/check-dsha-imports.py` 单独验证从 DSHA 原样导入的副本（来源头 + 正文双向），
+**期望值内嵌在仓库里，因此在 CI 中是真跑**——与骨干那个需要仓库外审计副本、
+在 CI 里会走「跳过」分支的保真度检查器不同。
 
 许可原文被意外修改会导致检查失败 —— 这是有意设计的。

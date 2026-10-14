@@ -1,0 +1,109 @@
+{
+  "schema": 2,
+  "note": "从 DSHA 原样导入的文件清单。这些文件不是 DSHBox 骨干的一部分，所以既不进 divergences.json（那是对骨干的偏离），也不受 DSHBox 保真度检查器管辖。它们由 tools/check-dsha-imports.py 独立核验。",
+  "verification_model": "每个文件 = 固定的 3 行来源头 + DSHA 原文。检查器先断言文件**正好**以 provenance_header 开头，再把剩余部分按 upstream_sha256 比对。所以「正文未改」与「头必须是这一段」是两个独立断言，改任何一边都会红。期望值内嵌在本文件里，因此不依赖任何仓库外的审计副本 —— 这一点是刻意的，见 docs/INCIDENTS.md 第 13 条：需要仓库外副本的检查在 CI 里会走「跳过」分支，等于没检查。",
+  "provenance_header": [
+    "// 来源：DSHA (https://github.com/DSH-APP/DSHA) — MIT",
+    "// Copyright (c) 2026 qiannianhuanxiang",
+    "// 原样复制进 DSHFusion（阶段 2.1），正文未做任何修改。见 governance/dsha-imports.json。"
+  ],
+  "upstream": {
+    "id": "dsha",
+    "full_name": "DSH-APP/DSHA",
+    "url": "https://github.com/DSH-APP/DSHA.git",
+    "locked_commit": "467c7eb09da871a64a1aaa44e82428c30455ecc3",
+    "locked_commit_date": "2026-10-13T15:34:13Z",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 qiannianhuanxiang",
+    "license_file": "governance/upstream-licenses/DSHA/LICENSE"
+  },
+  "phase": "阶段 2.1 —— 备份归档 v5 格式与预检",
+  "why_verbatim": "这 5 个类合计 658 行、零 Android 依赖，是一套自洽且带完整负面用例的容器实现；按硬约束 2「能直接保留的成熟实现就保留，不要重写」，保持逐字节一致而不是重写为 Kotlin。包名保留 DSHA 原名（com.deepseekharness.app.*）是**有意的**：它让「这段代码不是我们写的」在源码层面自带标识，也让将来比对 DSHA 上游改动时可以直接逐 blob 比。",
+  "divergences": {
+    "note": "导入本身不是对骨干的偏离，未登记进 divergences.json。唯一与骨架相关的偏离是新增 :backup 模块与 Gson 依赖，登记为 DIV-0019。",
+    "registered_as": ["DIV-0019"]
+  },
+  "files": [
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupArchive.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupArchive.java",
+      "upstream_bytes": 14864,
+      "upstream_sha256": "e58ed4cce5fcbb982bd685d1d52fdfb25c10c351dc54024d616b9493ee48e4b2",
+      "blob": "dcdcb0dff3551656f481ef5f89f3da87c4f476f5",
+      "role": "v5 容器读写与完整性/manifest 一致性校验"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupLimits.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupLimits.java",
+      "upstream_bytes": 2473,
+      "upstream_sha256": "20ea4d678002c82fd6d1b815383a0d242fd66abcfd25688bda3aeb4d9cb2c1d9",
+      "blob": "f8efe962a34bb218964c2dd5bd5ce7bd812aea61",
+      "role": "各项上限、逻辑根名与路径校验、Unicode 归一化碰撞键"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupJson.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupJson.java",
+      "upstream_bytes": 6060,
+      "upstream_sha256": "24839a2633247967fd37644e239f9430587eb0803df198ea8d48c949bbfb229a",
+      "blob": "1814ecd4e247927ae9d7f3f801626b00a0a6beb8",
+      "role": "有界 JSON 读写（拒绝重复键、深层嵌套、超长数字、超 RECORD 字符串）；依赖 Gson 的 Strictness"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupControl.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupControl.java",
+      "upstream_bytes": 1902,
+      "upstream_sha256": "4ead9fa1e423963c9d4bba7165f9035453cb979369de6743a39fd6a3dc105cf7",
+      "blob": "d78420edfc01b38b53925eaa360854206755811d",
+      "role": "进度回调与取消检查抽象（核心不持有界面）"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/util/BackupScopes.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/util/BackupScopes.java",
+      "upstream_bytes": 685,
+      "upstream_sha256": "dcd531a939489a5c90abd5e764a455b9dc441a5decf5c697be4af8811373dcf6",
+      "blob": "c210d9c9d035691f71fe1a0c4812714366d47e8b",
+      "role": "五个范围常量；BackupArchive 以全限定名引用它，故必须同路径搬"
+    },
+    {
+      "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/BackupArchiveTest.java",
+      "local_path": "backup/src/test/java/com/deepseekharness/app/backup/BackupArchiveTest.java",
+      "upstream_bytes": 5972,
+      "upstream_sha256": "e076284e4616b56ddea985152bb168cc407adb5fa4cf672db4657ade0c7fb140",
+      "blob": "143bb21226d3904ae0b57dd93b0cc31da99cc0be",
+      "role": "8 个用例、其中 6 个负面：截断到每一个长度、篡改、尾部多余字节、路径穿越与重复、假完整、深层 JSON、范围夹带"
+    },
+    {
+      "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/BackupJsonTest.java",
+      "local_path": "backup/src/test/java/com/deepseekharness/app/backup/BackupJsonTest.java",
+      "upstream_bytes": 1391,
+      "upstream_sha256": "840c1b8c6c35d5cb57ced1d05e71d40adf65f7483b1f368ff6bfca402eaf2ba7",
+      "blob": "ba60c26f72518c73222e8525f8fa5f96dab83856",
+      "role": "按 UTF-8 实际字节计界、往返、无限集合必须有界报错"
+    }
+  ],
+  "not_imported": {
+    "note": "同样属于 v5 预检、但本阶段刻意不搬的类，及其理由。留在阶段 2.4 处理。",
+    "items": [
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeRestorePlan.java",
+        "reason": "零 Android 依赖，但其价值全部经由 NativeRestorePlan.Mapping 接口表达；没有 DSHFusion 自己的 Mapping 实现时搬过来就是死代码。Mapping 正是阶段 2.4（隔离试运行 + 失败回切）要实现的切口。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeRestoreTargets.java",
+        "reason": "深度绑定 DSHA 的 rootfs 分包模型（Context/Environment/user-data-v5/plugin-imports/BuiltinPlugins），必须为 DSHBox 的分层模型重写，不可搬。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/DataRootPolicy.java",
+        "reason": "依赖 ManagedRuntimeLayout 与 CredentialPaths，同属 DSHA 的受管运行时模型。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupPreview.java",
+        "reason": "审计确认它**不参与**恢复预检，只用于导出前展示范围大小；阶段 2.2 做范围备份时再评估。"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupErrorCode.java",
+        "reason": "它不是枚举，而是异常→错误码的归类器，且含两处 Android 类名判断。真正有用的东西是它透传的那套错误码表，而那张表已经通过容器的 IOException message 自然存在，本阶段不需要额外包装。"
+      }
+    ]
+  }
+}
