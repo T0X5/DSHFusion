@@ -53,7 +53,7 @@ DSHBox 的运行环境由四层组成。**关键事实：四层全部可获取**
 **对阶段 1 的意义**：要让 `assembleDebug` / `assembleRelease` 产出可用 APK，
 DSHFusion 只需准备这两层 —— 一层来自 npm，一层已在仓库内。**这比预想的门槛低得多。**
 
-### 1.3 压缩格式：两种都支持，不是缺陷
+### 1.3 压缩格式：脚本说「两种都行」，但产物说「只有 zstd 能用」
 
 `DSHBox:tools/pack_runtime.sh:46-56` 的实际行为：
 
@@ -65,13 +65,48 @@ OUT_FILE="$OUT_DIR/${LAYER_NAME}.${EXT}"     # 文件名跟随实际格式
 ```
 
 输出扩展名**跟随实际压缩格式**，消费侧 `build_apk.sh` 用 `ls "$src/${layer}.tar."*` 通配匹配。
-所以 README 里的 `.tar.zst` 与脚本默认的 `.tar.gz` 是**两种受支持的形态**，不是矛盾。
+
+> ### ⚠️ 更正（2026-10-14）：上面这段结论下早了，而且方向是错的
+>
+> 我原先在这里写的是「README 里的 `.tar.zst` 与脚本默认的 `.tar.gz` 是
+> **两种受支持的形态**，不是矛盾」。**这个结论是错的。**
+>
+> 反例来自真机：官方 DSHBox 包里是
+> `assets/runtime/android-side.tar.zst`（113245 B）、
+> `assets/dsh/0.2.0-rc.2.tar.zst`（85893395 B）、
+> `lib/arm64-v8a/libzstd-jni-1.5.7-15.so`。
+> **发布产物一律是 zstd，没有一份是 gzip。**
+>
+> 而我自己按脚本默认值建出来的 gzip 层，进 APK 后变成了
+> `assets/runtime/android-side.tar`（337920 B，裸 tar）——
+> **AGP 会解压 `.gz` 资源并去掉 `.gz` 扩展名。**
+> 应用侧的查找条件是 `names.firstOrNull { it.startsWith("android-side.tar.") }`
+> （`OnlineRuntimeImportManager.kt:769`，注意那个点），
+> `"android-side.tar"` 匹配不上 —— **层进了 APK，应用永远看不见。**
+>
+> 所以正确的读法不是「两种形态都受支持」，而是：
+>
+> | 格式 | 上游脚本默认 | 发布产物 | 能过 AGP 吗 |
+> |---|---|---|---|
+> | `.tar.gz` | ✅ 默认 | ❌ 从未出现 | ❌ **会被剥成 `.tar`** |
+> | `.tar.zst` | 需 `PACK_COMPRESSION=zstd` | ✅ 一直是这个 | ✅ |
+>
+> 「扩展名跟随实际格式」「消费侧用通配匹配」这两句本身没错，
+> 但它们描述的是**上游仓库内**的打包与消费（`build_apk.sh` 读的是构建目录，
+> 不经过 AGP 资源打包）。**一旦产物要进 APK，AGP 就是中间那道过不去的关。**
+>
+> 这条教训值得记下来：我当时是从**脚本默认值**推断「两种都行」的，
+> 而正确答案在**发布产物**里。**当脚本默认值与产物不一致时，以产物为准。**
+>
+> 处置：`tools/build-runtime-assets.sh` 与 `tools/build-dsh-layer.sh`
+> 现在**要求 zstd，缺了退 2**，不静默降级（提交 `bc4bdb0`）。
 
 > **一处文档漂移**：`pack_runtime.sh:41-45` 的注释说降级到 gzip 是因为
 > 「zstd-jni 在当前离线构建里无法解析」。但 zstd-jni **已经入库**
 > （`libs/zstd-jni-1.5.7-15.aar`、`libs/zstd-jni-1.5.7-15-classes.jar`，
 > 并由 `app/build.gradle.kts:129` 引用，arm64 `.so` 在 jniLibs）。
-> 该注释已过期。不影响功能，但会误导下一个人。
+> 该注释已过期。不影响功能，但会误导下一个人 ——
+> **它当时就把我误导了**：我据此认为 gzip 是上游认可的默认选择。
 
 ### 1.4 仓库内已入库的资产（阶段 1 会一并导入）
 
@@ -127,12 +162,12 @@ OUT_FILE="$OUT_DIR/${LAYER_NAME}.${EXT}"     # 文件名跟随实际格式
    > 所以这条偏离修的是一个**潜在的坑**，不是正在发作的 bug。
 
    脚本会：核对装出来的版本与 pin 一致（不一致直接失败，否则「已适配 X」变成假话）；
-   跑 `node lib/bin.js --version` 冒烟测试；有 `zstd` 用 zstd、否则退回 gzip
-   并明确告知（不静默改后缀，否则文件名与格式不符会让解包方失败）；
+   跑 `node lib/bin.js --version` 冒烟测试；**要求 `zstd`，缺了退 2**（见 1.3 的更正 ——
+   原先写的是「否则退回 gzip 并明确告知」，那个做法已废弃）；
    产出 `<version>.tar.zst` 与同目录 `<version>.tar.zst.sha256`。
 
    **实测证据**（2026-10-13，本机 aarch64）：
-   `added 538 packages in 2m`、层 **118.6 MB**（gzip）、
+   `added 538 packages in 2m`、层 **118.6 MB**（gzip 时代的数据，保留作参考）、
    sha256 `747c0b619b2b52bb5b73f98357efb51452da3116cb1f36588274cbd3cae67b9`、
    冒烟测试输出 `0.2.0-rc.2`。
 

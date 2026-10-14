@@ -317,14 +317,15 @@ tools/build-dsh-layer.sh [输出目录]      # 默认 ./runtime/android-assets
   原来那个默认值仍在上游文件里，直到 DIV-0010 才处理。
 - 装完后**核对版本**，不一致直接失败 —— 版本对不上的层会让「已适配 X」变成假话。
 - 有 `node lib/bin.js --version` 冒烟测试（`DSH_SKIP_SMOKE=1` 可跳过）。
-- 有 `zstd` 就用 zstd；没有则退回 gzip 并**明确告知**，不静默改后缀 ——
-  文件名后缀与实际格式不符会让解包方失败。
+- **必须有 `zstd`，没有就退出 2。** 不退回 gzip，见下面 `build-runtime-assets.sh`
+  一节里「为什么必须是 zstd」—— 一句话：**AGP 会解压 `.gz` 资源并去掉扩展名**，
+  于是 `.tar.gz` 层进 APK 后变成应用侧找不到的 `.tar`，等于白建。
 - 不需要 Debian 沙箱或 arm64 主机：`@deepseek-ai/dsh` 是纯 JS 的 npm 包，
   无原生扩展、无 `os`/`cpu` 约束。
 
-实测：538 个包、层 118.6 MB（gzip）、sha256 `747c0b619b2b…`。
+实测：538 个包、层 118.6 MB（gzip 时代的数据，保留作参考）、sha256 `747c0b619b2b…`。
 
-退出码：0 成功；1 构建/核对/冒烟失败；2 用法或环境错误（缺 node、版本读不到）。
+退出码：0 成功；1 构建/核对/冒烟失败；2 用法或环境错误（缺 node、缺 zstd、版本读不到）。
 
 ### `build-runtime-assets.sh`
 
@@ -339,8 +340,8 @@ tools/build-runtime-assets.sh [输出目录]   # 默认 <repo>/runtime/android-a
 指到这个目录就能直接打包：
 
 ```
-<输出目录>/runtime/android-side.tar.gz     → APK 内 assets/runtime/android-side.tar.gz
-<输出目录>/dsh/<版本>.tar.gz               → APK 内 assets/dsh/<版本>.tar.gz
+<输出目录>/runtime/android-side.tar.zst    → APK 内 assets/runtime/android-side.tar.zst
+<输出目录>/dsh/<版本>.tar.zst              → APK 内 assets/dsh/<版本>.tar.zst
 ```
 
 - `android-side` 从 `app/src/main/jniLibs/arm64-v8a` 组装（4 个文件）：
@@ -354,19 +355,54 @@ tools/build-runtime-assets.sh [输出目录]   # 默认 <repo>/runtime/android-a
 - 带**布局自检**：解出条目列表与预期 4 项逐项比对，多一个少一个都失败。
   （这个自检自己出过一次假阴性：`tar -tzf | sed 's#^\./##'` 会把开头的
   `./` 条目留成**空行**，而空行不匹配 `grep -v '/$'`。已补 `sed '/^$/d'`。）
+- 带**魔数自检**：产物头 4 字节必须是 `28 b5 2f fd`。
 - `dsh` 层委托 `build-dsh-layer.sh`，不重复实现。
 - `SKIP_DSH=1` 只建 android-side（本地快速验证用）。
 - 环境变量：`DSHFUSION_RUNTIME_ASSETS`（默认输出目录）、`ANDROID_SIDE_SRC`、
   `DSH_VERSION`。
 
-实测（本机全量）：`android-side.tar.gz` 125930 B、`dsh/0.2.0-rc.2.tar.gz` 124380096 B，
-两份 sha256 侧车均一致；两层都是 gzip（本环境无 `zstd`）。
+实测（gzip 时代，**这批数据对应的产物是坏的**，保留作记录）：
+`android-side.tar.gz` 125930 B、`dsh/0.2.0-rc.2.tar.gz` 124380096 B。
 
-**为什么 gzip 不是降级**：`BundleManager.extractTarGz` 按**魔数**分派格式
+#### 为什么必须是 zstd —— 以及一条「想当然」是怎么害人的
+
+我一度在这里写下过：「`BundleManager.extractTarGz` 按**魔数**分派格式
 （zstd / bzip2 / xz / 纯 tar，gzip 是 else 兜底分支），从不看扩展名。
-所以 `.tar.gz` 是一等受支持格式，不是「退而求其次」。
+所以 `.tar.gz` 是一等受支持格式，不是『退而求其次』。」
 
-退出码：0 成功；1 构建或自检失败；2 用法或环境错误。
+**这段话本身没有错，但它答错了问题。** 应用侧确实按魔数嗅探 ——
+可层不是直接交给应用侧的，它得先过 **AGP 的资源打包**，而
+**AGP 会解压 `.gz` 资源并去掉 `.gz` 扩展名**：
+
+```
+runtime/android-side.tar.gz  (125930 B, gzip)
+        ↓ 过一遍 AGP
+assets/runtime/android-side.tar  (337920 B, 裸 tar)
+```
+
+而应用侧的查找条件（`OnlineRuntimeImportManager.kt:769`）是
+
+```kotlin
+names.firstOrNull { it.startsWith("android-side.tar.") }
+```
+
+`"android-side.tar"` **不以 `"android-side.tar."` 开头**（少那个点）。
+层进了 APK，应用永远看不见 —— **等于没建。**
+
+所以结论不是「gzip 压缩率差一点」，而是 **`.tar.gz` 根本不是能过 AGP 的容器**。
+脚本因此**失败关闭**：没有 zstd 就退 2 并解释原因，绝不静默降级。
+一个必然被剥坏的产物，比一个明确的报错危险得多。
+
+上游发布包用的就是 `.tar.zst`。这一点**以产物为准、不以脚本默认值为准**：
+真机上装的官方 DSHBox 里是 `assets/runtime/android-side.tar.zst`（113245 B）、
+`assets/dsh/0.2.0-rc.2.tar.zst`（85893395 B）和 `libzstd-jni-1.5.7-15.so`；
+而上游 `tools/pack_runtime.sh` 的默认值却是 gzip，注释还说 zstd-jni 解析不到 ——
+**那段注释是过时的**，DSHFusion 自己也把 `libs/zstd-jni-1.5.7-15-classes.jar`
+接进了 `app` 与 `sandbox-manager`。
+
+顺带一提，zstd 还更小：113245 B vs gzip 的 125930 B。
+
+退出码：0 成功；1 构建或自检失败；2 用法或环境错误（**缺 zstd 走这条**）。
 
 ### `make-brand-assets.py`
 

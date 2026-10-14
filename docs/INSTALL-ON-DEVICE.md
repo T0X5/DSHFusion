@@ -21,12 +21,12 @@
 > 而 `dsh` 那行的「❌ 不在」当时是事实，但成因被记轻了：不是「需要在线补」，
 > 而是**当时没有任何一条路能补上**。
 
-各层在 APK 里的真实情况（`e676e38` 之后）：
+各层在 APK 里的真实情况（`bc4bdb0` 之后，格式已改成 zstd）：
 
 | 层 | 在 APK 里吗 | 路径 |
 |---|---|---|
-| `android-side`（PRoot + loader + shmem + talloc，4 个文件） | ✅ 在 | `assets/runtime/android-side.tar.gz`（126 KB） |
-| `dsh`（DSH 本体，纯 JS） | ✅ 在 | `assets/dsh/<版本>.tar.gz`（约 119 MB） |
+| `android-side`（PRoot + loader + shmem + talloc，4 个文件） | ✅ 在 | `assets/runtime/android-side.tar.zst`（约 113 KB） |
+| `dsh`（DSH 本体，纯 JS） | ✅ 在 | `assets/dsh/<版本>.tar.zst`（约 86 MB） |
 | `base`（Debian 根文件系统） | ❌ 不在 | 首次启动时在线获取 |
 | `node` | ❌ 不在 | 同上 |
 
@@ -35,10 +35,21 @@
 > 离线基线则静默什么都不做（`provisionBundledDshBaseline` 第 733 行直接 return）。
 > 也就是说，**修复前的 APK 装上去永远起不了 DSH**。
 > 详见 [AGENTS.md](../AGENTS.md) 的「APK 不含运行环境层」专节。
+
+> ⚠️ **而 `e676e38` 那一版依然是坏的，别用它。** 它把层建成了 `.tar.gz`，
+> 但 **AGP 会解压 `.gz` 资源并去掉 `.gz` 扩展名** —— 层进 APK 后变成
+> `assets/runtime/android-side.tar`（裸 tar），而应用侧要求名字以
+> `android-side.tar.` 开头（`OnlineRuntimeImportManager.kt:769`，带那个点），
+> **匹配不上，等于没建。** 更糟的是当时的检查器被 `.sha256` 侧车骗过去、
+> 报了个假的好消息。所以层必须是 `.tar.zst`（`bc4bdb0` 起）。
+> 详见 [AGENTS.md](../AGENTS.md) 的「修好了？没有」专节。
 >
-> 顺带说明为什么是 `.tar.gz` 而不是上游发布包用的 `.tar.zst`：本仓库的构建环境
-> 没有 `zstd`。这**不是降级** —— `BundleManager.extractTarGz` 按**魔数**分派格式
-> （zstd / bzip2 / xz / 纯 tar / gzip 兜底），`.tar.gz` 本来就是受支持的一等格式。
+> 这也解释了为什么不是 gzip：**`.tar.gz` 根本不是能过 AGP 的容器**，
+> 跟压缩率、跟 `BundleManager` 支持几种格式都无关 ——
+> 后者按魔数嗅探、确实支持 gzip，但层不是直接交给它的，
+> 得先过 AGP 的资源打包，而 AGP 会在那之前就把 `.gz` 拆掉。
+> 上游发布包用的正是 `.tar.zst`（真机上的官方 DSHBox 里就是
+> `assets/runtime/android-side.tar.zst` 113245 B + `libzstd-jni-1.5.7-15.so`）。
 
 APK 里还有 `assets/runtime-online/`（在线获取的引导骨架：apt 源、dpkg 元数据、
 `bootstrap.index`）和 `assets/terminal-packages/`（24 个终端用 `.deb`）。

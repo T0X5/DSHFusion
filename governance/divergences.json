@@ -202,6 +202,23 @@
       "reapply": "由 tools/apply-divergences.sh 的 handle_div_0012 校验：android.yml 必须含 `tools/build-runtime-assets.sh` 调用与 `DSHFUSION_RUNTIME_ASSETS` 环境变量，且该步骤必须出现在 `assembleDebug` **之前** —— 顺序反了等于没建层。",
       "conflict_risk": "medium —— 上游若调整 android.yml 的步骤结构，锚点会失效。但我们是**插入**而非改写上游已有步骤，合并时冲突面很小，通常能自动合入。",
       "note": "上游不提交 runtime/ 是刻意的判断（层是可再生构建产物，118 MB 不该进 git），我们沿用 —— DSHFusion 的 `.gitignore` 同样忽略 `/runtime/`。区别只在于：上游把建层留在树外的人工流程里，我们把它放进 CI，否则「克隆即可构建」不成立。"
-    }
+    },
+  {
+      "id": "DIV-0013",
+      "title": "docs/BUILD_RUNBOOK.md 加一条 zstd 警告横幅（上游该文件里的 gzip 建议会造出坏产物）",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+          "docs/BUILD_RUNBOOK.md"
+      ],
+      "change": "在文件最前面插入一段 6 行的引用块，说明：该文件第 1.2/1.4 节里「zstd 缺装会自动降级 gzip」这条建议**只适用于上游仓库内的打包与消费**，不能用于任何要进 APK 的层，因为 AGP 会解压 `.gz` 资源并去掉扩展名，使层变成应用侧找不到的 `.tar`。横幅本身不改动上游正文一个字。",
+      "rationale": "这是一份**要照着做**的 runbook，不是背景说明。它第 38 行写「`zstd` 缺装会自动降级 gzip」、第 50 行写「不存在则 pack 脚本自动 gzip」、第 117 行写「若某层用 gzip 制作，同样可解（gzip→commons-compress）」。\n\n这三句对**上游**都是真的 —— `BundleManager` 确实按魔数嗅探、确实能解 gzip。**问题在于它们答的不是同一个问题**：层不是直接交给 `BundleManager` 的，它要先过 AGP 的资源打包，而 AGP 会解压 `.gz` 并去掉扩展名。\n\n我本人就是被这份 runbook（配合 `pack_runtime.sh` 的默认值）说服、用 gzip 建层，结果 CI 全绿而产物里是 `assets/runtime/android-side.tar`，应用侧 `startsWith(\"android-side.tar.\")` 匹配不上 —— 等于没建。见 AGENTS.md 的「修好了？没有」专节。\n\n所以这条横幅的价值不在「更正一处笔误」，而在于**在读者照着做之前拦住他**。放在最前面是因为没人会读完整篇 runbook 才动手。",
+      "detection": "tools/verify-phase0.sh 5c-2 节断言两个构建脚本不含 gzip 打包路径（`-czf`）、层文件赋值只产出 `.tar.zst`、且收尾断言使用精确文件名；同时断言缺 zstd 时退出 2 并解释原因。\n`handle_div_0013` 自身核验横幅存在，且**上游正文一字未改**（第 38/50/117 行的原文必须仍在）—— 只加不改，是这条偏离能低冲突合入的前提。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0013 校验：`docs/BUILD_RUNBOOK.md` 开头必须是那 6 行横幅，且正文三处 gzip 原文仍在（说明我们只做了插入）。上游若改了这份文档，横幅可能被冲掉 —— 重放会重新插到最前面。",
+      "conflict_risk": "none —— 纯前置插入，不触碰上游任何一行。上游改这份文件时 git 会按上下文合并，冲突面仅限文件头。",
+      "note": "选择改这份上游文件而不是只在 DSHFusion 自有文档里写警告，是因为**这份文件本身就是要照着做的**：读者打开它就直接开干，不会先去读 AGENTS.md。偏离登记 + 重放脚本保证了它在下次上游同步时不会静默消失。"
+  }
+
   ]
 }

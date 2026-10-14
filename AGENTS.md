@@ -42,12 +42,14 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 > 按 DIV-0011 修复后第二次**成功**。
 > **但「装上」不等于「能用」** —— 启动、运行环境获取、DSH 起来都还没验证过。
 >
-> **已修复（2026-10-14，提交 `e676e38`）**：此前 CI 产出的 APK
+> **已修复（2026-10-14，提交 `e676e38`；格式更正于 `bc4bdb0`）**：此前 CI 产出的 APK
 > **不含任何运行环境层** —— 而且这不只是「还得在线装一次」那么轻。
 > 见下方「APK 不含运行环境层」专节：**两条获取途径都是死的**。
 > 现已补上 `tools/build-runtime-assets.sh` 并接进 CI，
-> 新产物内嵌 `assets/runtime/android-side.tar.gz` + `assets/dsh/<版本>.tar.gz`，
+> 新产物内嵌 `assets/runtime/android-side.tar.zst` + `assets/dsh/<版本>.tar.zst`，
 > 且 `check-apk-identity.py` 会把「缺层」直接判失败（不再是备注）。
+> ⚠️ 但 `e676e38` 那一版**依然是坏的**：层是 `.tar.gz`，被 AGP 剥成了应用找不到的
+> `.tar`，而断言 6 被 `.sha256` 侧车骗过去、报了个假的好消息。见下方「修好了？没有」。
 > 见 [docs/PHASE0-VERIFICATION.md](docs/PHASE0-VERIFICATION.md) 的诚实性声明。
 
 阶段 1 的未完成项（**不要误认为已完成**）：
@@ -61,7 +63,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | APK **产物**身份核验（DIV-0008） | ✅ **已通过**（run 38483533327 第 15 步）—— 对 CI 真实产物解二进制清单核验 |
 | 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
 | 生成的 APK 装到真机上验证 | ✅ **已通过**（2026-10-14，修复后第二次尝试）—— 见下方专节；**但启动与运行尚未验证** |
-| APK 内含运行环境层（能真正跑起 DSH） | ⚠️ **已修复但尚未在真机验证** —— `e676e38` 起 CI 会建层并内嵌；见下方专节 |
+| APK 内含运行环境层（能真正跑起 DSH） | ⚠️ **两次「修好了」都是假的，尚未在真机验证** —— `e676e38` 补上了建层步骤但格式是 `.tar.gz`（被 AGP 剥成应用找不到的 `.tar`），`bc4bdb0` 才改成 `.tar.zst`；见下方两节 |
 | `upstream-watch.yml` 真实运行 | ✅ **已跑通**（run 38483621472，手动触发）—— 检出 DSHA 有新提交并建了 Issue #2 |
 
 ### 首次真实 CI 运行（2026-10-13）暴露的问题
@@ -250,16 +252,77 @@ DSHFusion : com.dshfusion.app.shizuku
 - 夹具新增 `no-layers` 场景（身份全部正确、只缺层），套件 5d 独立断言它，
   确保它只因为「缺层」这一条失败，而不是碰巧被别的断言拦下。
 
-本机全量实测产物（非推断）：
+本机全量实测产物（**这次是错的，留着作为记录**）：
 
 ```
 runtime/android-side.tar.gz       125930 B   sha256 侧车一致
 dsh/0.2.0-rc.2.tar.gz          124380096 B   sha256 侧车一致
 ```
 
-两层都是 gzip（魔数 `1f8b08`）。这不是降级：`BundleManager.extractTarGz`
-按**魔数**分派而非扩展名，zstd / bzip2 / xz / 纯 tar 各有分支，
-**gzip 是 else 兜底分支**，本来就是受支持的一等格式。
+当时我在这里写的是：「两层都是 gzip。这不是降级：`BundleManager.extractTarGz`
+按**魔数**分派而非扩展名，zstd / bzip2 / xz / 纯 tar 各有分支，**gzip 是 else
+兜底分支**，本来就是受支持的一等格式。」
+
+**那句话只对了一半，而且是致命的那一半。** 应用侧确实按魔数嗅探 ——
+但层不是直接交给应用的，它要先过 **AGP 的资源打包**，而 AGP 会解压 `.gz`
+资源并去掉 `.gz` 扩展名。详见下面「修好了？没有」一节。
+
+### 修好了？没有 —— `e676e38` 之后 CI 全绿，产物依然是坏的
+
+CI run 38513950774 全绿，`Build runtime assets` 通过，`Verify APK application
+identity` 也通过。我把 179.5 MB 的产物下载下来独立核对，发现：
+
+| | 本地产出 | APK 内实际 |
+|---|---|---|
+| android-side | `android-side.tar.gz` 125930 B（gzip） | `android-side.tar` **337920 B（裸 tar）** |
+| dsh | `.tar.gz` | `0.2.0-rc.2.tar.zst` 85687490 B ✅ |
+
+`assets/runtime/android-side.tar` —— **扩展名被剥掉、内容被解压了。**
+而应用侧的查找条件是 `OnlineRuntimeImportManager.kt:769`：
+
+```kotlin
+names.firstOrNull { it.startsWith("android-side.tar.") }
+```
+
+`"android-side.tar"` **不以 `"android-side.tar."` 开头**（少那个点）。
+层进了 APK，但应用永远看不见它 —— **等于没建，bug 根本没修好。**
+
+**断言 6 还报了个假的好消息。** 它第一版写的是
+`n.startswith("assets/runtime/android-side.tar.")`，而
+`android-side.tar.gz.sha256`（64 字节的哈希侧车）**也满足这个前缀**。
+于是检查器打印「运行环境层 android-side：…」并放行。
+
+> 这是同一个病的第三次发作，而且这次最糟：前两次是「发现了问题却不判失败」，
+> 这次是**检查器主动报了一个不存在的好消息**。教训：
+> 断言必须钉住「应用侧会去用的那个东西」，而不是「名字长得像的东西」。
+
+#### 正确格式以**发布产物**为准，不以脚本默认值为准
+
+从真机上装的官方 DSHBox 包里直接读出来的：
+
+```
+assets/runtime/android-side.tar.zst   113245 B
+assets/dsh/0.2.0-rc.2.tar.zst       85893395 B
+lib/arm64-v8a/libzstd-jni-1.5.7-15.so
+```
+
+上游 `tools/pack_runtime.sh` 默认 `COMPRESSION=gzip`，注释说「app 的 zstd
+解压需要 zstd-jni，当前离线构建解析不到」—— **那段注释是过时的**：
+官方包里明明带着 `libzstd-jni`，DSHFusion 也把
+`libs/zstd-jni-1.5.7-15-classes.jar` 接进了 `app` 与 `sandbox-manager`。
+而且 zstd 还更小（113245 B vs 我的 gzip 125930 B）。
+
+修复（提交 `bc4bdb0`）：
+
+- 两个构建脚本**要求 zstd，缺了就退 2**，不静默降级到 gzip ——
+  一个必然被 AGP 剥坏的产物，比一个明确的报错危险得多。
+  失败信息解释的是「为什么 gzip 不可用」，不是「找不到可选依赖」。
+  另加魔数自检（必须是 zstd 帧头 `28 b5 2f fd`）与解包模式自检。
+- `check-apk-identity.py` 断言 6 改用精确正则
+  `^assets/runtime/android-side\.tar\.[A-Za-z0-9]+$`（扩展名内不允许再有点，
+  侧车自然被排除），并**按魔数核对容器格式**是否在 `BundleManager` 认识的四类里。
+- 夹具新增 `sidecar-only` 与 `gz-stripped` 两个场景，各对应一种真实形态。
+- 套件新增 5c-2 节，并补上 `skip()` 助手（「跳过」单独计数，不混进通过数）。
 
 **仍未验证的**：新 APK 在真机上是否真能装层、DSH 是否真能起来。
 层进了 APK 只是必要条件，不是充分条件。
@@ -358,7 +421,7 @@ dshfusion/
 │   ├── build-runtime-assets.sh  组装可内嵌 APK 的层（android-side + dsh，产出 sha256 侧车）
 │   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 114 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 123 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）

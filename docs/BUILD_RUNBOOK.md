@@ -1,5 +1,31 @@
 # 运行环境 bundle 构建 + 真机安装 · 执行手册（阶段 A→D）
 
+> ## ⚠️ DSHFusion 附加警告：本文的 gzip 建议**不能用于要进 APK 的层**（DIV-0013）
+>
+> 下面第 1.2 节「`zstd` 缺装会自动降级 gzip」、第 1.4 节「不存在则 pack 脚本自动 gzip」、
+> 第 ④ 节「若某层用 gzip 制作，同样可解」——这三句对**上游仓库内**的打包与消费都是真的
+> （`BundleManager` 确实按魔数嗅探，确实能解 gzip）。
+>
+> **但它们答的不是同一个问题。** 层不是直接交给 `BundleManager` 的，它得先过
+> **AGP 的资源打包**，而 AGP 会解压 `.gz` 资源并去掉 `.gz` 扩展名：
+>
+> ```
+> runtime/android-side.tar.gz  (125930 B, gzip)
+>         ↓ 过一遍 AGP
+> assets/runtime/android-side.tar  (337920 B, 裸 tar)
+> ```
+>
+> 应用侧的查找条件是 `names.firstOrNull { it.startsWith("android-side.tar.") }`
+> （`OnlineRuntimeImportManager.kt:769`，注意结尾那个点）——`"android-side.tar"`
+> **匹配不上**。层进了 APK，应用永远看不见，**等于没建**。
+>
+> 所以：**任何要嵌进 APK 的层必须用 `.tar.zst`。** DSHFusion 的
+> `tools/build-runtime-assets.sh` 与 `tools/build-dsh-layer.sh` 因此要求 zstd，
+> 缺了直接退 2，不静默降级。上游发布包用的也正是 `.tar.zst`。
+>
+> 这段横幅是 DSHFusion 加的（**正文一字未改**），见
+> [governance/divergences.json](../governance/divergences.json) 的 DIV-0013。
+
 > 本文档描述**在 WSL2/Linux 与真机上**构建运行环境并验证的步骤。
 >
 > 目标：在 WSL2 构建「base/node/android-side」三层 bundle（无 DSH），在 Windows 用 `build_apk.sh`/Gradle 内嵌 → 产出自包含 APK → 真机覆盖安装验证。

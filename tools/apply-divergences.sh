@@ -1000,6 +1000,118 @@ def handle_div_0007(entry) -> tuple[str, str]:
     return OK, "已施加：" + "、".join(changed)
 
 
+def handle_div_0013(entry) -> tuple[str, str]:
+    """docs/BUILD_RUNBOOK.md 加一条 zstd 警告横幅。
+
+    为什么要动一份**逐字节导入**的上游文档：因为它是一份**要照着做**的 runbook。
+    它第 1.2 / 1.4 / ④ 节都建议「没有 zstd 就降级 gzip」——这对上游仓库内的打包
+    是真的，但**层要进 APK 时这句话是错的**：AGP 会解压 `.gz` 资源并去掉扩展名，
+    于是 `android-side.tar.gz` 变成 `android-side.tar`，而应用侧要求名字以
+    `android-side.tar.` 开头（`OnlineRuntimeImportManager.kt:769`），匹配不上。
+
+    我本人就是被这份 runbook 说服、用 gzip 建层，结果 CI 全绿而产物是坏的。
+    所以这条横幅的价值是**在读者照着做之前拦住他**。
+
+    ⚠️ 这条偏离只**插入**、不**修改**。核验时两边都要查：
+      - 横幅在（否则重放没生效）
+      - 上游正文那三处原文仍在（否则说明我们改动了上游内容，
+        那就不是「插入」而成了「改写」，冲突面会大得多）
+    只查「横幅在不在」是不够的 —— 那样把整段正文删掉也能通过。
+    """
+    runbook = ROOT / "docs" / "BUILD_RUNBOOK.md"
+    if not runbook.exists():
+        return PENDING, "基线尚未导入"
+
+    text = read(runbook)
+
+    BANNER_ANCHOR = "DSHFusion 附加警告"
+    ADDED = [
+        # 横幅必须点名的三件事：结论、原因、以及它只对 APK 内层成立
+        BANNER_ANCHOR,
+        "不能用于要进 APK 的层",
+        "AGP 会解压 `.gz` 资源并去掉 `.gz` 扩展名",
+        "任何要嵌进 APK 的层必须用 `.tar.zst`",
+        "DIV-0013",
+    ]
+    # 上游正文原文（必须原样保留，证明我们只做了插入）
+    UPSTREAM_LINES = [
+        "（`zstd` 缺装会自动降级 gzip，见第 ④ 节风险。）",
+        "export ZSTD_LEVEL=19            # zstd 存在时用；不存在则 pack 脚本自动 gzip",
+        "若某层用 gzip 制作，同样可解（gzip→commons-compress）",
+    ]
+
+    have = [a for a in ADDED if a in text]
+    missing = [a for a in ADDED if a not in text]
+    kept = [u for u in UPSTREAM_LINES if u in text]
+    lost = [u for u in UPSTREAM_LINES if u not in text]
+
+    if not missing and not lost:
+        return OK, "横幅已在，且上游正文三处原文都保留"
+
+    if CHECK_ONLY:
+        if lost:
+            return FAILED, (
+                "上游正文被改动了（横幅不该改正文）：缺 "
+                + "；".join(u[:40] for u in lost)
+            )
+        return FAILED, "缺少 zstd 警告横幅（缺：" + "；".join(m[:28] for m in missing) + "）"
+
+    if lost:
+        # 正文已经不对了 —— 不猜、不自动"修"，交给人工，避免把上游内容改坏
+        return FAILED, "上游正文已被改动，拒绝自动重放（需人工确认）：" + lost[0][:40]
+
+    if not runbook.exists():
+        return PENDING, "基线尚未导入"
+
+    original = text
+    banner = (
+        "> ## ⚠️ DSHFusion 附加警告：本文的 gzip 建议**不能用于要进 APK 的层**（DIV-0013）\n"
+        ">\n"
+        "> 下面第 1.2 节「`zstd` 缺装会自动降级 gzip」、第 1.4 节「不存在则 pack 脚本自动 gzip」、\n"
+        "> 第 ④ 节「若某层用 gzip 制作，同样可解」——这三句对**上游仓库内**的打包与消费都是真的\n"
+        "> （`BundleManager` 确实按魔数嗅探，确实能解 gzip）。\n"
+        ">\n"
+        "> **但它们答的不是同一个问题。** 层不是直接交给 `BundleManager` 的，它得先过\n"
+        "> **AGP 的资源打包**，而 AGP 会解压 `.gz` 资源并去掉 `.gz` 扩展名：\n"
+        ">\n"
+        "> ```\n"
+        "> runtime/android-side.tar.gz  (125930 B, gzip)\n"
+        ">         ↓ 过一遍 AGP\n"
+        "> assets/runtime/android-side.tar  (337920 B, 裸 tar)\n"
+        "> ```\n"
+        ">\n"
+        '> 应用侧的查找条件是 `names.firstOrNull { it.startsWith("android-side.tar.") }`\n'
+        "> （`OnlineRuntimeImportManager.kt:769`，注意结尾那个点）——`\"android-side.tar\"`\n"
+        "> **匹配不上**。层进了 APK，应用永远看不见，**等于没建**。\n"
+        ">\n"
+        "> 所以：**任何要嵌进 APK 的层必须用 `.tar.zst`。** DSHFusion 的\n"
+        "> `tools/build-runtime-assets.sh` 与 `tools/build-dsh-layer.sh` 因此要求 zstd，\n"
+        "> 缺了直接退 2，不静默降级。上游发布包用的也正是 `.tar.zst`。\n"
+        ">\n"
+        "> 这段横幅是 DSHFusion 加的（**正文一字未改**），见\n"
+        "> [governance/divergences.json](../governance/divergences.json) 的 DIV-0013。\n"
+    )
+
+    # 插在标题之后、原有第一段引用块之前。
+    head = "# 运行环境 bundle 构建 + 真机安装 · 执行手册（阶段 A→D）\n\n"
+    if not text.startswith(head):
+        return FAILED, "文件头与预期不符，拒绝插入（上游可能已改结构）"
+    text = head + banner + "\n" + text[len(head):]
+    runbook.write_text(text, encoding="utf-8")
+    files_changed.append(str(runbook))
+
+    # 不谎报成功：写完必须复核，两个方向都查
+    after = read(runbook)
+    if any(a not in after for a in ADDED):
+        revert(runbook, original)
+        return FAILED, "写入后复核失败：横幅不完整（已还原）"
+    still = [u for u in UPSTREAM_LINES if u not in after]
+    if still:
+        revert(runbook, original)
+        return FAILED, "写入后复核失败：上游正文丢了（已还原）"
+    return OK, "已插入 zstd 警告横幅，上游正文未改"
+
+
 HANDLERS = {
     "DIV-0001": handle_div_0001,
     "DIV-0002": handle_div_0002,
@@ -1013,6 +1125,7 @@ HANDLERS = {
     "DIV-0010": handle_div_0010,
     "DIV-0011": handle_div_0011,
     "DIV-0012": handle_div_0012,
+    "DIV-0013": handle_div_0013,
 }
 
 
