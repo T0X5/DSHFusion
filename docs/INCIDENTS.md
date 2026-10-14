@@ -1482,7 +1482,7 @@ git ls-files | grep -qE 'runtime/android-assets|\.tar\.zst$|\.tar\.gz$|offline-r
 ## 26. 「CI 绿」证明不了「测试跑过」—— Gradle 对通过的测试不打名字
 
 阶段 2.3 的 Android CI **23/23 步全绿**（run 38640146073），其中包括
-`Run unit tests`。我准备据此写下「Kotlin 侧的 7 条新测试已由 CI 验证」——
+`Run unit tests`。我准备据此写下「Kotlin 侧的 8 条新测试已由 CI 验证」——
 **幸好先去日志里找证据。**
 
 在整份 CI 日志（119 KB、25 个条目）里 grep：
@@ -1494,15 +1494,15 @@ client-connection（投影目标）出现在日志: 0 次
 ```
 
 **0 次不是异常** —— Gradle 只在测试**失败**时打印名字，通过的一律沉默。
-所以「`Run unit tests` 通过」这个事实，与「我的 7 条 Kotlin 测试跑过」
+所以「`Run unit tests` 通过」这个事实，与「我的 8 条 Kotlin 测试跑过」
 **之间没有任何蕴含关系**。
 
 ### 为什么这一次特别要紧
 
-阶段 2.3 新增的 `CredentialProjectionCodesTest.kt` 是 7 条 **Kotlin** 测试。
+阶段 2.3 新增的 `CredentialProjectionCodesTest.kt` 是 8 条 **Kotlin** 测试。
 而本机**没有 kotlinc**，`tools/run-backup-jvm-tests.sh` 只编译 `.java` ——
 
-> **也就是说：这 7 条测试在本机跑不了，而 CI 的绿又不作证它们跑过。
+> **也就是说：这 8 条测试在本机跑不了，而 CI 的绿又不作证它们跑过。
 > 在补上这一步之前，它们没有被任何地方观察到运行过。**
 
 我此前在 AGENTS.md 与 PR #8 里写的「Kotlin 与 Android 侧仍然只能由 CI 给出结论」——
@@ -1516,15 +1516,18 @@ client-connection（投影目标）出现在日志: 0 次
 然后三条断言 ——
 
 1. `CredentialProjectionCodesTest` **必须出现**（本机无 kotlinc，它只可能在这里跑）；
-2. 它必须是 **7 条**；
-3. 总数**不得低于阶段 2.2 的基线 62 条**（防测试整体缩水）。
+2. 它必须是 **8 条**；
+3. 总数**不得低于阶段 2.3 的实测总数 76 条**（即「不允许净减少」）。
 
 > **这一步做过的反向验证**（本仓库的硬规矩：新断言必须证明它会红）：
 > 从 YAML 里把那段 Python **原样抽出来**（不是重写一份），配四组夹具：
-> ① 正确（7 条 / 总 74）→ 通过；
+> ① 正确 → 通过；
 > ② **注入：新测试缺席** → `::error::…没有运行` 且退出 1；
-> ③ **注入：只有 6 条** → `::error::…期望 7 条` 且退出 1；
-> ④ **注入：总数缩水到 17** → `::error::…低于基线 62` 且退出 1。
+> ③ **注入：条数不对** → `::error::…期望 8 条` 且退出 1；
+> ④ **注入：总数缩水到 17** → `::error::…低于实测总数 76` 且退出 1。
+>
+> ⚠️ **但第一版的两个数字我都写错了（7 与 62）—— 而这个断言第一次真跑就把它抓了出来。
+> 见下一条。**
 
 ### 教训
 
@@ -1537,3 +1540,67 @@ client-connection（投影目标）出现在日志: 0 次
 
 具体到本仓库：**任何新增的、本机跑不到的测试（Kotlin 侧），都必须同时加一条
 「它确实跑了」的断言**，否则测试数量可以降到 0 而 CI 依然全绿。
+
+---
+
+## 27. 新断言的第一次真跑，红的是**我自己的期望值** —— 又一次「数出来的」
+
+第 26 条那一步写完后，它在 CI 里第一次真跑：
+
+```
+##[error]com.dshbox.app.backup.CredentialProjectionCodesTest 跑了 8 条，期望 7 条
+    8  com.deepseekharness.app.backup.BackupArchiveTest
+    4  com.deepseekharness.app.backup.BackupFileSystemAtomicTest
+    3  com.deepseekharness.app.backup.BackupJsonTest
+    6  com.deepseekharness.app.backup.CredentialProjectionTest
+    3  com.deepseekharness.app.backup.GuestDataResolverTest
+    7  com.deepseekharness.app.backup.HostSnapshotTest
+    2  com.deepseekharness.app.util.FileKindTest
+    8  com.dshbox.app.backup.CredentialProjectionCodesTest
+    8  com.dshbox.app.backup.DshBackupExclusionsTest
+   15  com.dshbox.app.backup.DshBackupScopeTest
+   12  com.dshbox.app.backup.V5ArchiveTest
+:backup 共 76 条测试，11 个测试类
+```
+
+**`Run unit tests` 本身是绿的**（第 12 步成功）—— 真正红的是我刚加的那一步。
+
+### 两个数字都错了，而且错法不同
+
+**① 「7 条」是我数出来的。** 新测试文件里 `@Test` 出现了 **8** 次，我数成 7。
+这正是第 22 条的教训（我按源码推出三个错误码，三个全错）——
+只是这次错在**断言里**，而不是在被断言的目标里。区别在于：
+**断言红了，所以我只付了一次 CI。**
+
+**② 「总数 62」不是数出来的，是沿用下来的。** 阶段 2.2 记的「`62 条测试全过`」
+来自**读 CI 日志**，而 Gradle 不打这个数字 —— 也就是说它当初就是个估计值。
+现在有了真实的类清单，可以反推：
+
+```
+2.2 的 Java 侧   = 33（本机实测当前值） − 6（2.3 新增 CredentialProjectionTest）
+                   + 1（2.3 删掉的那条方法）        = 28
+2.2 的 Kotlin 侧 = 43（8+8+15+12） − 8（2.3 新增 CodesTest） = 35
+2.2 真实总数     = 28 + 35 = 63
+```
+
+**所以我一直写的「2.2 有 62 条测试」是错的，真值是 63。**
+一个从未被任何断言钉过的数字，在文档里活了整整一个阶段。
+
+### 修法
+
+- 期望值改成**实测值**：新类 **8 条**，总数下限 **76**（当前实测总数，即「不允许净减少」）；
+- 更正 AGENTS.md 与 backup/README.md 里所有 62/7；
+- 记录本条。
+
+### 教训
+
+**「把期望值写进一条会判失败的断言」这件事，本身就是让错误暴露的机制。**
+第 22 条的错题（读源码推错误码）之所以代价大，是因为我**先写了测试才发现**；
+这次的错题（数 `@Test`）代价小，是因为断言在那里等着第一次真实执行。
+
+所以规矩应该比第 22 条更进一层：
+
+> **凡是「我以为的数量」——数出来的、读出来的、沿用下来的 ——
+> 都要给它安排一次会失败的相遇，而不是让它在文档里自然存活。**
+
+数字在文档里是**不可证伪**的：没人会去数。放进断言里就变成可证伪的了。
