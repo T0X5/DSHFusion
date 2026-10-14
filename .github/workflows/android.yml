@@ -95,6 +95,44 @@ jobs:
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
+      # 「Run unit tests 通过」**证明不了测试跑过** —— Gradle 对通过的测试不打名字，
+      # 所以一个来源目录写错、或 .kt 文件没被收集进去，这一步照样是绿的。
+      # 阶段 2.3 就撞上了这个：新增的 7 条 Kotlin 测试（CredentialProjectionCodesTest）
+      # **本机跑不了**（没有 kotlinc），而 CI 的绿也不作证它们跑过 ——
+      # 等于这批测试**没有任何地方观察到它们运行**。
+      # 这一步把「哪些测试类跑了、各跑了多少条」变成日志里的**可见事实**，
+      # 并对新测试的存在与条数**判失败**。
+      - name: Verify the :backup unit tests actually ran (not just "CI green")
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+
+          files = glob.glob("backup/build/test-results/**/*.xml", recursive=True)
+          if not files:
+              sys.exit("::error:::backup 没有产出任何测试结果 XML —— 测试根本没跑")
+          total, classes = 0, {}
+          for f in files:
+              root = ET.parse(f).getroot()
+              classes[root.get("name", "?")] = int(root.get("tests", 0))
+              total += int(root.get("tests", 0))
+          for name in sorted(classes):
+              print(f"  {classes[name]:3d}  {name}")
+          print(f":backup 共 {total} 条测试，{len(classes)} 个测试类")
+
+          problems = []
+          codes = "com.dshbox.app.backup.CredentialProjectionCodesTest"
+          if codes not in classes:
+              problems.append(f"{codes} 没有运行（本机无 kotlinc，它只可能在这里跑）")
+          elif classes[codes] != 7:
+              problems.append(f"{codes} 跑了 {classes[codes]} 条，期望 7 条")
+          if total < 62:
+              problems.append(f":backup 只有 {total} 条测试，低于阶段 2.2 的基线 62")
+          if problems:
+              sys.exit("::error::" + "；".join(problems))
+          print(":backup 的测试确实跑了，且新测试在位。")
+          PY
+
       - name: Run lint
         run: ./gradlew lintDebug --stacktrace
 
