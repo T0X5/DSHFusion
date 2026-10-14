@@ -32,10 +32,10 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 > 产出 `dshapp-debug-apk`（39.0 MB 压缩 / 94.0 MB 解压，777 个条目）。
 > 这一步不再是「凭配置推断」。
 >
-> 2026-10-14，第一次真机安装 —— **失败，报 -13**
-> （`INSTALL_FAILED_CONFLICTING_PROVIDER`）。根因是 FileProvider 的 authority
-> 写死成上游的值，与已装的 DSHBox 撞车。已按 DIV-0011 修复，
-> **但修复后尚未重新构建、也尚未重新真机验证**。
+> 2026-10-14，真机安装试了两次：第一次**失败 -13**
+> （`INSTALL_FAILED_CONFLICTING_PROVIDER`，根因见下方专节），
+> 按 DIV-0011 修复后第二次**成功**。
+> **但「装上」不等于「能用」** —— 启动、运行环境获取、DSH 起来都还没验证过。
 >
 > 另外：CI 产出的 APK **不含任何运行环境层**（无
 > `base/node/android-side/dsh` 的 `.tar.zst`），因为上游不把 `runtime/` 提交进仓库。
@@ -53,7 +53,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ✅ **通过**（run 38478523535，含单元测试 / lint / APK 组装） |
 | APK **产物**身份核验（DIV-0008） | ✅ **已通过**（run 38483533327 第 15 步）—— 对 CI 真实产物解二进制清单核验 |
 | 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
-| 生成的 APK 装到真机上验证 | ⚠️ **已试，首次失败** —— 2026-10-14 真机安装报 -13，根因见下方；修复待重新构建验证 |
+| 生成的 APK 装到真机上验证 | ✅ **已通过**（2026-10-14，修复后第二次尝试）—— 见下方专节；**但启动与运行尚未验证** |
 | APK 内含运行环境层（能真正跑起 DSH） | ❌ 不含 —— 仓库未提交 `runtime/`，CI 只做编译 |
 | `upstream-watch.yml` 真实运行 | ✅ **已跑通**（run 38483621472，手动触发）—— 检出 DSHA 有新提交并建了 Issue #2 |
 
@@ -152,6 +152,54 @@ APK 里 FileProvider 的 authority 写死成 `com.dshbox.app.fileprovider`，
 > 它验证了「CI 全绿 ≠ 真机能用」。CI 只跑编译与单测，
 > 而 authority 冲突、签名、权限、运行时行为都只有真机能暴露。
 > **在这条修好并重新真机验证之前，不要声称阶段 1 的产物可用。**
+
+#### 第二次尝试：安装成功（2026-10-14）
+
+按 DIV-0011 修复后重新构建（run 38510120522，提交 `cc972f3`），真机安装**成功**。
+
+核验方式不是「用户说装上了」，而是自己从设备读回来：
+
+```
+$ pm list packages com.dshfusion.app
+package:com.dshfusion.app
+
+$ dumpsys package com.dshfusion.app
+    versionCode=1 minSdk=29 targetSdk=36
+    versionName=0.1.0
+    firstInstallTime=2026-10-14 12:27:29
+```
+
+| 核验项 | 结果 |
+|---|---|
+| `com.dshfusion.app` 已安装 | ✅ |
+| `com.dshbox.app` 仍在（并存安装） | ✅ |
+| 版本号是 `1` / `0.1.0`（不是上游的 8 / 1.4.0） | ✅ |
+| 两个应用的 authority 集合**交集为空** | ✅ |
+
+authority 对照（这次专门比对了集合，不只比单个值）：
+
+```
+DSHBox    : com.dshbox.app.shizuku
+            com.dshbox.app.fileprovider
+            com.dshbox.app.browser.upload
+            com.dshbox.app.browser.download
+DSHFusion : com.dshfusion.app.shizuku
+            com.dshfusion.app.fileprovider
+交集      : （空）
+```
+
+> **注意 DSHBox 有 4 个 authority，而我们源码里只有 2 个 provider。**
+> `browser.upload` / `browser.download` 在本仓库与上游锁定提交里都**不存在**
+> —— 说明手机上装的 DSHBox 官方包不是从我们锁定的提交构建的（版本号却同样是 8 / 1.4.0）。
+> 这不影响本次修复（我们的 authority 全部从 applicationId 派生，与任何 DSHBox 构建都不冲突），
+> 但它说明**「上游源码」与「上游发布包」不一定是同一个东西** ——
+> 下次核对冲突时不能只看源码。
+
+**这次成功说明了什么**：DIV-0011 的修法是对的，而且「authority 必须从 applicationId
+派生」这条原则比「改成某个期望值」更稳 —— 它对任何 applicationId、任何 DSHBox 构建都成立。
+
+**仍然没有验证的**：应用能否启动、能否获取运行环境、DSH 能否真正跑起来。
+「装上」只是第一步。
 
 ## 决策依据（不要重新推翻）
 
