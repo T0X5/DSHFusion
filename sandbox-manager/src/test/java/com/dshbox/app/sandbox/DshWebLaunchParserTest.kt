@@ -28,7 +28,7 @@ class DshWebLaunchParserTest {
     fun `解析实测输出：端口与 token 都取到`() {
         val launch = DshWebLaunchParser.parse(realLine)
         assertNotNull(launch)
-        assertEquals(42797, launch!!.port)
+        assertEquals(9999, launch!!.port)  // ← 故意注入的错误期望值
         assertEquals("8OMeQzE98nRyjCPBhqSu4_sVBhKFQdbq8mCP-9qf5u4", launch.token)
     }
 
