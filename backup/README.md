@@ -1,9 +1,10 @@
-# `:backup` — v5 备份归档的格式与预检
+# `:backup` — v5 备份归档的格式、预检与恢复核心
 
-阶段 2.1–2.3 的落地模块。它**不**做备份计划、**不**做恢复、**不**碰运行环境；
-它负责三件事：**把「一份备份是不是完整、自洽、没被篡改」变成可判定的**（2.1）、
-**把「这次要备份哪些东西、哪些绝对不碰」变成可判定的**（2.2），
-以及**把「机器本地凭据不进归档、而 provider 凭据还在」变成可判定的**（2.3）。
+阶段 2.1–2.4a 的落地模块。它**不**做备份计划、**不**做隔离试运行与失败回切、**不**碰运行环境；
+它负责四件事：**把「一份备份是不是完整、自洽、没被篡改」变成可判定的**（2.1）、
+**把「这次要备份哪些东西、哪些绝对不碰」变成可判定的**（2.2）、
+**把「机器本地凭据不进归档、而 provider 凭据还在」变成可判定的**（2.3），
+以及**把「恢复时先预检、再写平行候选、校验通过才谈提交」变成可判定的**（2.4a）。
 
 ## 这个模块里的代码来自哪里
 
@@ -257,16 +258,95 @@ bash tools/run-backup-jvm-tests.sh     # 编译并运行 backup 的全部 .java 
 > 上游 DSHA 的 release 是 `minifyEnabled false` ——
 > 所以「DSHA 装了它能跑」不构成「它在 R8 下能用」的证据。
 
+## 阶段 2.4a 加了什么：恢复核心（预检 → 候选 → 校验）
+
+**这是本模块第一条会**毁数据**的路径。** 2.1–2.3 只判断「一份备份是不是好的」，
+2.4a 开始**往活动目录写东西** —— 所以它的安全性要求与前面几项不是一个量级：
+校验失败时必须**一个字节都没写进活动目录**，而不是「写了一半再回滚」。
+
+**做法照搬 DSHA 的三步次序**（这是它成熟的地方）：
+
+1. **预检**（`NativeRestorePlan.inspect`）：只读地看归档与目标，产出计划，**不碰活动数据**；
+2. **候选**（`buildCandidates`）：把内容写到一个**平行的候选目录**，不是活动目录；
+3. **校验**：候选构建完再核对，通过了才谈提交。
+
+**搬了什么、为什么这么搬** —— 这一段的结论与第一版审计**不同**，
+被推翻的地方在 [docs/FUSION-PLAN.md](../docs/FUSION-PLAN.md) 的 2.4 节有完整记录：
+
+| 上游文件 | 怎么处理 | 为什么 |
+|---|---|---|
+| `NativeRestorePlan.java`(402) | **逐字节** | 只依赖同包已有类 + `BackupTree` |
+| `DataFormatEvidence.java`(55) | **逐字节** | `NativeRestorePlan` 的依赖（审计第一版漏了它，是编译报错逼出来的） |
+| `RuntimeDescriptor.java`(154) | **逐字节** | 上面那个的依赖，纯 `java.io`/`java.util` |
+| `BackupTree.java`(304) | **适配** | 摘掉 Android 快路径，见下 |
+| `AndroidBackupFileSystem`+`AndroidTreeFileSystem`+`NativeStorage`(1418) | **不导入** | 需要骨干没有的 `libtermux.so`，见下 |
+| `NativeRestoreTargets.java`(301) | **不导入** | 依赖 DSHA 自己的设置/凭据子系统（`ConfigStore`→`KeyVault`），见下 |
+
+### `BackupTree` 为什么可以摘掉 Android 那半，以及**不能**顺手摘掉什么
+
+上游的 `digest()` 是「Android 快路径 + 通用回退」：
+
+```java
+if (fs.getClass() == AndroidBackupFileSystem.class && fs.stat(root).type.equals("DIRECTORY")) {
+  try (AndroidTreeFileSystem tree = new AndroidTreeFileSystem(root)) {
+    return digestTree(tree, root, control);
+  }
+}
+return digestTree(fs, root, control);          // ← 通用回退，功能完整
+```
+
+两条路径**共用同一个 `TreeHash`/`visit`**，而且分支条件只取决于 `fs` 的类型 ——
+**任何一次调用里两侧必然走同一分支**，所以摘掉它不会造成「一侧快、一侧通用」的不一致。
+它只是吞吐优化。
+
+**但它拖进来的东西是 1418 行，其中 `NativeStorage` 调 `System.loadLibrary("termux")`
+并声明 7 个 native 方法**（`statChildrenBatchBytes`/`prepareSmallFileBytes`/…）。
+这些符号在 DSHA 的 `libtermux.so` 里，而**骨干没有这个库**（只有 `libproot` 系列）。
+搬进来会得到「编译通过、运行必 `UnsatisfiedLinkError`」的死代码 ——
+这正是本项目最怕的那种东西：**看起来接好了，真机上才炸**。
+何况 DSHA 是 proroot、DSHBox 是 proot，这条快路径在我们的运行模型里本来就不适用。
+
+> **摘干净了没有，有断言管着**：`verify-phase0.sh` 的 5n 节既检查 `BackupTree` 里
+> 不再出现 `AndroidTreeFileSystem`/`AndroidBackupFileSystem`/`loadLibrary`，
+> **也检查 `ENTRY_LIMIT`/`INVALID_CHILD`/`SPECIAL_FILE`/`SOURCE_CHANGED`/`TreeHash` 还在** ——
+> 只查「Android 没了」会允许「顺手把限额记账也删了」。
+
+> ⚠️ **残留风险，如实记在 `dsha-imports.json` 的 `derived` 条目里**：两条路径的目录枚举
+> 顺序是否完全一致**我们没有验证**（验证它需要那个原生库）。这不影响当前用法
+> （每次比较两侧都走同一实现），但它是这条适配的已知缺口。
+
+### 2.3 删掉的那条测试，在 2.4a 回来了
+
+2.3 删掉 `oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive`
+是因为它依赖 `NativeRestorePlan`，而当时的闭包会拖进 `AndroidTreeFileSystem`。
+摘掉快路径之后这条链变成纯 JVM，于是**恢复回去、在本机真跑 —— 通过了**。
+它证明的性质（**归档里的机器记录在候选阶段就被投影掉，来不及变成活动记录**）
+在 2.3 确实没有被验证，现在被验证了。
+
+**本机 Java 测试：33 → 42 条**（+`NativeRestorePlanTest` 的 8 条 + 恢复的这 1 条）。
+
+### 8 条恢复测试各自钉住什么
+
+它们全部来自 DSHA，一条未改（除工具链差异）：
+
+- 只读检查与候选构建**不碰活动数据**，未提及的文件不动；
+- **footer 校验失败绝不产生活动写**（这是最要紧的一条）；
+- 未选中的范围不会变成「应用恢复」；
+- 相对链接逃逸被拒；
+- 缺失链接目标的祖先**保留元数据但不建目录**；
+- 普通文件的链接目标父目录仍被拒；链接目标的符号链接父目录**不被跟随**；
+- 可用链接目标仍会建立链接。
+
 ## 这个模块**不**做什么
 
 明确划出去的部分，免得读者以为「格式与预检」等于「能备份能恢复」：
 
 | 不做的事 | 归属 | 为什么现在不做 |
 |---|---|---|
-| 真正调用枚举与写入（`HostSnapshot.create`） | 阶段 2.4 | 需要逻辑根 → 本机路径的映射与隔离试运行；现在搬进来只会是「有代码没调用方」 |
+| 逻辑根 → 本机路径的映射（`NativeRestoreTargets` 那一层） | 阶段 2.4b | 它依赖 DSHA 自己的设置/凭据子系统；本仓库要按骨干的设置模型另写 |
 | 凭据的**字段级**排除（`settings.yaml` 里的模型凭据、桥 token） | 仍未做 | 2.3 做的是**机器本地记录**的投影（见下）；`settings.yaml` 里是否有需要单独排除的字段，**要先在真机上确认它的实际内容**才能决定 |
-| 逻辑根 → 本机路径的映射、隔离试运行、失败回切 | 阶段 2.4 | 切口是 DSHA `NativeRestorePlan.Mapping` 接口 |
-| 自动备份计划（每日 / 1–168h / 停止后，保留 3 份） | 阶段 2.5 | 依赖 2.1–2.3 |
+| 隔离试运行、失败回切（落在 DSHBox 的 `runtime-current/` ↔ `runtime-new/` 上） | 阶段 2.4b | 切口是 DSHA `NativeRestorePlan.Mapping` 接口；`RuntimeTrial` 的思路可借、代码不搬 |
+| 自动备份计划（每日 / 1–168h / 停止后，保留 3 份） | 阶段 2.5 | 依赖 2.1–2.4 |
 | 范围与排除的界面文案 | 阶段 2.4 | DSHA 的 `label()`/`describe()` 走它自己那套 i18n；本仓库用 Android 资源 |
 
 DSHA 侧同样属于 v5 预检、但**刻意没搬**的类，逐条理由记在

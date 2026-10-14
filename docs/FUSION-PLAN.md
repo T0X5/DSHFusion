@@ -143,8 +143,9 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 | 2.1 | 备份归档 v5 格式与预检（不含自动计划） | DSHA `backup/` | ✅ PR #4（CI 通过 run 38627379821） | 先有能读写的格式，才谈自动化 |
 | 2.2 | 范围备份（全量 / 只对话 / 只插件 / 只设置） | DSHA `BackupScope`＋枚举/写入侧 | ✅ PR #6（CI 通过 run 38633884134） | 依赖 2.1；范围是纯逻辑，好测 |
 | 2.3 | 凭据排除（机器本地记录 **投影**掉，而不是整份删除） | DSHA `CredentialProjection`＋`CredentialFileBackupSource` | ✅ **已通过真实 CI**（run [38643847540](https://github.com/T0X5/DSHFusion/actions/runs/38643847540)，commit `19e95bd`，**24/24 步全绿**；`:backup` **76 条测试**、产物 128,791,472 字节）。分支 `phase-2.3/credential-exclusion`，PR #8 | 安全项，独立可测 |
-| 2.4 | 覆盖更新的隔离试运行 + 失败回切 | DSHA `RuntimeTrial` 思路 | 未开始 | 落在 DSHBox 双目录上 |
-| 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA `AutomaticBackups` | 未开始 | 最后做，依赖 2.1–2.3 |
+| 2.4a | **恢复核心**：预检 + 候选构建 + 校验（`NativeRestorePlan`/`BackupTree`） | DSHA `NativeRestorePlan`＋`BackupTree`＋`DataFormatEvidence`＋`RuntimeDescriptor` | 🔵 **已实现，待 CI**（分支 `phase-2.4/restore-core`）；本机真跑 **42 条** Java 测试 | 会毁数据的那条路径，必须先能本机真跑 |
+| 2.4b | 恢复的落点与隔离试运行 + 失败回切（按 DSHBox 的 `runtime-current/` ↔ `runtime-new/` 另写） | DSHA `RuntimeTrial` **思路**（代码不搬） | 未开始 | 依赖 2.4a；要按骨干的设置模型与双目录机制另写 |
+| 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA `AutomaticBackups` | 未开始 | 最后做，依赖 2.1–2.4 |
 
 **2.2 落地时校正了本表的两处假设**（都是对照真实代码后改的，不是推测）：
 
@@ -165,55 +166,96 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 重新加载，真机上出过「每次都起不来」的事故）。排除必须按子路径逐项。
 完整理由见 [INCIDENTS.md](INCIDENTS.md) 第 19 条。
 
-### 2.4 动手前的只读审计结论（2026-10-14，尚未实施）
+### 2.4 的只读审计结论与实施决定（2026-10-14，**已实施**）
 
 **为什么先做这一步**：2.4 是阶段 2 里唯一**必然引入 Android 耦合**的一项，
 而 2.1–2.3 的全部价值建立在「`:backup` 的 Java 侧能在本机真编译真运行」之上
 （`tools/run-backup-jvm-tests.sh`）。照直觉把 6 个类一起搬进来，会让那个工具**失效** ——
 而它失效的方式是「编译不过」，不是在评审里看得出来的设计问题。所以先量清楚。
 
-**实测的类与依赖（数字来自真实文件，不是估计）**：
+> ⚠️ **这一节的第一版审计有三处被后续实测推翻，原文已保留在 git 历史里。**
+> 三处错都是同一类：**从「导入清单」和「行数」推断可达性，而没有去读那几处引用本身。**
+> 记在这里是因为它们各自都会让一个看起来合理的方案落地成错的方案。
 
-| 类 | 行数 | `android.*` 导入 | 依赖 |
-|---|---|---|---|
-| `DataRootPolicy` | 42 | **0** | 叶子 |
-| `BackupTree` | 304 | **0** | `AndroidTreeFileSystem`(10 处)、`AndroidBackupFileSystem`(1 处) |
-| `NativeRestorePlan` | 402 | **0** | `BackupTree`(6)、`BackupFileSystem`(6) |
-| `NativeRestoreTargets` | 301 | 2 | `NativeRestorePlan`(7)、`DataRootPolicy`(4)、`BackupTree`(3)、`AndroidBackupFileSystem`(1) |
-| `AndroidBackupFileSystem` | 377 | 2 | `ParcelFileDescriptor`、`Environment` |
-| `AndroidTreeFileSystem` | 600 | 5 | `Os`、`OsConstants`、`StructStat`、`ErrnoException`、`system.*` |
+**实测的类、真实闭包与真正卡住的地方**：
 
-**第一处校正：「零 `android.*` 导入」不等于「不依赖 Android」。**
-`BackupTree` 一个 `android.*` 都没导入，但它有 **10 处**引用 `AndroidTreeFileSystem`。
-`NativeRestorePlan` 同理 —— 它零导入，却通过 `BackupTree` **传递地**依赖
-`AndroidTreeFileSystem`。**照「导入数」挑文件会挑错。** 判据必须是**可达性**。
+| 类 | 行数 | 真正的阻碍（不是「有没有 android 导入」） |
+|---|---|---|
+| `NativeRestorePlan` | 402 | **零** —— 只依赖同包的 `BackupArchive`/`BackupControl`/`BackupFileSystem`/`BackupJson`/`BackupLimits` 与 `BackupTree` |
+| `BackupTree` | 304 | 引用了 `AndroidTreeFileSystem`/`AndroidBackupFileSystem` —— 但见下，**那只是快路径** |
+| `DataFormatEvidence` | 55 | 依赖 `RuntimeDescriptor`（审计第一版**完全没发现这两个类**，是编译报错逼出来的） |
+| `RuntimeDescriptor` | 154 | **零**（只 `java.io`/`java.util`） |
+| `AndroidBackupFileSystem` | 377 | `ParcelFileDescriptor`/`Environment` |
+| `AndroidTreeFileSystem` | 600 | `Os`/`OsConstants`/`StructStat` + **`NativeStorage`(441)** |
+| `NativeStorage` | 441 | 🔴 **`System.loadLibrary("termux")` + 7 个 native 方法**，符号在 DSHA 的 `libtermux.so` 里 |
+| `NativeRestoreTargets` | 301 | 🔴 **`ConfigStore`(817) → `KeyVault`(145) → `CredentialRead`(73)** —— DSHA 自己的设置与凭据子系统 |
+| `DataRootPolicy` | 42 | 依赖 `ManagedRuntimeLayout`(87) —— 审计第一版把它当成叶子，**错了** |
 
-**第二处校正（对 2.3 的直接影响）：Android 特异性只集中在 2 个文件。**
-真正碰 Android API 的只有 `AndroidTreeFileSystem`（600 行，`Os` 快速路径）
-与 `AndroidBackupFileSystem`（377 行，`ParcelFileDescriptor`/`Environment`）。
-其余 4 个（`DataRootPolicy`/`BackupTree`/`NativeRestorePlan`/`NativeRestoreTargets`，
-合计 1049 行）**源码里没有任何 Android 调用**，只是类型上引用了那两个。
+**校正一：「零 `android.*` 导入」不等于「不依赖 Android」，判据必须是可达性。**
+这一条第一版就说对了，而且被证实：`BackupTree` 零 `android.*` 导入，却有 9 处引用
+`AndroidTreeFileSystem`。
 
-⇒ **2.4 的落点因此有解**：6 个类全进 `:backup`（它本来就是 `com.android.library`，
-Android API 可用），但 `tools/run-backup-jvm-tests.sh` 必须
-**按「是否可达 Android 类」排除**，而不是按「有没有 `android.*` 导入」排除。
-排除集合要**显式列出并断言恰好等于预期的 2 个文件** —— 否则它会随着将来新增文件
-**静默变大**，重演第 13 条（检查默默缩水）。
+**校正二（推翻第一版的结论）：真正决定方案的不是 `android.*` 调用，而是两处
+「应用内部子系统」耦合。**
+第一版说「Android 特异性只集中在 2 个文件，其余 4 个只是类型上引用它们」——
+**这个判断是错的**，因为它只看 `android.*`。按可达性追下去，两处才是决定性的：
 
-**第三处（待实证，不要凭推理定）：2.3 删掉的那条测试方法可能可以在 2.4 补回。**
-`oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive`
-**只用了 `NativeRestorePlan`**（2 处引用），不需要 `NativeRestoreTargets`。
-所以只要 `BackupTree` 的类文件在类路径上，它**可能**能跑 ——
-但 `BackupTree` 引用的 `AndroidTreeFileSystem` 是否会**在类加载/校验阶段**就被解析，
-取决于 JVM 的惰性解析行为，**读源码判断不了**。
+- `AndroidTreeFileSystem` → `NativeStorage` → **`libtermux.so`**。DSHFusion 的骨干
+  （DSHBox）只有 `libproot`/`libproot-loader`/`libtalloc`/`libandroid-shmem`/`libzstd-jni`，
+  **没有 `libtermux.so`**。搬进来会得到「编译通过、运行必 `UnsatisfiedLinkError`」的死代码。
+- `NativeRestoreTargets` → `ConfigStore` → `KeyVault` → `CredentialRead`。
+  这是 **DSHA 自己的设置与凭据模型**；DSHFusion 的骨干（Kotlin + DataStore）
+  有它自己的一套。搬进来等于在骨干旁边长期并行第二套设置模型，每次双上游同步都会冲突。
 
-> ⚠️ 这条**必须由真实执行回答**，否则就是第 22 条的重演（我按源码推的三个错误码全错）。
-> 具体做法：把方法恢复回去、`run-backup-jvm-tests.sh` 里真跑一遍，看它是
-> `OK` 还是 `NoClassDefFoundError`。**两种结果都要如实记** ——
-> 若跑不了，说明这条覆盖在 2.4 仍然缺失，得另想办法（例如让 `BackupTree` 接受
-> 一个注入的文件系统实现，从而在测试里不触及 Android 类）。
+> **一个 `android.os` 依赖，比一个指向上游自己应用内部子系统的依赖，更容易处理。**
+> 前者是平台 API（`com.android.library` 本来就有），后者是**架构承诺**。
 
-**第四处：DSHA 的 `RuntimeTrial`（739 行、1 处 `Context`）与 DSHBox 的双目录
+**校正三（这是让 2.4 有解的那处）：`BackupTree` 的 Android 耦合是快路径优化，不是语义。**
+它的 `digest()` 是：
+
+```java
+if (fs.getClass() == AndroidBackupFileSystem.class && fs.stat(root).type.equals("DIRECTORY")) {
+  try (AndroidTreeFileSystem tree = new AndroidTreeFileSystem(root)) {
+    return digestTree(tree, root, control);
+  }
+}
+return digestTree(fs, root, control);          // ← 通用回退，功能完整
+```
+
+两条路径**共用同一个 `TreeHash`/`visit`**，分支条件只取决于 `fs` 的类型 ——
+所以任何一次调用里两侧必然走同一分支，**摘掉它不会造成「一侧快、一侧通用」的不一致**。
+而它要拖进来的是 1418 行（377 + 600 + 441），其中 441 行需要那个不存在的原生库。
+
+**⇒ 实施决定：搬纯 JVM 的恢复核心，摘掉这条用不上的快路径。**
+
+- **逐字节导入**：`NativeRestorePlan`(17,107) + `DataFormatEvidence`(2,472) + `RuntimeDescriptor`(6,258)。
+- **适配导入**：`BackupTree` —— 上游 11,171 字节 → 7,330 字节，删掉的**全部是 Android 专有分支**
+  （`digest` 的快路径分支、`visitChildren` 整个方法、`ReadScratch`、`visit` 的 `parent` 参数），
+  **通用遍历的每一行逐字保留**。登记在 `dsha-imports.json` 的 `derived` / `kind: adapted`。
+- **明确不导入**：`NativeRestoreTargets`（依赖 DSHA 自己的设置子系统，DSHFusion 侧按骨干的
+  设置模型另写，阶段 2.4b）、`AndroidBackupFileSystem`+`AndroidTreeFileSystem`+`NativeStorage`
+  （需要骨干没有的 `libtermux.so`）。两者都写进 `not_imported` 并点名真正的原因。
+- **`DataRootPolicy` 暂不导入** —— 它只被 `NativeRestoreTargets` 使用，跟着 2.4b 一起做。
+
+> **残留风险，如实记在 `derived` 条目里**：两条路径的目录枚举顺序是否完全一致
+> **我们没有验证**（验证它需要那个原生库）。若将来有地方按摘要值**跨实现**比较，
+> 结论可能不同。这不影响当前用法（每次比较两侧都走同一实现），但它是这条适配的已知缺口。
+
+**2.3 那条被删测试的开放问题，已由真实执行回答（不是推理）：**
+
+`oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive` 依赖
+`NativeRestorePlan`，2.3 因此把它删了并如实登记为覆盖损失。摘掉快路径之后这条链变成纯 JVM，
+于是**恢复回去、在本机真跑 —— 通过了**。
+
+⇒ **那条覆盖回来了。** 本机 Java 测试从 33 条变成 **42 条**
+（+`NativeRestorePlanTest` 的 8 条 + 恢复的 1 条），`NativeRestorePlanTest` 的 8 条
+证明的正是 2.4 最要紧的性质：**校验失败时一个字节都没写进活动目录**。
+
+> 这一条本来写的是「**读源码判断不了** JVM 会不会在类加载阶段就解析 `AndroidTreeFileSystem`，
+> 必须真跑」。**方法是对的** —— 而答案之所以是「能跑」，不是因为 JVM 的惰性解析，
+> 而是因为**我们先把那条引用删掉了**。两者要分清：前者是运气，后者是可复现的决定。
+
+**DSHA 的 `RuntimeTrial`（739 行、1 处 `Context`）与 DSHBox 的双目录
 不是同一个模型，不能照搬。** 它是 2.4 里唯一「思路可借、代码要重写」的部分 ——
 DSHBox 的 `runtime-current/` ↔ `runtime-new/` 切换是它自己的机制。
 具体怎么落，等它自己的审计做完再定；**不要因为 `RuntimeTrial` 长得像就搬。**

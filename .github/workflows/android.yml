@@ -129,11 +129,22 @@ jobs:
               problems.append(f"{codes} 没有运行（本机无 kotlinc，它只可能在这里跑）")
           elif classes[codes] != 8:
               problems.append(f"{codes} 跑了 {classes[codes]} 条，期望 8 条")
-          # 下限 = 阶段 2.3 的**实测**总数 76，即「不允许净减少」。
-          # （此前记的「2.2 是 62 条」是错的；由本步的类清单反推，2.2 应为 63：
-          #   Java 33 − 6 新增 + 1 删除 = 28，Kotlin 43 − 8 = 35。）
-          if total < 76:
-              problems.append(f":backup 只有 {total} 条测试，低于阶段 2.3 的实测总数 76")
+          # 下限 = 阶段 2.4 的**预期**总数 85，即「不允许净减少」。
+          # 推导过程（不是数出来的）：阶段 2.3 实测 76（Java 33 + Kotlin 43）。
+          # 2.4 在**本机真跑**得到 Java 42 条（33 + NativeRestorePlanTest 的 8 +
+          # 2.3 删掉、2.4 恢复回来的那 1 条），Kotlin 侧未动仍是 43 ⇒ 42 + 43 = 85。
+          # 42 是本机实测（tools/run-backup-jvm-tests.sh），43 是上一阶段 CI 实测。
+          # 这两个数拼起来的 85 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
+          # 若 CI 报的不是 85，先信 CI（docs/INCIDENTS.md 第 27 条）。
+          if total < 85:
+              problems.append(f":backup 只有 {total} 条测试，低于阶段 2.4 的预期总数 85")
+          # 2.4 的恢复核心是**会毁数据**的那条路径，所以单独钉住它的类。
+          # 「总数够了」不代表「新那 8 条在里面」（第 26 条的同族）。
+          restore = "com.deepseekharness.app.backup.NativeRestorePlanTest"
+          if restore not in classes:
+              problems.append(f"{restore} 没有运行（恢复核心的测试没跑 = 2.4 没有证据）")
+          elif classes[restore] != 8:
+              problems.append(f"{restore} 跑了 {classes[restore]} 条，期望 8 条")
           if problems:
               sys.exit("::error::" + "；".join(problems))
           print(":backup 的测试确实跑了，且新测试在位。")

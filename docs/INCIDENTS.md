@@ -1604,3 +1604,170 @@ client-connection（投影目标）出现在日志: 0 次
 > 都要给它安排一次会失败的相遇，而不是让它在文档里自然存活。**
 
 数字在文档里是**不可证伪**的：没人会去数。放进断言里就变成可证伪的了。
+
+---
+
+## 28. 2.4 的只读审计第一版有三处是错的 —— **审计本身也要能被证伪**
+
+阶段 2.4 动手前，我按惯例先做只读审计（这是第 19 条教出来的习惯，那次它确实挡下了一个
+错的排除方案）。审计产出了一张 6 行的依赖表，并据此定了落点：
+**「6 个类全进 `:backup`，本机测试工具按可达性排除 2 个 Android 文件。」**
+
+这张表**看起来是量出来的**（每行都有行数和导入数）。它错了三处。
+
+### 错法一：漏了两个类，而且是编译器告诉我的
+
+第一版列了 6 个候选。真正开始导入时，`javac` 报：
+
+```
+NativeRestorePlan.java:135: error: cannot find symbol
+      plan.warnings.add(DataFormatEvidence.restoreWarning(manifest));
+```
+
+补上 `DataFormatEvidence`(55 行) 之后，又报它需要 `RuntimeDescriptor`(154 行)。
+
+**这两个类一直在我读的那个目录里。** 我没有把它们列进候选，因为我列的是
+「我按名字猜和恢复有关的类」，而不是「从入口类出发走一遍可达性」。
+
+> 如果审计的结论只写在文档里，这个错会以「漏掉两个类」的形式活到 PR 里；
+> 它之所以被抓住，是因为**我紧接着就去编译了**。
+
+### 错法二（决定性，推翻了落点）：真正卡住的不是 `android.*`
+
+第一版的核心判断是：
+
+> 「Android 特异性只集中在 2 个文件（`AndroidTreeFileSystem`、`AndroidBackupFileSystem`），
+> 其余 4 个源码里没有任何 Android 调用，只是类型上引用了那两个。」
+
+**这个判断只看 `android.*` 导入，所以漏掉了两处更硬的耦合。** 按可达性追下去：
+
+| 起点 | 中间 | 终点 | 为什么这是死路 |
+|---|---|---|---|
+| `BackupTree` | `AndroidTreeFileSystem`(600) | `NativeStorage`(441) | `System.loadLibrary("termux")` + **7 个 native 方法** |
+| `NativeRestoreTargets` | `ConfigStore`(817) | `KeyVault`(145) → `CredentialRead`(73) | DSHA **自己的**设置与凭据子系统 |
+
+第一处的致命细节：`NativeStorage` 声明了
+
+```java
+System.loadLibrary("termux");
+private static native int statChildrenBatchBytes(...);
+private static native int prepareSmallFileBytes(...);
+// …共 7 个
+```
+
+这些符号在 DSHA 的 `libtermux.so` 里（DSHA 上游有对应的 JNI 源码与 `jniLibs`，本仓库两者都没有）。
+而 DSHFusion 骨干的 `app/src/main/jniLibs/arm64-v8a/` 只有：
+
+```
+libandroid-shmem.so  libproot-loader.so  libproot.so  libtalloc.so  libzstd-jni-1.5.7-15.so
+```
+
+**没有 `libtermux.so`。** 也就是说：把这三个文件搬进来，会得到一段
+**编译得过、lint 过得去、单元测试跑得过（测试不碰它），而真机上第一次用到就
+`UnsatisfiedLinkError`** 的代码。这正是本项目最怕的形态 ——
+第 6/7/9 条都是「看起来接好了，真机上才炸」。
+
+第二处的性质不同但结论一样：`NativeRestoreTargets` 在 4 处调用
+`new ConfigStore(context).hostSettingsState()/applyHostSettings()/prepareHostSettings()`。
+DSHFusion 的骨干是 Kotlin + DataStore，有它自己的设置模型。搬进 DSHA 那一套，
+等于在骨干旁边**长期并行第二套设置与凭据模型** —— 每次双上游同步都会冲突。
+
+> **由此得到一条判据，我把它写进了 FUSION-PLAN：**
+> **一个 `android.os` 依赖，比一个指向上游自己应用内部子系统的依赖，更容易处理。**
+> 前者是平台 API（`com.android.library` 本来就有）；后者是**架构承诺**。
+> 用「有没有 `android.*` 导入」去筛，恰好会把前者当成危险、把后者当成安全 —— 正好反了。
+
+### 错法三：把 `DataRootPolicy` 当成叶子
+
+表里写它「依赖：叶子」。实际它有
+
+```java
+|| ManagedRuntimeLayout.paths().contains("root/.dsh/" + name)
+```
+
+`ManagedRuntimeLayout` 是 87 行。这次影响不大（它零 android、零跨包，随时可搬），
+但它是**同一个坏习惯的第三个样本**：**没有打开文件去读那几处引用。**
+
+### 让 2.4 有解的那处发现
+
+推翻落点之后本来是无解的 —— 直到我把 `BackupTree.digest()` 打开看：
+
+```java
+if (fs.getClass() == AndroidBackupFileSystem.class && fs.stat(root).type.equals("DIRECTORY")) {
+  try (AndroidTreeFileSystem tree = new AndroidTreeFileSystem(root)) {
+    return digestTree(tree, root, control);
+  }
+}
+return digestTree(fs, root, control);          // ← 通用回退，功能完整
+```
+
+**那条 Android 链只是快路径。** 两条路径共用同一个 `TreeHash`/`visit`，
+而且分支条件只取决于 `fs` 的类型 —— **任何一次调用里两侧必然走同一分支**，
+所以摘掉它不会造成「一侧快、一侧通用」的不一致。
+
+于是落点变成：**搬纯 JVM 的恢复核心，摘掉这条用不上的快路径**，
+并且把「删掉的每一行都是 Android 专有分支、通用遍历逐字保留」写成断言
+（`verify-phase0.sh` 的 5n 节：既查 Android 引用没了，**也查 `ENTRY_LIMIT`/
+`INVALID_CHILD`/`SPECIAL_FILE`/`SOURCE_CHANGED`/`TreeHash` 还在**）。
+
+### 顺带被真实执行回答的那个开放问题
+
+2.3 删掉的那条测试（`oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive`）
+之所以被删，是因为它依赖 `NativeRestorePlan` → `BackupTree` → `AndroidTreeFileSystem`。
+审计里我写的是：
+
+> 「JVM 会不会在类加载/校验阶段就解析 `AndroidTreeFileSystem`，**读源码判断不了**，必须真跑。」
+
+**方法是对的，但答案的来源被我记错了。** 它在本机跑通了 —— 不是因为 JVM 的惰性解析，
+而是因为**我们先把那条引用删掉了**。前者是运气，后者是可复现的决定。
+两种情况的日志长得一模一样（都是 `OK (42 tests)`），
+若不写清区别，下一个人会以为「Android 引用留着也没事」。
+
+### 教训
+
+- **审计的产物不是一张表，是一条能走通的可达性路径。** 表会漏行；
+  从入口类出发、每遇到一个未登记的名字就追进去，漏不掉。
+- **审计的结论必须被一次真实执行证伪。** 这次证伪它的是 `javac` 的两次报错
+  和一次 `grep System.loadLibrary`。**如果 2.4 是纯文档阶段，这三处错会全部活下来。**
+- 与第 22 条同族（期望值不能来自阅读），但对象换了：
+  那次错的是**断言**，这次错的是**审计**。同一个病，换了宿主。
+
+---
+
+## 29. 改文档时把上一行整行替换掉了 —— **表里少一条，没有任何检查会红**
+
+想把第 28 条加进 `AGENTS.md` 的事故表末尾，我写了这样一个编辑：
+
+```
+old_string: | 27 | **新断言的第一次真跑…** | … |
+new_string: | 28 | **2.4 的只读审计第一版有三处是错的** | … |
+```
+
+**`old_string` 取的是第 27 条那一整行，而 `new_string` 里没有它。**
+于是这次「新增」实际上是一次**删除加新增**：第 27 条被第 28 条覆盖，
+表里少了一条。
+
+发现方式很朴素 —— 加完之后我数了一遍：
+
+```
+$ grep -c '^| 27 |' AGENTS.md
+0
+```
+
+### 为什么这个错值得单列一条
+
+- **它和第 23 条是同一族**：`git checkout --` 的破坏力来自「它比制造改动的手段更省事」；
+  整行替换的破坏力来自「**它的语义是「删掉这一行」，而我读成了「在这一行后面加一行」**」。
+- **没有任何检查会红。** 表格少一行，`check-references.py` 不关心，
+  `check-workflows.py` 不关心，`verify-phase0.sh` 也不关心 ——
+  它检查的是**文件里有什么**，不是**文件里应该有多少条**。
+  这与第 26 条完全同构：**「没有失败发生」不等于「检查发生过」**。
+- **代价不对称**：一次错误的编辑删掉的是一条**事故记录**，
+  而事故记录是这份文档里**唯一无法从代码重建**的东西。
+
+### 规矩
+
+> **往列表/表格里加东西之后，数一遍旧的还在不在。**
+> 「加」和「替换」在编辑工具里是同一个动作，区别只在我脑子里。
+
+这条已经写进 `AGENTS.md` 的「同一个病」表。

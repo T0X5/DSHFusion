@@ -17,7 +17,7 @@
     "copyright": "Copyright (c) 2026 qiannianhuanxiang",
     "license_file": "governance/upstream-licenses/DSHA/LICENSE"
   },
-  "phase": "阶段 2.1–2.3 —— 备份归档 v5 的格式、预检、范围枚举、写入与凭据投影",
+  "phase": "阶段 2.1–2.4：v5 格式与预检 + 范围与排除 + 凭据投影 + 恢复核心（NativeRestorePlan/BackupTree）",
   "derived": {
     "note": "**改写/适配后移植**的 DSHA 代码。与 files[] 不同：正文不是逐字节副本，所以不能靠 sha256 证明「没改」，只能如实列清「保留了哪条不变式、改掉了什么、为什么」。凡是正文可逐字节保留的，一律走 files[] 而不是这里。`kind: adapted` 是「只做机械等效替换」，`kind: rewritten` 是「结构重写」。",
     "items": [
@@ -99,14 +99,48 @@
         "local_path": "backup/src/test/java/com/deepseekharness/app/backup/CredentialProjectionTest.java",
         "kind": "adapted",
         "kept": [
-          "6 条测试与它们钉的性质一字未改：投影后仍被 provider 读得到、没有机器记录的源**逐字节不变**（不因重新序列化而抖动）、未知 schema/标签/别名/重复键/非有限数一律拒绝且诊断里不含密文、真实 HostSnapshot 归档走投影且保留源字节、「同元数据但原始字节变了」仍被拒、未选中或取消的恢复不动机器记录"
+          "7 条测试与它们钉的性质一字未改（含 2.4 恢复回来的那条）：投影后仍被 provider 读得到、没有机器记录的源**逐字节不变**、未知 schema/标签/别名/重复键/非有限数一律拒绝且诊断里不含密文、真实 HostSnapshot 归档走投影且保留源字节、「同元数据但原始字节变了」仍被拒、**归档里的机器记录在候选阶段就被投影掉**、未选中或取消的恢复不动机器记录"
         ],
         "changed": [
           "3 处 `Files.writeString(…, …)` 改为 `Files.write(…, ….getBytes(StandardCharsets.UTF_8))`、1 处 `Files.readString(…)` 改为 `new String(Files.readAllBytes(…), StandardCharsets.UTF_8)`（共 4 个调用点 / 3 条语句）—— 原因同第 20 条：本仓库的 AGP 8.9.2 让单元测试按 android.jar 解析 java.nio.file，而它没有 Java 11 的这两个方法",
           "其中 1 处跨 3 行的调用被括号配对改写器合并成 1 行（纯排版，语义不变）",
-          "**删掉了 1 条测试方法**：`oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive`（44 行、4 条断言）。它依赖 `NativeRestorePlan.inspect`，而 NativeRestorePlan → BackupTree → AndroidTreeFileSystem / AndroidBackupFileSystem 正是本仓库登记为**阶段 2.4** 的那条 Android 耦合链。**这是一次真实的覆盖损失，不是「不需要」**：它证明的是「归档里的机器记录会在候选阶段就被投影，来不及变成活动记录」。2.4 搬进 NativeRestorePlan 时必须把它一起搬回来。"
+          "**2.3 删掉的那条测试方法已在 2.4 恢复**：`oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive`（44 行、4 条断言）。2.3 删它是因为它依赖 `NativeRestorePlan`，而当时的闭包拖进 `AndroidTreeFileSystem`；2.4 摘掉了那条用不上的 Android 快路径（见 BackupTree 的条），于是这条链变成纯 JVM，测试**在本机真跑通过**。**它证明的性质（机器记录在候选阶段就被投影，来不及变成活动记录）在 2.3 确实没有被验证，现在被验证了。**"
         ],
         "why": "这些测试是 2.3 唯一能证明「投影真的删掉了机器记录、且没顺手改坏 provider 凭据」的东西，必须原样保留。只有 3 条语句因为工具链差异必须机械替换。",
+        "verified_by": "tools/check-dsha-imports.py"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupTree.java",
+        "upstream_bytes": 11171,
+        "upstream_sha256": "4084a2225d8268ac72d876bac5e13a3888519219a33d0a9f776db42c77de4e79",
+        "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupTree.java",
+        "kind": "adapted",
+        "kept": [
+          "**整个通用遍历逻辑一字未改**：`TreeHash` 的长度前缀字段格式、`visit` 的节点摘要与限额记账、`SOURCE_CHANGED`/`ENTRY_LIMIT`/`INVALID_CHILD`/`SPECIAL_FILE` 的判定、`copy` 的私有候选复制",
+          "`digest` 对外语义不变：对一棵树算出可比较的摘要（用于「复制前后各自核验源与候选」）"
+        ],
+        "changed": [
+          "**摘掉了整条 Android 快路径**（上游 3840 字节 → 本地 7330 字节）。删掉的是：`digest` 里 `fs.getClass() == AndroidBackupFileSystem.class` 的分支、`AndroidTreeFileSystem`/`DigestDirectory`/`LeafBatch` 的批量遍历（`visitChildren` 整个方法）、`ReadScratch`、以及 `visit` 的 `parent` 参数",
+          "**为什么必须摘**：这条快路径需要 `AndroidBackupFileSystem`(377) + `AndroidTreeFileSystem`(600) + `NativeStorage`(441)，其中 `NativeStorage` 调 `System.loadLibrary(\"termux\")` 并声明 7 个 native 方法（`statChildrenBatchBytes`/`prepareSmallFileBytes`/…）—— **这些符号在 DSHA 的 `libtermux.so` 里，而 DSHFusion 的骨干没有这个库**。搬进来会得到「编译通过、运行必 `UnsatisfiedLinkError`」的死代码；且 DSHA 是 proroot、DSHBox 是 proot，这条快路径在我们的运行模型里本来就不适用",
+          "**它只是优化，不是语义**：分支条件只取决于 `fs` 的类型，所以任何一次调用里两侧必然走同一分支 —— 摘掉它不会造成「一侧走快路径、另一侧走通用路径」的不一致。**残留风险**：两条路径的目录枚举顺序是否完全一致**我们没有验证**（验证它需要那个原生库），若有别处按摘要值跨实现比较，结论可能不同。此残留风险就登记在本条里（**不另开 divergences 条目** —— 按本仓库的既定分工，`divergences.json` 管「我们改了骨干的什么」，而这是从 DSHA 拿来的副本，属于本文件的 `derived` 段）"
+        ],
+        "why": "恢复核心是**会毁数据**的那条路径（候选构建 + 回滚），必须能在本机真编译真运行。摘掉这条用不上的快路径，`NativeRestorePlan`+`BackupTree` 的闭包就是纯 `java.*`，整条恢复逻辑可在本机跑（42 条测试）。",
+        "verified_by": "tools/check-dsha-imports.py"
+      },
+      {
+        "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/NativeRestorePlanTest.java",
+        "upstream_bytes": 9214,
+        "upstream_sha256": "654ad421c7f30a8684b11bba499e38c6eecf8136b1022c2417d793ea36aad32e",
+        "local_path": "backup/src/test/java/com/deepseekharness/app/backup/NativeRestorePlanTest.java",
+        "kind": "adapted",
+        "kept": [
+          "8 条测试与其性质一字未改：只读检查与候选构建**不碰活动数据**、未提及的文件不动；footer 校验失败**绝不产生活动写**；未选中的范围不会变成「应用恢复」；相对链接逃逸被拒；缺失链接目标的祖先**保留元数据但不建目录**；普通文件的链接目标父目录仍被拒；链接目标的符号链接父目录不被跟随；可用链接目标仍会建立链接"
+        ],
+        "changed": [
+          "10 处 `Files.writeString`/`Files.readString` 改为 android.jar 有的等价形式（同第 20 条的工具链差异）",
+          "其中跨多行的调用被括号配对改写器合并成 1 行（纯排版，语义不变）"
+        ],
+        "why": "2.4 的全部安全性都压在「预检 / 候选 / 提交」三步的次序上，这些测试是**唯一**能证明「校验失败时一个字节都没写进活动目录」的东西。",
         "verified_by": "tools/check-dsha-imports.py"
       }
     ]
@@ -246,6 +280,30 @@
       "upstream_sha256": "15dc65263dfd57d72ec3eca0900e79cc952c0fa9cafccca27492781b063e6298",
       "blob": "2b26a94a205ac6beac9166f935c0117d5cdcdbf6",
       "role": "把投影包在一个 BackupSource 外面：条目 token 同时绑定**原始字节**与**投影后字节**的摘要，因此「源在读取过程中变了」会被 CREDENTIAL_PROJECTION_SOURCE_CHANGED 挡住"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeRestorePlan.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/NativeRestorePlan.java",
+      "upstream_bytes": 17107,
+      "upstream_sha256": "ac07b6a6753bcbe9f6d6c5d9ca5f6dfdf3ac2fb5707361d5fdd13a6a53218412",
+      "blob": "",
+      "role": "阶段 2.4：恢复计划（预检 + 候选构建 + 校验），纯 JVM"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/DataFormatEvidence.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/DataFormatEvidence.java",
+      "upstream_bytes": 2472,
+      "upstream_sha256": "30a950443b25001b4c0c0d2355cf37c3be028cd908ebe1acd9156087222debce",
+      "blob": "",
+      "role": "阶段 2.4：NativeRestorePlan 的依赖（数据格式证据/诊断），纯 JVM"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/RuntimeDescriptor.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/RuntimeDescriptor.java",
+      "upstream_bytes": 6258,
+      "upstream_sha256": "51f48f136efe18c86c60f288f8fe1b9669d9e3fc199202316b125dae92f991a8",
+      "blob": "",
+      "role": "阶段 2.4：DataFormatEvidence 的依赖（运行环境描述），纯 JVM"
     }
   ],
   "not_imported": {
@@ -316,9 +374,14 @@
         "reason": "与 NativeRestorePlan 同属 DSHA 的原生恢复模型。"
       },
       {
-        "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/CredentialProjectionTest.java#oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive",
-        "reason": "依赖 NativeRestorePlan（→ BackupTree → AndroidTreeFileSystem / AndroidBackupFileSystem），属于阶段 2.4 的恢复编排。**这条测试证明的性质（机器记录在候选阶段就被投影）在 2.3 没有被验证** —— 2.4 必须把它连同 NativeRestorePlan 一起搬回来。",
-        "phase": "2.4"
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeRestoreTargets.java",
+        "reason": "**依赖 DSHA 自己的设置与凭据子系统**：`ConfigStore`(817 行) → `KeyVault`(145，4 个 android 导入，加密凭据存储) → `CredentialRead`(73) + `Constants`(95) + `PreferenceValue`(33)。它在 4 处调用 `new ConfigStore(context).hostSettingsState()/applyHostSettings()/prepareHostSettings()`。DSHFusion 的骨干（DSHBox，Kotlin + DataStore）有它自己的设置模型 —— 搬进 DSHA 的这套等于在骨干旁边长期并行第二套设置与凭据模型，每次双上游同步都会冲突。**DSHFusion 侧的对应实现要按骨干的设置模型另写（阶段 2.4b）**，不导入。",
+        "phase": "2.4b"
+      },
+      {
+        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/AndroidBackupFileSystem.java + AndroidTreeFileSystem.java + NativeStorage.java",
+        "reason": "**需要 DSHFusion 骨干没有的原生库**：`NativeStorage` 调 `System.loadLibrary(\"termux\")` 并声明 7 个 native 方法，符号在 DSHA 的 `libtermux.so` 里（DSHFusion 只有 libproot/libproot-loader/libtalloc/libandroid-shmem/libzstd-jni）。而且这三者只被 `BackupTree` 的 **Android 快路径**使用 —— 那是 proroot 的批量遍历优化，DSHBox 用的是 proot，路径不适用。导入 = 编译得过、运行必 `UnsatisfiedLinkError` 的死代码。**若将来 DSHFusion 有了等价的原生批量读取，可以按本文件的 `derived` 段里 BackupTree 那条把这条快路径接回来（届时需要先解决 libtermux 的原生符号）。**",
+        "phase": "——"
       }
     ]
   },

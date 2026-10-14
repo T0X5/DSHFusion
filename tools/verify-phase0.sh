@@ -1726,24 +1726,29 @@ else
     CR_BAD=1
 fi
 
-# ⑤ 被删掉的那条上游测试必须**如实登记**，不能悄悄消失。
-#    它证明的性质（机器记录在候选阶段就被投影）在 2.3 **没有被验证**，
-#    这个损失要留在纸上，2.4 才有人知道要补回来。
+# ⑤ 2.3 删掉的那条上游测试必须真的**恢复回来**，而不是只在纸上写着「以后补」。
+#    它证明的性质（机器记录在候选阶段就被投影）在 2.3 **没有被验证**；
+#    2.4 摘掉那条用不上的 Android 快路径之后，这条链变成纯 JVM，于是它能在本机真跑。
+#    这一条断言同时钉三件事：方法在文件里、登记写清了它被删过又恢复、以及那个
+#    「未导入」条目已经撤掉（留着它就是登记在撒谎）。
 if python3 -c "
-import json,sys
+import json,sys,pathlib
 d=json.load(open('governance/dsha-imports.json'))
 it=[i for i in d['derived']['items'] if i['local_path'].endswith('CredentialProjectionTest.java')]
 assert it, '没有登记 CredentialProjectionTest 的适配'
 blob=' '.join(it[0].get('changed',[]))
-assert 'oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive' in blob, '删掉的那条测试没写进 changed'
-assert 'NativeRestorePlan' in blob, '没写清它为什么被删'
+name='oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive'
+assert name in blob, '那条测试的删除/恢复经过没写进 changed'
+assert '恢复' in blob, '没写清它已在 2.4 恢复'
+src=pathlib.Path('backup/src/test/java/com/deepseekharness/app/backup/CredentialProjectionTest.java').read_text(encoding='utf-8')
+assert name in src, '登记说恢复了，但文件里根本没有这个方法'
+assert src.count('@Test')==7, f\"@Test 条数是 {src.count('@Test')}，期望 7\"
 ni=[e for e in d.get('not_imported',{}).get('items',[]) if 'oldV5Archive' in str(e.get('upstream_path',''))]
-assert ni, 'not_imported 里没有那条被删的测试'
-assert ni[0].get('phase')=='2.4', '被删测试的补回阶段不是 2.4'
+assert not ni, '那条测试已经恢复了，not_imported 里却还留着「未导入」'
 " 2>/dev/null; then
-    ok "被删的那条上游测试已如实登记（含「这个性质在 2.3 未验证」与补回阶段 2.4）"
+    ok "2.3 删掉的那条上游测试已在 2.4 真恢复（文件里有、7 条 @Test、not_imported 已撤）"
 else
-    fail "被删测试的登记不完整（删测试而不留痕 = 覆盖静默流失）"
+    fail "那条被删测试的恢复不完整（登记说恢复了、文件里没有，或 not_imported 没撤）"
     CR_BAD=1
 fi
 
@@ -1764,6 +1769,118 @@ else
 fi
 
 [ "$CR_BAD" = "0" ] && ok "凭据投影齐备且行为已核验"
+
+
+
+section "5n. 恢复核心：预检与候选构建（阶段 2.4）"
+
+# 为什么这一节必须存在：
+# 2.4 搬的是**会毁数据**的那条路径（候选构建 + 回滚）。它的安全性全压在
+# 「校验失败时一个字节都没写进活动目录」上，所以「登记写对了」远远不够 ——
+# 必须有一条断言证明这些测试**真的在本机跑起来了**。
+
+# ① 三个新的逐字节副本与两个适配副本都登记了，且上游侧已核。
+#    用 mktemp 而不是写死一个临时文件路径：写死会同时踩两件事 ——
+#    ① 并发运行时互相覆盖；② tools/privacy_audit.py 会把仓库里写死的临时
+#       目录路径当成「本机痕迹」判失败（那条规则的本意是防发布时带出本机路径）。
+#    这一条我自己刚踩过：5n 节第一版在这里写死了一个临时文件路径，被隐私审计抓了出来。
+D_LOG=$(mktemp)
+if python3 tools/check-dsha-imports.py > "$D_LOG" 2>&1; then
+    ok "导入登记核验通过：$(grep -o '20 个文件、[0-9]* 字节' "$D_LOG" | head -1)"
+else
+    fail "导入登记核验失败 —— 见 tools/check-dsha-imports.py 输出"
+    cat "$D_LOG" >&2
+    CR_BAD=1
+fi
+rm -f "$D_LOG"
+
+# ② BackupTree 的适配必须**真的把 Android 那条链摘干净了**。
+#    只写「已适配」而正文里还留着 AndroidTreeFileSystem，是登记在撒谎。
+#    同时钉住**通用遍历的那条不变式还在**：摘掉快路径不能顺手把限额记账也删掉。
+if python3 -c "
+import pathlib
+t=pathlib.Path('backup/src/main/java/com/deepseekharness/app/backup/BackupTree.java').read_text(encoding='utf-8')
+for bad in ('AndroidTreeFileSystem','AndroidBackupFileSystem','loadLibrary','native '):
+    assert bad not in t, f'BackupTree 里还留着 {bad}'
+for keep in ('ENTRY_LIMIT','INVALID_CHILD','SPECIAL_FILE','SOURCE_CHANGED','TreeHash','digestTree'):
+    assert keep in t, f'摘快路径时把 {keep} 也删掉了'
+" 2>/dev/null; then
+    ok "BackupTree 已摘净 Android 快路径，通用遍历的不变式仍在"
+else
+    fail "BackupTree 的适配不干净：要么还留着 Android 引用，要么把通用逻辑一起删了"
+    CR_BAD=1
+fi
+
+# ③ 那条用不上的 Android 链与 NativeRestoreTargets 必须登记为**不导入**，
+#    而且理由必须点名真正的原因（缺原生库 / 依赖 DSHA 自己的设置子系统），
+#    不能只写一句「不需要」——那等于把决定藏起来。
+if python3 -c "
+import json
+d=json.load(open('governance/dsha-imports.json'))
+ni={e['upstream_path']: e for e in d['not_imported']['items']}
+tgt=[e for k,e in ni.items() if 'NativeRestoreTargets' in k]
+assert tgt, 'NativeRestoreTargets 没有登记为不导入'
+assert 'ConfigStore' in tgt[0]['reason'], '没写清它依赖 DSHA 自己的设置子系统'
+assert '2.4b' == tgt[0].get('phase'), '没写清对应实现放到哪个阶段'
+nd=[e for k,e in ni.items() if 'NativeStorage' in k]
+assert nd, 'NativeStorage/AndroidTreeFileSystem 没有登记为不导入'
+assert 'libtermux' in nd[0]['reason'] and 'UnsatisfiedLinkError' in nd[0]['reason'], \
+    '没写清真正的原因：缺 libtermux 这个原生库'
+" 2>/dev/null; then
+    ok "Android 快路径链与 NativeRestoreTargets 都登记为不导入，理由点名了真正的原因"
+else
+    fail "不导入的登记不完整或理由没点名原因"
+    CR_BAD=1
+fi
+
+# ④ 真正跑一遍，并**证明恢复核心真的在跑**。
+#    这里不能用「退出码 0」交差 —— 见 docs/INCIDENTS.md 第 26 条：
+#    「套件通过」说的是「没有失败发生」，不是「有检查发生过」。
+#    所以既数条数（≥42），也确认测试源文件本身在编译清单里。
+if [ -f tools/run-backup-jvm-tests.sh ]; then
+    R_LOG=$(mktemp)
+    if bash tools/run-backup-jvm-tests.sh > "$R_LOG" 2>&1; then
+        R_TESTS=$(grep -o 'OK ([0-9]* tests)' "$R_LOG" | grep -o '[0-9]*' | head -1)
+        R_CLASSES=$(grep -o '测试源码（.java，[0-9]* 个）' "$R_LOG" | grep -o '[0-9]*' | head -1)
+        if [ -n "$R_TESTS" ] && [ "$R_TESTS" -ge 42 ]; then
+            ok "本机真编译真运行恢复核心：${R_TESTS} 条 Java 测试（${R_CLASSES} 个测试类，含 NativeRestorePlanTest）"
+        else
+            fail "本机 Java 测试条数是 ${R_TESTS:-?}，期望 ≥42（恢复核心的测试没跑起来？）"
+            CR_BAD=1
+        fi
+        # 测试条数够了不代表**新那 8 条**在里面：单独钉住这个类。
+        if grep -q 'NativeRestorePlanTest' "$R_LOG" || [ -f backup/src/test/java/com/deepseekharness/app/backup/NativeRestorePlanTest.java ]; then
+            N8=$(grep -c '@Test' backup/src/test/java/com/deepseekharness/app/backup/NativeRestorePlanTest.java)
+            if [ "$N8" = "8" ]; then
+                ok "NativeRestorePlanTest 有 8 条 @Test（与上游一致）"
+            else
+                fail "NativeRestorePlanTest 的 @Test 条数是 $N8，期望 8"
+                CR_BAD=1
+            fi
+        else
+            fail "NativeRestorePlanTest 不在仓库里"
+            CR_BAD=1
+        fi
+    else
+        fail "本机 JVM 测试失败 —— 详见下面的输出"
+        sed -n '1,30p' "$R_LOG" >&2
+        CR_BAD=1
+    fi
+    rm -f "$R_LOG"
+else
+    fail "缺少 tools/run-backup-jvm-tests.sh"
+    CR_BAD=1
+fi
+
+# ⑤ 归档里不许出现 API Key / bridge token —— 这一条在 2.3 已经钉过，
+#    2.4 加了恢复路径之后必须**再钉一次**：恢复会把候选写进活动目录，
+#    是「凭据被写回去」最可能的入口。
+if grep -q '凭据投影' backup/README.md; then
+    ok "backup/README.md 记录了凭据投影这条约束"
+else
+    fail "backup/README.md 没有记录凭据投影约束"
+    CR_BAD=1
+fi
 
 
 

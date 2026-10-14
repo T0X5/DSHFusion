@@ -167,6 +167,50 @@ public class CredentialProjectionTest {
   }
 
   @Test
+  public void oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive()
+      throws Exception {
+    File archiveOperation = temporary.newFolder(), restoreOperation = temporary.newFolder();
+    File incoming = new File(temporary.newFolder(), CredentialProjection.FILE);
+    Files.write(incoming.toPath(), bytes(credential()));
+    File archive = new File(archiveOperation, "old-v5.dshdata");
+    HostSnapshot.create(
+        fs,
+        List.of(new FileBackupSource(fs, "credentials", "settings", incoming, false, null)),
+        archiveOperation,
+        archive,
+        BackupArchiveTest.summary(),
+        false,
+        new BackupControl(null));
+    byte[] archiveBefore = Files.readAllBytes(archive.toPath());
+    File current = temporary.newFolder(),
+        currentCredential = new File(current, CredentialProjection.FILE);
+    Files.write(currentCredential.toPath(), "version: 1\nrecords: {provider/current: {kind: api-key, key: current-provider}}\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    byte[] currentBefore = Files.readAllBytes(currentCredential.toPath());
+    var plan =
+        NativeRestorePlan.inspect(
+            fs,
+            restoreOperation,
+            archive,
+            root ->
+                new NativeRestorePlan.Target(
+                    current,
+                    current,
+                    true,
+                    "dsh-home",
+                    CredentialProjection.FILE,
+                    currentCredential),
+            Set.of("application"),
+            new BackupControl(null));
+    plan.buildCandidates(true, new BackupControl(null));
+    File candidate = new File(restoreOperation, "candidate/dsh-home");
+    CredentialProjection.restoreCandidate(fs, candidate, true, new BackupControl(null));
+    String portable = new String(Files.readAllBytes(new File(candidate, CredentialProjection.FILE).toPath()), java.nio.charset.StandardCharsets.UTF_8);
+    assertFalse(portable.contains(LOCAL));
+    assertTrue(portable.contains(PROVIDER));
+    assertArrayEquals(currentBefore, Files.readAllBytes(currentCredential.toPath()));
+    assertArrayEquals(archiveBefore, Files.readAllBytes(archive.toPath()));
+  }
+  @Test
   public void unselectedOrCancelledCredentialRestoreKeepsCurrentMachineRecords() throws Exception {
     File candidate = temporary.newFolder(), file = new File(candidate, CredentialProjection.FILE);
     Files.write(file.toPath(), bytes(credential()));
