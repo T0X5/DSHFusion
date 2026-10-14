@@ -345,6 +345,7 @@
     <string name="home_start_dsh_needs_sandbox">沙箱未运行，请先启动沙箱</string>
     <string name="home_stop_cancel">取消</string>
     <string name="home_stop_confirm">停止</string>
+    <string name="home_dsh_address_unknown">地址待定</string>
     <string name="home_uptime_format">已运行 %1$s</string>
     <string name="move_err_copy_place_failed">复制就位失败：%1$s</string>
     <string name="move_err_copy_verify_failed">复制校验失败：%1$s（预期 %2$d 字节，实际 %3$d 字节）</string>

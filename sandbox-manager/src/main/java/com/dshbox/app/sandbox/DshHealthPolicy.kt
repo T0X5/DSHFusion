@@ -112,7 +112,14 @@ internal fun decideDshHealth(
         current = current.copy(unresponsiveSinceMs = null, startedAtMs = probe.nowMs)
     }
 
-    if (probe.webUiReady) {
+    // 就绪必须同时满足两件事：**应答者被证明是本实例**（webUiReady，见
+    // HttpHealthChecker 的 token 判据），且**本实例的进程仍存活**（processAlive）。
+    //
+    // 只查 webUiReady 是上游的写法，也是 DIV-0014 那个假「DSH 就绪」的直接成因：
+    // 另一个 DSH 应用占着端口时，端口有应答、但我们的进程早就 EADDRINUSE 退出了。
+    // 加上 processAlive 之后，这种情况会落到下面的失败分支（重启/退场），
+    // 而不是报一个用户无法分辨的假成功。
+    if (probe.webUiReady && probe.processAlive) {
         val streak = current.healthyStreak + 1
         val closed = streak >= DshHealthPolicy.HEALTHY_STREAK_TO_CLOSE
         return DshHealthDecision.Ready(

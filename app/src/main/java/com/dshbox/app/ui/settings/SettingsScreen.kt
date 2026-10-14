@@ -67,7 +67,6 @@ import com.dshbox.app.common.AppError
 import com.dshbox.app.common.AppResult
 import com.dshbox.app.common.UiText
 import com.dshbox.app.ui.asString
-import com.dshbox.app.common.Constants
 import com.dshbox.app.sandbox.SandboxManager
 import com.dshbox.app.sandbox.DshUpdateOutcome
 import com.dshbox.app.service.SandboxService
@@ -223,6 +222,8 @@ fun SettingsScreen(
 
     val dshVersion by sandboxManager.dshVersion.collectAsState()
     val dshUpdateProgress by sandboxManager.dshUpdateProgress.collectAsState()
+    // 本实例 DSH 的实际地址（端口由内核分配）；null = 未知，显示占位而非写死的端口。
+    val dshBaseUrl by sandboxManager.dshBaseUrl.collectAsState()
 
     val importDshLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -306,6 +307,7 @@ fun SettingsScreen(
             sandboxReady = sandboxRunning,
             onBack = { showDiagnostics = false },
             modifier = modifier,
+            dshBaseUrl = dshBaseUrl,
         )
         return
     }
@@ -393,7 +395,7 @@ fun SettingsScreen(
                 title = stringResource(
                     if (dshReady) R.string.home_dsh_ready else R.string.home_dsh_stopped,
                 ),
-                value = Constants.DSH_BASE_URL,
+                value = dshBaseUrl ?: context.getString(R.string.home_dsh_address_unknown),
             )
             SettingsDivider()
             SettingsRow(

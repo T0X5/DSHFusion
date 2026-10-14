@@ -74,7 +74,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.dshbox.app.DshApp
 import com.dshbox.app.R
-import com.dshbox.app.common.Constants
 import com.dshbox.app.sandbox.BundledRuntimeInstaller
 import com.dshbox.app.sandbox.DshState
 import com.dshbox.app.sandbox.SandboxState
@@ -120,6 +119,10 @@ fun MainScreen() {
     // DSH 启动 token：首页「浏览器」入口必须把它拼进 URL 才打得开——
     // 外部浏览器没有 WebView 的 cookie 交换与注入通道（用户实证：不带 token 会停在鉴权页）。
     var dshLaunchToken by remember { mutableStateOf<String?>(null) }
+    // 本实例 DSH 的实际地址（端口由内核分配，只有 DSH 自己打印之后才知道）。
+    // **不要用常量拼地址**：写死的端口既可能是别的应用的 DSH，也可能没人监听（DIV-0014）。
+    // null = 端口未知，此时所有入口都应显示占位/提示，而不是回退到某个默认端口。
+    var dshBaseUrl by remember { mutableStateOf<String?>(null) }
     val bundledRuntimeAvailable = remember {
         BundledRuntimeInstaller(app, app.container.sandboxConfig).hasBundledBundle()
     }
@@ -192,6 +195,10 @@ fun MainScreen() {
 
     LaunchedEffect(sandboxManager) {
         sandboxManager.dshLaunchToken.collectLatest { dshLaunchToken = it }
+    }
+
+    LaunchedEffect(sandboxManager) {
+        sandboxManager.dshBaseUrl.collectLatest { dshBaseUrl = it }
     }
 
     // 无响应提示（展示层）：健康循环只在连续不应答达阈值时置位，任一成功即复位。
@@ -296,6 +303,7 @@ fun MainScreen() {
                     onOpenPilot = onOpenPilot,
                     onOpenPluginManager = onOpenPluginManager,
                     dshLaunchToken = dshLaunchToken,
+                    dshBaseUrl = dshBaseUrl,
                     pendingOnlineImport = pendingOnlineImport,
                     onPendingOnlineImportConsumed = { pendingOnlineImport = false },
                 )
@@ -379,6 +387,8 @@ private fun TabContent(
     onOpenPluginManager: () -> Unit,
     /** DSH 启动 token（首页「浏览器」入口拼进 URL 用；未就绪时为 null）。 */
     dshLaunchToken: String?,
+    /** 本实例 DSH 的实际地址（端口由内核分配）；null = 端口未知。 */
+    dshBaseUrl: String?,
     pendingOnlineImport: Boolean,
     onPendingOnlineImportConsumed: () -> Unit,
 ) {
@@ -406,10 +416,11 @@ private fun TabContent(
             onOpenPluginManager = onOpenPluginManager,
             onOpenInBrowser = {
                 // 必须带 token：外部浏览器拿不到 WebView 的 cookie 交换，也拿不到注入脚本，
-                // 直接开 Constants.DSH_BASE_URL 会停在鉴权页（用户实证"打不开"）。
+                // 直接开裸地址会停在鉴权页（用户实证"打不开"）。
                 // token 未就绪时**不开**：裸开必然停在鉴权页，不如给一句可重试的提示。
+                // 地址同理必须来自本实例：写死的端口在端口冲突时指向的是**别人的** DSH。
                 val token = dshLaunchToken
-                if (token.isNullOrEmpty()) {
+                if (token.isNullOrEmpty() || dshBaseUrl.isNullOrEmpty()) {
                     Toast.makeText(context, R.string.home_open_no_token, Toast.LENGTH_SHORT).show()
                 } else {
                     // chooser：隐式 http 意图可被任何声明了 127.0.0.1 的 App 抢走，
@@ -417,7 +428,7 @@ private fun TabContent(
                     val opened = runCatching {
                         context.startActivity(
                             dshBrowserChooser(
-                                Constants.DSH_BASE_URL,
+                                dshBaseUrl,
                                 token,
                                 context.getString(R.string.home_open),
                             ),
@@ -428,6 +439,7 @@ private fun TabContent(
                     }
                 }
             },
+            dshBaseUrl = dshBaseUrl,
         )
         FilesScreen(
             modifier = Modifier
@@ -443,7 +455,10 @@ private fun TabContent(
                 .zIndex(if (selectedTab == 2) 1f else 0f)
                 .alpha(if (selectedTab == 2) 1f else 0f)
                 .then(if (selectedTab == 2) Modifier else Modifier.keepAliveHidden()),
-            url = com.dshbox.app.common.Constants.DSH_BASE_URL,
+            // 空串只可能出现在「还没学到端口」的时刻，而下面的 WebView 分支只在
+            // dshState == READY 时渲染 —— READY 已经蕴含端口已知（见 DshHealthPolicy
+            // 与 HttpHealthChecker），所以真正加载时 url 必然非空。
+            url = dshBaseUrl.orEmpty(),
             dshState = dshState,
             sandboxRunning = sandboxRunning,
             isActiveTab = selectedTab == 2,

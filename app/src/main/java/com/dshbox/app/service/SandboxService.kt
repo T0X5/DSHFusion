@@ -127,14 +127,17 @@ class SandboxService : Service() {
      */
     private fun openDshInBrowser() {
         val token = sandboxManager.dshLaunchToken.value
-        if (token.isNullOrEmpty()) {
+        // 地址与 token 都必须是**本实例**的：端口由内核分配，写死的端口在冲突时
+        // 指向的是别的应用（DIV-0014）。缺任一个就只提示，不开一个必然打不开的页面。
+        val baseUrl = sandboxManager.dshBaseUrl.value
+        if (token.isNullOrEmpty() || baseUrl.isNullOrEmpty()) {
             Toast.makeText(this, R.string.home_open_no_token, Toast.LENGTH_SHORT).show()
             return
         }
         val opened = runCatching {
             startActivity(
                 dshBrowserChooser(
-                    Constants.DSH_BASE_URL,
+                    baseUrl,
                     token,
                     getString(R.string.home_open),
                 ),
@@ -464,8 +467,8 @@ class SandboxService : Service() {
      *
      * ## `dsh web` 的限制
      *
-     * `dsh web` 会再起一个网页服务，与 app 已在跑的 3080 端口冲突。脚本注释里写明了，
-     * 引导用户用 headless / tui / plugin 这些子命令。
+     * `dsh web` 会再起一个网页服务，而 app 自己已经在跑一个 DSH 实例（端口由内核分配）。
+     * 脚本注释里写明了，引导用户用 headless / tui / plugin 这些子命令。
      *
      * 每次 bootstrap 覆写一次（与垫片、移动端适配插件同一策略），保证 APK 升级后脚本同步更新。
      */
@@ -893,7 +896,10 @@ class SandboxService : Service() {
             else -> ctx.getString(R.string.notify_dsh_other)
         }
         val contentTitle = "$sandboxText · $dshText"
-        val contentText = Constants.DSH_BASE_URL
+        // 通知栏副标题显示本实例的真实地址；端口未知时给占位文案，
+        // 不要拿一个写死的端口充数（那可能是别人的 DSH，见 DIV-0014）。
+        val contentText = sandboxManager.dshBaseUrl.value
+            ?: ctx.getString(R.string.home_dsh_address_unknown)
 
         // 打开动作交给 Service（见 openDshInBrowser）：token 在点击那一刻现取。
         val openPending = PendingIntent.getService(
@@ -996,7 +1002,8 @@ class SandboxService : Service() {
             # 作为"不可覆盖地发布文件"的原语（会话持久化 / 写工具 / 附件发布 / 插件安装
             # 都会走到），不加载垫片这些链路会以 EPERM/EACCES 失败。
             #
-            # 提示：`dsh web` 会再起一个网页服务，与 app 已在跑的 3080 端口冲突。
+            # 提示：`dsh web` 会再起一个网页服务，而 app 自己已经跑着一个 DSH 实例
+            # （它的端口由内核分配，终端里看不到，也不该去猜）。
             # 终端里建议用：dsh --profile headless "<任务>" / dsh --profile tui /
             # dsh plugin ... / dsh --dump-config
             [ -n "${'$'}DSH_HOME" ] || DSH_HOME=/root/projects/.dsh

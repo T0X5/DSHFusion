@@ -1031,6 +1031,106 @@ else
     fail "守卫不在 npm install 之前：guard=$guard_line npm=$npm_line"
 fi
 
+section "5g. 动态端口与健康检查身份核验（DIV-0014）"
+
+# 这一节测的是一个**真机上实测到**的缺陷：端口被写死成 3080 时，与另一个 DSH
+# 应用并存安装会同时坏两件事 —— 新实例因 EADDRINUSE 起不来，而健康检查探到的是
+# **别人**的服务，于是界面把「没起来的实例」显示成「DSH 就绪」；
+# 首页「启动」按钮的条件又是 `sandboxRunning && !dshReady`，被灰掉之后
+# 用户连手动重试的机会都没有。
+CONST_KT="common/src/main/java/com/dshbox/app/common/Constants.kt"
+POLICY_KT="sandbox-manager/src/main/java/com/dshbox/app/sandbox/DshHealthPolicy.kt"
+RUNNER_KT="sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxProcessRunner.kt"
+MGR_KT="sandbox-manager/src/main/java/com/dshbox/app/sandbox/DefaultSandboxManager.kt"
+HC_KT="sandbox-manager/src/main/java/com/dshbox/app/sandbox/HttpHealthChecker.kt"
+
+if grep -qE 'const val DSH_DEFAULT_PORT|const val DSH_BASE_URL' "$CONST_KT"; then
+    fail "Constants.kt 仍有写死的端口/地址常量（DIV-0014 未生效）"
+else
+    ok "Constants.kt 已无写死的端口与地址常量"
+fi
+if grep -q 'const val DSH_PORT_AUTO = 0' "$CONST_KT" && grep -q 'fun dshBaseUrl(port: Int)' "$CONST_KT"; then
+    ok "端口改为「让内核分配」，地址改为按实际端口拼"
+else
+    fail "缺少 DSH_PORT_AUTO 或 dshBaseUrl(port)"
+fi
+# 端口必须作为**命令行参数**传下去。DSH 只认 --port，不读 PORT 环境变量：
+# 上游设的那个 PORT env 是死代码（webserver 的 port 只来自 ctx.webStartup.port）。
+if grep -q -- '--port \$port' "$RUNNER_KT"; then
+    ok "dsh 启动命令行带 --port（端口真的传下去了）"
+else
+    fail "dsh 启动命令行没传 --port —— 端口不会被内核分配"
+fi
+if grep -q 'base\["PORT"\]' "$MGR_KT"; then
+    fail "DefaultSandboxManager 又设了那个不起作用的 PORT 环境变量"
+else
+    ok "不起作用的 PORT 环境变量未复活"
+fi
+if grep -q 'DshWebLaunchParser.parse' "$MGR_KT"; then
+    ok "端口/token 从 DSH 自己的输出里解析（不猜）"
+else
+    fail "没有从 DSH 输出解析端口/token"
+fi
+if grep -q '!= HTTP_UNAUTHORIZED' "$HC_KT"; then
+    ok "健康检查带 token 核验身份（401 = 应答者不是我）"
+else
+    fail "健康检查没有身份核验 —— 会再把别人的服务当成自己的"
+fi
+if grep -q 'probe.webUiReady && probe.processAlive' "$POLICY_KT"; then
+    ok "Ready 同时要求 webUiReady 与 processAlive"
+else
+    fail "Ready 只看 webUiReady —— 端口被别人占用时会误报就绪"
+fi
+
+# 代码里不得再出现写死的「回环地址:端口」。
+# 注释里提到它是**允许**的 —— 那正是解释「为什么不能写死」的地方；
+# 把注释也一并禁掉会逼作者删掉解释，方向正好反了。（与 5f 节的注释过滤同理。）
+HARD=0
+LAST_HIT=""
+while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    code="${hit%%//*}"
+    t="${code#*:*:}"
+    t="${t#"${t%%[![:space:]]*}"}"
+    case "$t" in ""|/\**|\**) continue ;; esac
+    HARD=$((HARD + 1))
+    LAST_HIT="$hit"
+done < <(grep -rn '127\.0\.0\.1:3080\|localhost:3080' --include=*.kt */src/main/ 2>/dev/null || true)
+if [ "$HARD" -eq 0 ]; then
+    ok "src/main 的代码里没有写死的回环地址+端口"
+else
+    fail "仍有 $HARD 处写死的地址，例如：$LAST_HIT"
+fi
+
+# 「地址未知」的占位文案必须在 6 个语言里都存在（键集合必须一致）
+MISSING_LANG=""
+for lang in values values-zh values-ar values-es values-fr values-ru; do
+    if ! grep -q 'name="home_dsh_address_unknown"' "app/src/main/res/$lang/strings.xml" 2>/dev/null; then
+        MISSING_LANG="$MISSING_LANG $lang"
+    fi
+done
+if [ -z "$MISSING_LANG" ]; then
+    ok "6 个语言都有「地址待定」占位文案"
+else
+    fail "缺占位文案的语言：$MISSING_LANG"
+fi
+
+# 反向验证：检查器必须能拦住真实故障。
+# 本项目已经吃过三次「检查器自己骗自己」的亏，所以每条断言都要证明它会失败。
+cp "$POLICY_KT" "$SCRATCH/policy14.bak"
+sed -i 's/if (probe.webUiReady && probe.processAlive) {/if (probe.webUiReady) {/' "$POLICY_KT"
+if bash tools/apply-divergences.sh --check >/dev/null 2>&1; then
+    fail "注入后 DIV-0014 检查仍通过：拦不住「Ready 只看 webUiReady」"
+else
+    ok "注入后重放：Ready 判据退回只看 webUiReady 被拦下 exit=1"
+fi
+cp "$SCRATCH/policy14.bak" "$POLICY_KT"
+if bash tools/apply-divergences.sh --check >/dev/null 2>&1; then
+    ok "恢复后重放重新通过                                exit=0"
+else
+    fail "恢复后重放仍失败（备份/还原有问题）"
+fi
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do

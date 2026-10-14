@@ -1112,6 +1112,172 @@ def handle_div_0013(entry) -> tuple[str, str]:
     return OK, "已插入 zstd 警告横幅，上游正文未改"
 
 
+def handle_div_0014(entry) -> tuple[str, str]:
+    """DSH 端口改为内核动态分配 + 健康检查必须核验身份（DIV-0014）。
+
+    这条偏离**没有可自动重放的锚点**：它跨 22 个文件，而且改的是语义
+    （把「端口是编译期常量」换成「端口是运行期从 DSH 输出里学到的实例属性」），
+    不是插入一段文本。所以本函数只做**核验**，不自动改写。
+
+    为什么不自动改写：改的是上游正在演进的核心运行期代码（进程启动命令行、
+    健康判定）。自动改写极可能把上游的新逻辑覆盖掉，而在这一处「覆盖」的后果
+    恰恰是**静默退回写死端口** —— 也就是这条偏离要修的那个 bug 本身。
+    宁可停下来让人看一眼，也不要把一个看起来成功、实际退回原状的改动写进去。
+
+    ⚠️ 检查必须钉住**语义**，不能只查字符串存在 —— 本项目已经在「检查器自己骗自己」
+    上栽过三次（最近一次是断言 6 被 `.sha256` 侧车骗过，报了个假的好消息）。
+    所以这里刻意区分两种查法：
+      - 「必须存在」查的是**声明/表达式形式**（`const val DSH_PORT_AUTO`、
+        `probe.webUiReady && probe.processAlive`），不是「文件里出现过某个词」；
+      - 「必须不存在」查的是**被删掉的那个声明**（`const val DSH_DEFAULT_PORT`），
+        而**不是**「文件里出现过 3080」。后者会被解释性注释误伤，
+        而那会逼着作者删掉解释 —— 正是我们不想要的方向。
+    """
+    REQUIRED = [
+        ("common/src/main/java/com/dshbox/app/common/Constants.kt",
+         ["const val DSH_PORT_AUTO", "fun dshBaseUrl(port: Int)"],
+         "端口改为「让内核分配」，地址改为按实际端口拼"),
+        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxConfig.kt",
+         ["val dshPort: Int = Constants.DSH_PORT_AUTO"],
+         "配置默认值不再是 3080"),
+        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxProcessRunner.kt",
+         ["--port $port"],
+         "端口必须作为命令行参数传给 dsh"),
+        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DefaultSandboxManager.kt",
+         ["DshWebLaunchParser.parse",
+          "portProvider = { _dshPort.value }",
+          "tokenProvider = { _dshLaunchToken.value }",
+          "resetDshEndpointState"],
+         "从 dsh 自己的输出学端口+token，并把运行期值喂给健康检查"),
+        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/HttpHealthChecker.kt",
+         ["tokenProvider", "!= HTTP_UNAUTHORIZED"],
+         "健康检查核验身份：401 = 应答者不认识本实例的 token"),
+        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DshHealthPolicy.kt",
+         ["probe.webUiReady && probe.processAlive"],
+         "就绪必须同时要求本实例进程存活"),
+        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxHealth.kt",
+         ["instanceVerified"],
+         "区分「没人应答」与「有人应答但不是我」"),
+        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxManager.kt",
+         ["val dshPort: StateFlow<Int>", "val dshBaseUrl: StateFlow<String?>"],
+         "接口暴露实例端口与实例地址"),
+        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DshWebLaunch.kt",
+         # 钉的是**代码表达式**而不是字面量 `65535`：KDoc 里也写着「1..65535」，
+         # 只查字面量的话，把校验删掉仍然能通过 —— 实测漏过一次，故收紧。
+         ["dsh web: http", "port !in 1..65535"],
+         "端口/token 解析器存在，且会拒绝越界端口"),
+        # ── UI 层：光有「资源里有个占位文案」不够，必须确认 UI 真的在用实例地址。
+        #    只查资源键会被「UI 仍然写死地址」骗过 —— 实测过，这一条是补上来的。
+        ("app/src/main/java/com/dshbox/app/ui/home/HomeScreen.kt",
+         ["dshBaseUrl ?: stringResource(R.string.home_dsh_address_unknown)"],
+         "首页显示本实例地址，端口未知时给占位文案"),
+        ("app/src/main/java/com/dshbox/app/ui/MainScreen.kt",
+         ["sandboxManager.dshBaseUrl.collectLatest", "url = dshBaseUrl.orEmpty()"],
+         "WebView 与浏览器入口用本实例地址"),
+        ("app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+         ["sandboxManager.dshBaseUrl.value"],
+         "通知栏与浏览器入口用本实例地址"),
+        ("app/src/main/java/com/dshbox/app/ui/settings/DiagnosticsScreen.kt",
+         ["R.string.home_dsh_address_unknown"],
+         "诊断页显示本实例地址"),
+    ]
+
+    FORBIDDEN = [
+        ("common/src/main/java/com/dshbox/app/common/Constants.kt",
+         ["const val DSH_DEFAULT_PORT", "const val DSH_BASE_URL"],
+         "写死的端口常量与地址常量必须已删除"),
+        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DefaultSandboxManager.kt",
+         ['base["PORT"]'],
+         "上游那个不起作用的 PORT 环境变量必须已删除"),
+        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/HttpHealthChecker.kt",
+         ["in 200..599"],
+         "「任意状态码都算存活」的判据必须已被替换"),
+    ]
+
+    missing: list[str] = []
+    present: list[str] = []
+
+    for rel, needles, why in REQUIRED:
+        path = ROOT / rel
+        if not path.exists():
+            return PENDING, f"{rel} 尚未导入"
+        text = read(path)
+        for n in needles:
+            (present if n in text else missing).append(f"{rel}: {n}（{why}）")
+
+    for rel, needles, why in FORBIDDEN:
+        path = ROOT / rel
+        if not path.exists():
+            return PENDING, f"{rel} 尚未导入"
+        text = read(path)
+        for n in needles:
+            if n in text:
+                missing.append(f"{rel}: 仍存在 {n}（{why}）")
+
+    # 全库扫描：任何 Kotlin **代码**（非注释）都不得再引用旧常量。
+    # 注释里提到它们是可以的 —— 那正是解释「为什么删掉」的地方。
+    stale: list[str] = []
+    for kt in ROOT.rglob("*.kt"):
+        try:
+            body = kt.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for lineno, line in enumerate(body.splitlines(), 1):
+            code = line.split("//", 1)[0]           # 去掉行尾注释
+            stripped = code.strip()
+            if stripped.startswith("*") or stripped.startswith("/*"):
+                continue                             # 块注释 / KDoc 行
+            if "Constants.DSH_BASE_URL" in code or "Constants.DSH_DEFAULT_PORT" in code:
+                stale.append(f"{kt.relative_to(ROOT)}:{lineno}")
+    if stale:
+        missing.append("仍有代码引用旧常量：" + "、".join(stale[:5]))
+
+    # 全库扫描：src/main 的 Kotlin **代码**里不得再出现写死的「回环地址:端口」。
+    # 注释里提到它是可以的 —— 那正是解释「为什么不能写死」的地方；
+    # 若把注释也一并禁掉，作者会被逼着删掉解释，方向正好反了。
+    # 测试源不在扫描范围内：那里的字面量是夹具，不是配置。
+    hardcoded: list[str] = []
+    for module in ("app", "common", "sandbox-manager", "plugin-manager", "bridge",
+                   "terminal-session", "terminal-emulator", "terminal-view"):
+        base = ROOT / module / "src" / "main"
+        if not base.is_dir():
+            continue
+        for kt in base.rglob("*.kt"):
+            try:
+                body = kt.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for lineno, line in enumerate(body.splitlines(), 1):
+                code = line.split("//", 1)[0]
+                stripped = code.strip()
+                if stripped.startswith("*") or stripped.startswith("/*"):
+                    continue
+                if "127.0.0.1:3080" in code or "localhost:3080" in code:
+                    hardcoded.append(f"{kt.relative_to(ROOT)}:{lineno}")
+    if hardcoded:
+        missing.append("代码里仍有写死的回环地址+端口：" + "、".join(hardcoded[:5]))
+
+    # 6 个语言的 strings.xml 都必须带上「地址未知」的占位文案
+    res = ROOT / "app" / "src" / "main" / "res"
+    for lang in ("values", "values-zh", "values-ar", "values-es", "values-fr", "values-ru"):
+        f = res / lang / "strings.xml"
+        if not f.exists():
+            return PENDING, f"{lang}/strings.xml 尚未导入"
+        if 'name="home_dsh_address_unknown"' not in read(f):
+            missing.append(f"app/src/main/res/{lang}/strings.xml: 缺 home_dsh_address_unknown")
+
+    if not missing:
+        return OK, f"动态端口与身份核验均在场（{len(present)} 项断言通过）"
+
+    detail = "；".join(m[:90] for m in missing[:4])
+    if CHECK_ONLY:
+        return FAILED, f"缺少 {len(missing)} 项：{detail}"
+    return FAILED, (
+        "本偏离无法自动重放（跨文件语义改动）。请按 governance/divergences.json "
+        f"里 DIV-0014 的 reapply 字段人工核对。缺：{detail}"
+    )
+
+
 HANDLERS = {
     "DIV-0001": handle_div_0001,
     "DIV-0002": handle_div_0002,
@@ -1126,6 +1292,7 @@ HANDLERS = {
     "DIV-0011": handle_div_0011,
     "DIV-0012": handle_div_0012,
     "DIV-0013": handle_div_0013,
+    "DIV-0014": handle_div_0014,
 }
 
 

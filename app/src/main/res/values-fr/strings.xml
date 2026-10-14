@@ -365,6 +365,7 @@
     <string name="home_start_dsh_needs_sandbox">Le bac à sable ne fonctionne pas. Démarrez-le d\'abord.</string>
     <string name="home_stop_cancel">Annuler</string>
     <string name="home_stop_confirm">Arrêter</string>
+    <string name="home_dsh_address_unknown">Adresse en attente</string>
     <string name="home_uptime_format">En cours d\'exécution depuis %1$s</string>
     <string name="move_err_copy_place_failed">Échec du placement de l\'élément copié : %1$s</string>
     <string name="move_err_copy_verify_failed">Échec de la vérification de la copie : %1$s (%2$d octets attendus, %3$d octets reçus)</string>

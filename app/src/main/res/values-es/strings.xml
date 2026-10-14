@@ -365,6 +365,7 @@
     <string name="home_start_dsh_needs_sandbox">El entorno aislado no está en ejecución. Inícialo primero.</string>
     <string name="home_stop_cancel">Cancelar</string>
     <string name="home_stop_confirm">Detener</string>
+    <string name="home_dsh_address_unknown">Dirección pendiente</string>
     <string name="home_uptime_format">En ejecución durante %1$s</string>
     <string name="move_err_copy_place_failed">Error al colocar el elemento copiado: %1$s</string>
     <string name="move_err_copy_verify_failed">Falló la verificación de la copia: %1$s (se esperaban %2$d bytes, se obtuvieron %3$d bytes)</string>

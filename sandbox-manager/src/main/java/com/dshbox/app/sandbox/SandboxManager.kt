@@ -39,6 +39,24 @@ interface SandboxManager {
      */
     val dshLaunchToken: StateFlow<String?>
 
+    /**
+     * 本实例 DSH webserver **实际绑定**的端口；0 = 未知（进程未起或尚未打印 URL）。
+     *
+     * 只由 DSH 自身输出解析而来，见 [DshWebLaunchParser] 与 DIV-0014。
+     * 展示层不要用常量端口拼地址，用 [dshBaseUrl]。
+     */
+    val dshPort: StateFlow<Int>
+
+    /**
+     * WebView / 系统浏览器要打开的 DSH 地址，**由实际端口拼成**；null = 端口未知。
+     *
+     * 为什么必须由实例提供、而不是一个常量：端口现在由内核分配（每个实例都不同），
+     * 上游把地址固化成 `Constants.DSH_BASE_URL` 的做法会让所有消费者指向同一个
+     * 写死的 3080 —— 那既可能是别人的 DSH，也可能根本没人监听（DIV-0014）。
+     * 端口未知时调用方应显示占位提示，**不要回退到某个默认端口去打开**。
+     */
+    val dshBaseUrl: StateFlow<String?>
+
     /** One-time directory initialization. Idempotent. */
     suspend fun initialize()
 

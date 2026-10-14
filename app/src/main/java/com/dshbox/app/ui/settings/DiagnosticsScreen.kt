@@ -45,7 +45,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.dshbox.app.R
-import com.dshbox.app.common.Constants
 import com.dshbox.app.ui.files.PrimaryGreen
 import java.io.File
 import kotlinx.coroutines.delay
@@ -61,6 +60,8 @@ fun DiagnosticsScreen(
     sandboxReady: Boolean,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 本实例 DSH 的实际地址；null = 端口未知（显示占位，不回退到写死的端口）。 */
+    dshBaseUrl: String? = null,
 ) {
     val context = LocalContext.current
     val logsDir = File(context.filesDir, "logs")
@@ -118,8 +119,11 @@ fun DiagnosticsScreen(
             style = MaterialTheme.typography.headlineSmall,
         )
 
+        // 地址来自本实例学到的端口；未知时给占位文案 —— 诊断页尤其不能显示一个
+        // 「看起来像地址、其实是别人 DSH 或根本没人监听」的写死端口（DIV-0014）。
+        val addressText = dshBaseUrl ?: stringResource(R.string.home_dsh_address_unknown)
         Text(
-            text = stringResource(R.string.diagnostics_dsh_address) + "：" + Constants.DSH_BASE_URL,
+            text = stringResource(R.string.diagnostics_dsh_address) + "：" + addressText,
             style = MaterialTheme.typography.bodyLarge,
         )
 

@@ -1,5 +1,6 @@
 package com.dshbox.app.sandbox
 
+import com.dshbox.app.common.Constants
 import java.io.File
 
 data class SandboxConfig(
@@ -8,7 +9,15 @@ data class SandboxConfig(
     /** 应用 cacheDir（可随系统/清理功能释放）；1.1.1 起 npm 下载缓存放这里。 */
     val appCacheDir: File? = null,
     val dshHost: String = "127.0.0.1",
-    val dshPort: Int = 3080,
+    /**
+     * 请求 DSH 绑定的端口；默认 [com.dshbox.app.common.Constants.DSH_PORT_AUTO]（0）= 让内核分配。
+     *
+     * 这**不是**「DSH 在哪个端口」的答案，只是一个请求值：真实端口由 DSH 在绑定之后
+     * 打印出来，app 解析后经 `SandboxManager.dshBaseUrl` 暴露（DIV-0014）。
+     * 保留可覆盖的能力，是为了让宿主侧测试与特殊部署能指定端口，而不是让调用方
+     * 依赖某个默认值 —— 上游把它写死 3080 的代价见 [Constants.DSH_PORT_AUTO]。
+     */
+    val dshPort: Int = Constants.DSH_PORT_AUTO,
     val healthPath: String = "/",
     val maxAutoRestartAttempts: Int = 3,
     /**

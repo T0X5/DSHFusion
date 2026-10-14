@@ -53,7 +53,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.dshbox.app.R
-import com.dshbox.app.common.Constants
 import com.dshbox.app.service.SandboxService
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -87,6 +86,13 @@ fun HomeScreen(
      * cookie 交换与注入通道），这正是该入口"点开不可用"的原因。
      */
     onOpenInBrowser: () -> Unit,
+    /**
+     * 本实例 DSH 的实际地址（端口由内核分配，DSH 打印后 app 才学到）；null = 未知。
+     *
+     * 只用于**展示**：未知时显示占位文案，绝不回退到某个默认端口 ——
+     * 那正是 DIV-0014 里「显示 3080、其实那是别人的 DSH」的成因。
+     */
+    dshBaseUrl: String? = null,
 ) {
     val context = LocalContext.current
     var showSandboxStopDialog by remember { mutableStateOf(false) }
@@ -216,6 +222,7 @@ fun HomeScreen(
             onStop = { showDshStopDialog = true },
             onRestart = { SandboxService.restartDsh(context) },
             onOpenInBrowser = onOpenInBrowser,
+            dshBaseUrl = dshBaseUrl,
         )
 
         // 入口卡放在启停板块之下：首页的阅读顺序是"先看状态，再进页面"。
@@ -498,6 +505,7 @@ private fun DshStatusCard(
     onStop: () -> Unit,
     onRestart: () -> Unit,
     onOpenInBrowser: () -> Unit,
+    dshBaseUrl: String?,
 ) {
     var elapsedSeconds by remember { mutableStateOf(0L) }
     LaunchedEffect(dshReady) {
@@ -597,9 +605,11 @@ private fun DshStatusCard(
                 // 地址 / 运行时长：左缘对齐状态文字（圆点 8dp + 间距 12dp = 20dp）。
                 // 地址单行不折行：窄屏（320dp）或未来换成更长的地址时，宁可省略号也不要
                 // 折行把卡片顶高（本卡刚按"更紧凑"调过）。
+                // 端口未知时显示占位，而不是回退到某个默认端口：写死 3080 曾经让界面
+                // 在这里显示一个**属于别人的**地址（DIV-0014）。宁可说"地址待定"。
                 Column(modifier = Modifier.padding(start = 20.dp)) {
                     Text(
-                        text = Constants.DSH_BASE_URL,
+                        text = dshBaseUrl ?: stringResource(R.string.home_dsh_address_unknown),
                         style = MaterialTheme.typography.bodyMedium.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         ),

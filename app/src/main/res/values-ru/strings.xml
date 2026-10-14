@@ -375,6 +375,7 @@
     <string name="home_start_dsh_needs_sandbox">Песочница не запущена. Сначала запустите её.</string>
     <string name="home_stop_cancel">Отмена</string>
     <string name="home_stop_confirm">Остановить</string>
+    <string name="home_dsh_address_unknown">Адрес уточняется</string>
     <string name="home_uptime_format">Работает %1$s</string>
     <string name="move_err_copy_place_failed">Не удалось разместить скопированный элемент: %1$s</string>
     <string name="move_err_copy_verify_failed">Проверка копирования не пройдена: %1$s (ожидалось %2$d байт, получено %3$d байт)</string>

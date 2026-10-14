@@ -147,4 +147,34 @@ class DshHealthPolicyTest {
         val d = decide(s, nowMs = 600_000, ready = false, alive = false, interactive = false)
         assertTrue(d is DshHealthDecision.Restart)
     }
+
+    /**
+     * DIV-0014 的直接回归：**端口有人应答，但应答的不是我们**。
+     *
+     * 这正是真机上发生过的形态 —— 另一个 DSH 应用占着 3080，本实例的 `dsh web`
+     * 因 EADDRINUSE 已经退出，而健康检查探到的是别人的服务。上游的判据只看
+     * `webUiReady`，于是返回 `Ready`，界面显示「DSH 就绪」、首页「启动」按钮
+     * 又因为 `!dshReady` 而被灰掉，用户连重试都点不到。
+     *
+     * 修复后 `Ready` 必须同时要求 `processAlive`：句柄已死时一律走失败分支。
+     */
+    @Test
+    fun `answering port with a dead handle is never reported as ready`() {
+        val s = DshWindowState.fresh(0)
+        val d = decide(s, nowMs = 3_000, ready = true, alive = false)
+        assertFalse(
+            "端口有应答但本实例进程已死，不得判就绪（否则用户拿到一个无法分辨的假成功）",
+            d is DshHealthDecision.Ready,
+        )
+        assertTrue(d is DshHealthDecision.Restart)
+        assertFalse(d.next.wasReady)
+    }
+
+    @Test
+    fun `answering port with a dead handle still restarts after the instance was ready`() {
+        val s = readyState(streak = DshHealthPolicy.HEALTHY_STREAK_TO_CLOSE)
+        val d = decide(s, nowMs = 3_000, ready = true, alive = false)
+        assertTrue(d is DshHealthDecision.Restart)
+        assertEquals(1, d.next.restartAttempts)
+    }
 }

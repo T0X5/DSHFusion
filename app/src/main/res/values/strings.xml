@@ -355,6 +355,7 @@
     <string name="home_start_dsh_needs_sandbox">Sandbox is not running. Start it first.</string>
     <string name="home_stop_cancel">Cancel</string>
     <string name="home_stop_confirm">Stop</string>
+    <string name="home_dsh_address_unknown">Address pending</string>
     <string name="home_uptime_format">Running for %1$s</string>
     <string name="move_err_copy_place_failed">Failed to place the copied item: %1$s</string>
     <string name="move_err_copy_verify_failed">Copy verification failed: %1$s (expected %2$d bytes, got %3$d bytes)</string>

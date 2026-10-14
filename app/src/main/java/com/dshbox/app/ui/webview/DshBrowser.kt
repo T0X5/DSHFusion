@@ -8,11 +8,14 @@ import android.net.Uri
  *
  * ## 为什么必须带 token
  * 外部浏览器拿不到 WebView 的 cookie 交换，也没有我们的注入通道，
- * 不带 token 直接开 [com.dshbox.app.common.Constants.DSH_BASE_URL] 会停在鉴权页——
- * 这正是首页该入口"点开不可用"的原因。
+ * 不带 token 直接开裸地址会停在鉴权页 —— 这正是首页该入口"点开不可用"的原因。
+ *
+ * ## 为什么 base 必须由调用方传入本实例的地址
+ * 端口由内核分配（DIV-0014），所以这里**没有**、也不该有一个默认地址：
+ * 写死的 `http://127.0.0.1:3080` 在端口冲突时指向的是**另一个应用的** DSH。
  *
  * ## 为什么要套一层 chooser（而不是裸隐式意图）
- * `ACTION_VIEW` + `http://127.0.0.1:3080` 是**隐式**意图：任何声明了
+ * `ACTION_VIEW` + `http://127.0.0.1:<port>` 是**隐式**意图：任何声明了
  * `<data android:scheme="http" android:host="127.0.0.1"/>` 的应用都能参与解析。
  * 而 URL 里的 launch token 等同于 DSH 网页端（进而沙箱）的凭据——一旦被别的应用
  * 静默接管，等于把沙箱控制权交出去。chooser 让用户显式选择、也让接管无处藏身。

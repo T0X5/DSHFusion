@@ -119,7 +119,7 @@
       "target_files": [
         "tools/privacy_audit.py"
       ],
-      "change": "两处改动。(1) 新增 FROZEN_PREFIXES，scan() 跳过 governance/upstream-licenses/ 下的文件；(2) ALLOW 增加 example\\.invalid 一条。",
+      "change": "三处改动。(1) 新增 FROZEN_PREFIXES，scan() 跳过 governance/upstream-licenses/ 下的文件；(2) ALLOW 增加 example\\.invalid 一条；(3) ALLOW 再增加一条仓库内相对路径 —— `app/src/main/java/com/dshbox/app/ui/home/HomeScreen.kt` 里的 `/home/HomeScreen.kt` 被「Linux 家目录」正则误匹配（与既有那条「安卓导航三键名」同一类）。该条目刻意写到完整仓库前缀，**不放宽任何 `/home/…` 形态**：已做反向验证 —— `/home/t0x5/secret/project`、`/home/HomeScreen.kt`、`/home/other/HomeScreen.kt` 三者仍然被报出。触发来源是 DIV-0014 在 `target_files` 里列出了该路径。",
       "rationale": "上游的隐私审计在 DSHFusion 里报出 34 处，其中两类需要区别对待。第一类是**门禁互相矛盾**：governance/upstream-licenses/ 是上游许可与声明的冻结副本，字节由 upstream-license-hashes.json 锁定，改动会让 check-license-hashes.py 失败 —— 也就是说那里报出的发现我们无权修改。审计一个改不了、也不属于我们的目录没有意义。同一口径已用于 tools/check-references.py 的 FROZEN_DIRS。实测触发点是 DSHA 的 THIRD_PARTY_NOTICES.md 里 GeckoView 版本号 143.0.<14位日期串>，被「设备序列号样式」规则误判。第二类是**保留域误报**：make-record-fixture.sh 用 upstream@example.invalid 造测试夹具，而 .invalid 是 RFC 2606 保留的测试专用顶级域，与已在白名单里的 example.com 同性质，保证解析不到任何真实主机。其余 31 处（/tmp 硬编码路径）没有走白名单，而是在我们自己的文件里改掉了 —— 那些是真实的工程缺陷：并发会互相覆盖、中断会留残留，用 mktemp 本来就更对。",
       "reapply": "tools/apply-divergences.sh 的 handle_div_0007：确认 FROZEN_PREFIXES 存在、scan() 里引用了它、ALLOW 含 example\\.invalid；缺任一项即报失败。",
       "conflict_risk": "low-medium —— 单文件两处。上游若自己改了 SKIP 逻辑或 ALLOW，锚点检查会先失败而不是静默覆盖。"
@@ -218,7 +218,44 @@
       "reapply": "由 tools/apply-divergences.sh 的 handle_div_0013 校验：`docs/BUILD_RUNBOOK.md` 开头必须是那 6 行横幅，且正文三处 gzip 原文仍在（说明我们只做了插入）。上游若改了这份文档，横幅可能被冲掉 —— 重放会重新插到最前面。",
       "conflict_risk": "none —— 纯前置插入，不触碰上游任何一行。上游改这份文件时 git 会按上下文合并，冲突面仅限文件头。",
       "note": "选择改这份上游文件而不是只在 DSHFusion 自有文档里写警告，是因为**这份文件本身就是要照着做的**：读者打开它就直接开干，不会先去读 AGENTS.md。偏离登记 + 重放脚本保证了它在下次上游同步时不会静默消失。"
-  }
+  },
+  {
+      "id": "DIV-0014",
+      "title": "DSH 端口改为内核动态分配 + 健康检查必须核验身份（写死 3080 会与其它 DSH 应用互撞，并把别人的服务误报成「DSH 就绪」）",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "common/src/main/java/com/dshbox/app/common/Constants.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxConfig.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxProcessRunner.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/DefaultSandboxManager.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/HttpHealthChecker.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/DshHealthPolicy.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxHealth.kt",
+        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxManager.kt",
+        "sandbox-manager/src/test/java/com/dshbox/app/sandbox/HttpHealthCheckerTest.kt",
+        "sandbox-manager/src/test/java/com/dshbox/app/sandbox/DshHealthPolicyTest.kt",
+        "app/src/main/java/com/dshbox/app/ui/MainScreen.kt",
+        "app/src/main/java/com/dshbox/app/ui/home/HomeScreen.kt",
+        "app/src/main/java/com/dshbox/app/ui/settings/SettingsScreen.kt",
+        "app/src/main/java/com/dshbox/app/ui/settings/DiagnosticsScreen.kt",
+        "app/src/main/java/com/dshbox/app/ui/webview/DshBrowser.kt",
+        "app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+        "app/src/main/res/values/strings.xml",
+        "app/src/main/res/values-zh/strings.xml",
+        "app/src/main/res/values-ar/strings.xml",
+        "app/src/main/res/values-es/strings.xml",
+        "app/src/main/res/values-fr/strings.xml",
+        "app/src/main/res/values-ru/strings.xml"
+      ],
+      "change": "四件事一起改，缺一条都会留下同一个 bug 的另一种形态：\n\n1. **端口不再写死。** `Constants.DSH_DEFAULT_PORT = 3080` 与 `DSH_BASE_URL` 常量删除，改为 `DSH_PORT_AUTO = 0`（= 让内核分配）与函数 `Constants.dshBaseUrl(port)`。`SandboxConfig.dshPort` 默认值改为 `DSH_PORT_AUTO`。\n2. **端口必须真的传下去。** `SandboxProcessRunner.buildProotDshCommand` 新增 `port` 参数并生成 `--port <n>`。上游只设了一个 `PORT` 环境变量 —— 那是死代码（见 rationale）。\n3. **健康检查核验身份。** `HttpHealthChecker` 改为读运行期端口与 launchToken（用 provider 而非构造期取值），带 token 发请求，判据从「任意 HTTP 状态码」收紧为「状态码 ≠ 401」。`SandboxHealth` 新增 `instanceVerified`，用于区分「没人应答」与「有人应答但不是我」。\n4. **就绪必须同时满足进程存活。** `DshHealthPolicy.decideDshHealth` 的 `Ready` 分支由 `if (probe.webUiReady)` 改为 `if (probe.webUiReady && probe.processAlive)`。\n\n配套：新增纯函数 `DshWebLaunchParser`（从 DSH 自己打印的 `dsh web: http://127.0.0.1:<port>/?token=…` 里解析端口与 token）；`SandboxManager` 接口新增 `dshPort` / `dshBaseUrl`；UI 与通知栏改用本实例地址，端口未知时显示新增文案 `home_dsh_address_unknown`（6 个语言同步）；`DefaultSandboxManager` 在启动前/重启前/停机后统一清空端点状态。",
+      "rationale": "**这是真机上实测出来的缺陷，不是静态推演。** DSHFusion 被刻意设计成可与其它 DSH 应用并存安装（阶段 1 专门为此改了 applicationId 与 authority，见 DIV-0011），而 Android 上所有应用共享网络命名空间 —— 于是两台 DSH 抢同一个 3080。真机证据（2026-10-14，v3 已安装并运行）：\n\n- 进程表里 DSHFusion 只有 `libproot.so → bash → sleep 3600`，**没有 node**；全表匹配 `dsh web` 只命中 `u0_a402 … node …/lib/bin.js web --no-open --host 127.0.0.1 --port 3080`，即**另一个应用**（`com.dsh.client`）。\n- `/proc/net/tcp` 里 `0100007F:0C08 … 0A` 的 uid 是 **10402**（`com.dsh.client`），不是 DSHFusion 的 10473。\n- 而 DSHFusion 界面显示「DSH 就绪」「http://127.0.0.1:3080」「已运行 00:00:49」。\n\n即：**自己的 DSH 根本没起来，界面却报就绪，因为它探到的是别人的服务。**\n\n后果比「显示错误」严重得多。首页「启动」按钮的可用条件是 `sandboxRunning && !dshReady`（HomeScreen.kt），`dshReady` 被误报为 true 之后这个按钮**永久灰掉**；「浏览器」按钮虽然可点，但 token 永远拿不到，只会弹「启动令牌尚未就绪」。用户被卡在一个既没起来、又无法重试的状态里。\n\n根因是三处独立的假设叠在一起，任何一处单独修都不够：\n\n- `Constants.DSH_DEFAULT_PORT = 3080`：把「端口」当成编译期常量。\n- `HttpHealthChecker.httpProbe()` 返回 `code in 200..599`，注释明写「任何 HTTP 响应（含 401/302/404/5xx）都说明 webserver 存活」。**这个推理本身没错**，但它答的是「3080 上有没有 webserver」，不是「我的 DSH 起来了没有」—— 两者只在「设备上只有一个 DSH」时等价。\n- `DshHealthPolicy` 的 `Ready` 只看 `webUiReady`，**从不查 `processAlive`** —— 而进程存活恰恰是唯一能区分「我的服务」和「别人的服务」的本地证据。\n\n另外查清了两件事，它们解释了为什么这个假设能潜伏这么久：\n\n1. **`base[\"PORT\"] = \"3080\"` 是死代码。** `dsh --dump-config` 显示 webserver 的端口配置是 `port: !!js ctx.webStartup.port ?? 3080`，只来自命令行 `--port`；`@deepseek-ai/dsh-web-app/lib/startup.js` 也只读 `options.port`。全包内 `process.env.PORT` 的唯一命中是一个无关的示例文件。**上游那个环境变量看起来像在配置端口，其实什么都没做** —— 一个不起作用却长得像配置的变量，正是让「端口写死」得以长期不被怀疑的原因。\n2. **端口可以从 DSH 自己的输出里学到。** `dsh-web-app/lib/index.js` 打印 `dsh web: ${authenticatedUrl}`，其端口取自 `connectionCtx.webServer.port`，即**实际绑定**的端口。本机实测 `--port 0`：内核分配 42797，打印 `dsh web: http://127.0.0.1:42797/?token=…`。app 本来就在解析这一行取 token（`ingestDshWebLaunchToken`），多取一个端口即可 —— 不需要任何新的探测机制。\n\n判据用「状态码 ≠ 401」而不是「= 200」，也是实测定的：对本机 DSH 请求 `/`，无 token → 401、错 token → 401、对 token → **303**（不是 200）。所以 401 是 DSH 明确表达的「这个 token 我不认识」，即「应答者不是我」。拿不到 token 时一律判未就绪，而不是退回「任何响应都算活」：宁可继续等（启动有 120s 窗口），也不要再产生一次无法归因的假成功。\n\n**为什么这是 adaptation 而不是「上游 bug 修复」。** 对上游 DSHBox 而言，写死 3080 是**自洽的**：它就是那台设备上唯一的 DSH，没有第二个应用来抢端口。这条偏离是 DSHFusion「可并存安装」这一设计目标带来的必然代价，因此登记为 DSHFusion 侧的适配，而不是声称上游错了。同理，`docs/AUDIT.md:139-140` 早在阶段 0 就把「动态端口」列为 DSHA 的相对优势之一 —— 当时我把它当成一条无关的功能对比记下了，没有把它连到「DSHFusion 会与别的 DSH 并存」这件我自己刚刚做过的事上。这条偏离是那个疏忽的补课。",
+      "detection": "**反向验证（本项目要求：检查器必须被证明能拦住真实故障）。** 对 handle_div_0014 注入 12 种故障，逐一确认被拦：Ready 判据退回只看 webUiReady、健康判据退回「任意状态码都算活」、加回 base[\"PORT\"]、加回写死的端口常量、首页/WebView 退回写死地址、通知栏改用错的状态流、诊断页换掉占位文案、接口不再暴露实例地址、不再区分「有人应答但不是我」、删掉某个语言的文案、dsh 启动命令行不再传 --port、解析器不再校验端口范围。\n\n其中两条**第一轮漏过**，都是同一类病（查的东西与实际语义不等价），已收紧：(a) 只查了「资源里有占位文案」而没查「UI 真的在用它」—— UI 写死地址仍能通过；(b) 端口范围那条查的是字面量 65535，而 KDoc 里也写着「1..65535」，把校验删掉仍能通过。两者都是「检查器被一个长得像的东西骗过」，与本项目此前断言 6 被 .sha256 侧车骗过是同一种病。\n\n**一处刻意不由源码断言覆盖**：把 DshWebLaunchParser.parse 的解析失败分支改成返回默认端口 3080（即原始 bug 的形态）—— 这属于**行为**，由单测 DshWebLaunchParserTest 的「解析失败不返回任何默认端口」守（已用等价实现复刻注入、确认该用例会失败）。源码断言不重复承担这一层，避免造出第二个只会查字符串的假保险。\n\ntools/verify-phase0.sh 断言：`Constants.kt` 不再含 `3080` 字面量、`DSH_BASE_URL` 常量已删除、`DSH_PORT_AUTO` 存在；`SandboxProcessRunner` 生成的命令含 `--port`；`DefaultSandboxManager` 不再设 `base[\"PORT\"]`；`HttpHealthChecker` 含 401 判据与 token provider；`DshHealthPolicy` 的 Ready 分支同时要求 `processAlive`；6 个 strings.xml 键数一致且都含 `home_dsh_address_unknown`。\n单测：`DshWebLaunchParserTest`（含「解析失败不得返回任何默认端口」）、`HttpHealthCheckerTest`（含「401 判为不就绪」「无 token 判为不就绪」「请求确实带上了本实例 token」）、`DshHealthPolicyTest`（含「端口有应答但进程已死，不得判就绪」）。\n注意：`HttpHealthCheckerTest` 的**上游版本断言的正是这个 bug**（「HTTP 401 视为 webserver 存活」等），本次一并改写 —— 这一点在提交信息与 PR 评论里都写明了，避免被误读成「为了让测试通过而改测试」。",
+      "reapply": "无脚本可自动重放 —— 这处偏离跨 22 个文件、且是语义改动，不适合用锚点插入。同步上游后按以下顺序人工核对：\n1. `git diff <上游新提交> -- common/.../Constants.kt sandbox-manager/.../HttpHealthChecker.kt sandbox-manager/.../DshHealthPolicy.kt` —— 这三处是语义核心，冲突必须人工判。\n2. 核对 `SandboxProcessRunner` 的命令行仍带 `--port`（上游若改了 DSH 入口写法，这条最容易丢）。\n3. 跑 `tools/verify-phase0.sh` 与三个单测文件。\n上游若自行引入动态端口，则应删除本条偏离并在 note 里记明「已由上游解决」。",
+      "conflict_risk": "high —— 这是本次融合里冲突面最大的一处：跨 22 个文件，且改的都是上游**正在演进**的核心运行期代码（进程启动命令行、健康判定、UI 地址展示）。上游若重构健康检查或 DSH 启动方式，会与本条正面冲突。\n刻意避免了两类更脆的写法：不改 DSH 自身源码（仍然零补丁，符合本项目一贯策略）、不引入新的跨模块依赖（`DshWebLaunchParser` 放在 sandbox-manager 内，common 不反向依赖它）。",
+      "note": "**这是本项目第一次把「界面显示的状态」与「设备上真实发生的事」对上的修复。** 此前所有验证都停在「产物里有层」「进程起来了」，而这次是「界面说就绪」对不上「进程根本没起」—— 说明此前的验证清单缺了一条：**状态结论必须有独立证据**。真机核验方式已记入 docs/INSTALL-ON-DEVICE.md：界面报就绪时，用进程表与 /proc/net/tcp 的 uid 交叉确认那个端口确实是自己的。\n\n未做而有意留下的：端口**每次启动都变**（不记忆上次可用端口）。审计报告里 DSHA 的做法是「动态分配并复用上次可用端口」，那对需要固定地址的外部工具有用；但它引入一个新的失败模式（复用的端口恰好被别人占了），而当前阶段的首要目标是「不再互撞、不再误报」。地址在界面上随时可见，先保证正确，再谈稳定。"
+    }
 
   ]
 }

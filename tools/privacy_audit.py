@@ -111,6 +111,10 @@ ALLOW = [
     # 对应规则再次命中（自匹配），拼接后源码文本里不再出现可命中的连续形态。
     re.compile(r"/tmp/" r"dpkg-deb\."),                      # dpkg 临时目录名（单测夹具）
     re.compile(r"back/home" r"/recents"),                    # 安卓导航三键名，被「Linux 家目录」正则误匹配
+    # 仓库内相对路径「app/src/main/java/com/dshbox/app/ui/home/」下的 HomeScreen.kt
+    # 被「Linux 家目录」正则误匹配（与上一条同类）。
+    # 刻意写到完整仓库前缀：只放行这一条真实路径，不放宽任何 `/home/…` 形态。
+    re.compile(r"app/src/main/java/com/dshbox/app/ui/home" r"/HomeScreen\.kt"),
     re.compile(r"C:" r"/\.\.\."),                            # 注释里说明「盘符式写法」的举例，非本机路径
     re.compile("ESO" "CKETTIMEDOUT"),                        # 上游 pnpm 错误码，被「设备序列号」正则误匹配
 

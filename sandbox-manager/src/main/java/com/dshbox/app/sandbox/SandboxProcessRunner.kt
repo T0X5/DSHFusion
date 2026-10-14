@@ -114,6 +114,15 @@ class SandboxProcessRunner(
         dshPatchGuestPaths: List<String> = emptyList(),
         /** 手机助手暴露给 guest 的宿主子树，见 [SandboxConfig.pilotEntryDir]。空则不绑。 */
         pilotHostDir: String? = null,
+        /**
+         * 传给 `dsh web --port` 的端口；默认 0 = 让内核分配一个空闲端口（DIV-0014）。
+         *
+         * 必须是**命令行参数**：DSH 的 webserver 端口只由 `--port` 决定
+         * （`@deepseek-ai/dsh-host-webserver` 的 `port: !!js ctx.webStartup.port ?? 3080`），
+         * 它**不读 `PORT` 环境变量** —— 上游 app 曾经设过一个 `PORT` env，
+         * 那是死代码，看起来像在控制端口、其实没有。
+         */
+        port: Int = Constants.DSH_PORT_AUTO,
     ): List<String> = buildList {
         addAll(
             layeredProotPrefix(
@@ -127,7 +136,9 @@ class SandboxProcessRunner(
         // under the L1 node (bound at /usr/local). There is NO separate
         // start_dsh.sh in the layered base; the guest env (HOME/PATH/DSH_*) is
         // injected by the app via buildProotEnv. Boot the web profile so the
-        // DSH server serves http://127.0.0.1:3080 for the app's WebView/health.
+        // DSH server serves the app's WebView / health endpoint; the port comes
+        // from the `--port` argument below (0 = kernel-assigned) and is read back
+        // from DSH's own stdout, never assumed (DIV-0014).
         // Constants.DSH_START_SCRIPT (/opt/dshapp/runtime) is the cmdline marker
         // stop() uses to locate this PRoot and SIGKILL its tree.
         //
@@ -145,7 +156,8 @@ class SandboxProcessRunner(
         add(
             "exec /usr/local/bin/node --expose-internals$shim " +
                 "/opt/dshapp/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js " +
-                "--profile ${Constants.DSH_WEB_PROFILE}$patches",
+                "--profile ${Constants.DSH_WEB_PROFILE} --host ${Constants.DSH_DEFAULT_HOST} " +
+                "--port $port$patches",
         )
     }
 

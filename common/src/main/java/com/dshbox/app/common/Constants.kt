@@ -2,10 +2,38 @@ package com.dshbox.app.common
 
 object Constants {
     const val DSH_DEFAULT_HOST = "127.0.0.1"
-    const val DSH_DEFAULT_PORT = 3080
 
-    /** WebView loads the DSH loopback URL. Both localhost and 127.0.0.1 are allowed by NSC. */
-    const val DSH_BASE_URL = "http://$DSH_DEFAULT_HOST:$DSH_DEFAULT_PORT"
+    /**
+     * 「让内核分配一个空闲端口」——传给 `dsh web --port` 的值（DIV-0014）。
+     *
+     * ## 为什么端口不再写死 3080
+     *
+     * 上游写死 `3080`，隐含前提是「这台设备上只有我一个 DSH」。这个前提在 DSHFusion 上不成立：
+     * 它被刻意设计成能与其它 DSH 应用并存安装，而 Android 上**所有应用共享网络命名空间**，
+     * 于是两台 DSH 抢同一个端口。真机上实测到的后果是**两个一起坏**：
+     *
+     * 1. 后启动的那个 `dsh web` 绑定失败（`EADDRINUSE`），进程直接退出；
+     * 2. 它的健康检查去探 `127.0.0.1:3080`，**探到的是另一个应用的 DSH**，
+     *    于是界面显示「DSH 就绪」——一个既没起来、也没人告诉用户的假成功。
+     *
+     * 更糟的是它把入口锁死了：首页「启动」按钮的可用条件是
+     * `sandboxRunning && !dshReady`，`dshReady` 被误报为 true 之后，
+     * **用户连手动重试的机会都没有**。
+     *
+     * 传 0 之后端口由内核分配，天然不会与任何应用冲突；app 再从 DSH 自己打印的
+     * 那行 URL 里学到真实端口（见 [com.dshbox.app.sandbox.DshWebLaunchParser]）。
+     * 端口因此成为实例身份的一部分，而不是一个所有人共用的约定值。
+     */
+    const val DSH_PORT_AUTO = 0
+
+    /**
+     * 由**实际端口**拼出 WebView / 浏览器要打开的地址。
+     *
+     * 刻意做成函数而不是常量：地址依赖运行期才知道的端口，把它固化成
+     * `const val` 正是 DIV-0014 要修的那个错误（所有消费者都会用同一个写死的值）。
+     * 端口未知时调用方应显示占位文案，不要拿一个默认值去打开。
+     */
+    fun dshBaseUrl(port: Int): String = "http://$DSH_DEFAULT_HOST:$port"
 
     // 旧的 DSH_MIRRORS / DSH_LAYER_BASE_URL（预构建 dsh_layer.tar.zst 下载源）已废弃——
     // 该下载源从未存在，在线更新改为「探测 npm 源 + guest 内 npm 拉包」，

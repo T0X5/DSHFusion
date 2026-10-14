@@ -395,6 +395,7 @@
     <string name="home_start_dsh_needs_sandbox">الصندوق الرملي غير قيد التشغيل. يرجى تشغيله أولاً.</string>
     <string name="home_stop_cancel">إلغاء</string>
     <string name="home_stop_confirm">إيقاف</string>
+    <string name="home_dsh_address_unknown">العنوان قيد الانتظار</string>
     <string name="home_uptime_format">يعمل منذ %1$s</string>
     <string name="move_err_copy_place_failed">فشل وضع العنصر المنسوخ: %1$s</string>
     <string name="move_err_copy_verify_failed">فشل التحقق من النسخ: %1$s (المتوقع %2$d بايت، الفعلي %3$d بايت)</string>

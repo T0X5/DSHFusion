@@ -19,16 +19,25 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
 （`README.md`、`.gitignore`）→ **实际导入 765 个文件、25.4 MB**。
-11 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
+14 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
 
 **「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
-23 处差异全部能对上已登记的偏离（其中 22 处是代码偏离，1 处是继承 lint 基线）。
+40 处差异全部能对上已登记的偏离（其中 39 处是代码偏离，1 处是继承 lint 基线）。
 
 > 两个方向都要查，缺一不可：`check-import-fidelity.py` 抓「多出来的改动」，
 > `apply-divergences.sh --check` 抓「已登记却没生效的偏离」。实测过 ——
 > 把 DIV-0011 第三个文件的改动撤掉后，保真度检查是**通过**的
 > （该文件已在 `target_files` 里，于是不再比对），只有重放检查报错。
+
+> ⚠️ **这个检查器读的是 git 索引，不是工作区 —— 改动没 `git add` 之前它对你是瞎的。**
+> 实测：DIV-0014 跨 22 个文件、其中 16 个此前从未偏离过，`git diff --stat` 是
+> 500 插入 / 103 删除；但未暂存时跑保真度检查，它报的仍是**上一次提交**的
+> 「24 处差异全部已登记」，一切看起来都干净。`git add -A` 之后同一个命令报 **40 处**。
+>
+> 这不算工具 bug（索引比对是有意设计），但它是一个**会给出假好消息**的用法陷阱，
+> 与断言 6 被 `.sha256` 侧车骗过是同一类。所以：**跑保真度检查前先 `git add`，
+> 并把「差异数」当成断言来读** —— 数目没变说明你的改动根本没进去。
 
 > ⚠️ **构建已验证；真机安装已验证（第二次成功）；启动与运行还没验证。**
 >
@@ -64,6 +73,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
 | 生成的 APK 装到真机上验证 | ✅ **已通过**（2026-10-14，修复后第二次尝试）—— 见下方专节；**但启动与运行尚未验证** |
 | APK 内含运行环境层（能真正跑起 DSH） | ✅ **已通过产物核验**（2026-10-14，run 38516880572）—— 见下方「修好了？没有」一节的结论 |
+| **自有 DSH 真正在真机上跑起来** | ❌ **仍未验证** —— 修复前实测「界面报就绪、DSH 根本没起」，见下方 DIV-0014 专节 |
 | `upstream-watch.yml` 真实运行 | ✅ **已跑通**（run 38483621472，手动触发）—— 检出 DSHA 有新提交并建了 Issue #2 |
 
 ### 首次真实 CI 运行（2026-10-13）暴露的问题
@@ -358,6 +368,127 @@ firstOrNull { it.startsWith("android-side.tar.") } → android-side.tar.zst   �
 层进了 APK 只是**必要**条件，不是充分条件 —— 这一步已经卡了两次，
 所以在真机跑通之前，这一行仍然只能记成「产物已核验，运行未验证」。
 
+### 界面报「DSH 就绪」，其实 DSH 根本没起来（2026-10-14 发现，DIV-0014 修复）
+
+层进了 APK 之后，用户在真机上装了 `dshfusion-v3-zstd.apk` 并点了启动。
+界面显示：**「DSH 就绪」「http://127.0.0.1:3080」「已运行 00:00:49」**。
+
+我从设备上读回来的事实：
+
+| 证据 | 读数 |
+|---|---|
+| DSHFusion 的进程 | 只有 `libproot.so → bash → sleep 3600`，**没有 `node`** |
+| 全进程表匹配 `dsh web` | 只命中 `u0_a402 … node …/lib/bin.js web --no-open --host 127.0.0.1 --port 3080` |
+| `/proc/net/tcp` 的 3080 | `0100007F:0C08 … 0A`，owner uid = **10402**（`com.dsh.client`），不是 DSHFusion 的 10473 |
+
+**那台 3080 是另一个应用的 DSH。** DSHFusion 自己的 DSH 一次都没起来过，
+而界面报告它「就绪」—— 因为它探到的是**别人**的服务。
+
+> 这里要特别说明：`已运行 00:00:49` 是界面自己的本地计时器
+> （`HomeScreen.kt` 里一个 `remember` 计数），**不代表任何进程活着**。
+> 它是这次误导里最"可信"的一条读数，也是唯一一条完全不来自设备的读数。
+
+**后果比「显示错误」严重得多。** 首页「启动」按钮的可用条件是
+`sandboxRunning && !dshReady`；`dshReady` 被误报为 `true` 之后这个按钮**永久灰掉**，
+「浏览器」按钮虽然可点，但 token 永远拿不到，只会弹「启动令牌尚未就绪」。
+用户被卡在一个**既没起来、又无法重试**的状态里 —— 唯一的出路是杀进程重开。
+
+#### 根因：三处独立假设叠加，任何一处单独修都不够
+
+| 假设 | 位置 | 为什么它单独看起来是合理的 |
+|---|---|---|
+| 端口是编译期常量 | `Constants.DSH_DEFAULT_PORT = 3080` | 在「这台设备上只有我一个 DSH」的前提下成立 |
+| 「有 HTTP 响应就算活」 | `HttpHealthChecker.httpProbe()` 返回 `code in 200..599` | 注释写得很清楚：「任何 HTTP 响应（含 401/302/404/5xx）都说明 webserver 存活」——**这个推理本身没错**，但它答的是「3080 上有没有 webserver」，不是「我的 DSH 起来了没有」 |
+| 「webUiReady 就够」 | `DshHealthPolicy` 的 `Ready` 只看 `webUiReady`，**从不查 `processAlive`** | 进程存活恰恰是唯一能区分「我的服务」和「别人的服务」的本地证据，却没用上 |
+
+上游的这三处**在 DSHBox 里是自洽的** —— 它就是那台设备上唯一的 DSH，没有第二个应用来抢端口。
+所以这不是「上游写错了」，而是 **DSHFusion「可与其它 DSH 并存安装」这一设计目标带来的必然代价**。
+阶段 1 专门为了并存安装改了 applicationId 与 authority（DIV-0011），
+却没有把「并存」这个前提继续推演到网络端口上。已登记为 **DIV-0014**（adaptation，非上游缺陷）。
+
+> **最刺人的一点**：`docs/AUDIT.md:139-140` 早在阶段 0 就写着
+> `| 端口 | 3080 固定 | **动态分配**并复用上次可用端口 |`，
+> 把「动态端口」列为 DSHA 的相对优势。我当时把它当成一条无关的功能对比记下了，
+> 没有把它连到「DSHFusion 会与别的 DSH 并存」这件**我自己刚刚做过**的事上。
+> 记下了事实，没有做出推论 —— 这是比「不知道」更常见的失误。
+
+#### 查清的两件事（解释了它为什么能潜伏这么久）
+
+**① 上游那个 `PORT` 环境变量是死代码。** `DefaultSandboxManager` 里设了
+`base["PORT"] = "3080"`，看起来像是在配置端口。实际：
+
+- `dsh --profile web --dump-config` 显示 webserver 的配置是
+  `port: !!js ctx.webStartup.port ?? 3080` —— 只来自命令行 `--port`；
+- `@deepseek-ai/dsh-web-app/lib/startup.js` 也只读 `options.port`；
+- 全包内 `process.env.PORT` 的唯一命中是一个无关的示例文件。
+
+**一个不起作用、却又长得像配置的变量，正是让「端口写死」长期不被怀疑的原因。**
+
+**② 端口可以从 DSH 自己的输出里学到，不需要新机制。**
+`dsh-web-app/lib/index.js` 打印 `dsh web: ${authenticatedUrl}`，其端口取自
+`connectionCtx.webServer.port`，即**实际绑定**的端口。本机实测 `--port 0`：
+
+```
+$ dsh web --no-open --host 127.0.0.1 --port 0
+dsh web: http://127.0.0.1:42797/?token=8OMeQzE98nRyjCPBhqSu4_sVBhKFQdbq8mCP-9qf5u4
+```
+
+应用本来就在解析这一行取 token（`ingestDshWebLaunchToken`），多取一个端口即可。
+
+#### 判据为什么是「状态码 ≠ 401」而不是「= 200」
+
+也是实测定的。对本机 DSH 请求 `/`：无 token → **401**、错 token → **401**、
+对 token → **303**（不是 200）。所以 401 是 DSH 明确表达的
+「这个 token 我不认识」，即**应答者不是我**。
+
+拿不到 token 时一律判**未就绪**，而不是退回「任何响应都算活」：
+宁可继续等（启动有 120s 窗口），也不要再产生一次无法归因的假成功。
+
+#### 修复（DIV-0014，跨 22 个文件）
+
+- 端口：`DSH_DEFAULT_PORT`/`DSH_BASE_URL` 删除 → `DSH_PORT_AUTO = 0` +
+  函数 `Constants.dshBaseUrl(port)`；`buildProotDshCommand` 新增 `port` 参数并生成 `--port`；
+  删掉那个不起作用的 `PORT` 环境变量。
+- 身份核验：`HttpHealthChecker` 改为运行期 provider 取端口与 token，
+  判据收紧为 `code != 401`；`SandboxHealth` 新增 `instanceVerified`
+  区分「没人应答」与「有人应答但不是我」。
+- 就绪：`DshHealthPolicy` 的 `Ready` 改为 `webUiReady && processAlive`。
+- 新增纯函数 `DshWebLaunchParser`（从 DSH 输出解析端口+token，
+  **解析失败返回 null，绝不返回默认端口**）。
+- UI/通知栏改用本实例地址；端口未知时显示新增文案 `home_dsh_address_unknown`（6 个语言同步）。
+
+**设计取舍：端口每次启动都变**（不记忆上次可用端口）。审计里 DSHA 的做法是
+「动态分配并复用上次可用端口」，那对需要固定地址的外部工具有用；
+但它引入一个新的失败模式（复用的端口恰好被别人占了），而当前阶段的首要目标是
+**不再互撞、不再误报**。地址在界面上随时可见 —— 先保证正确，再谈稳定。
+
+#### 验证状态
+
+- 源码断言：`verify-phase0.sh` 新增 5g 节（11 项），全套 **134 项通过 / 0 失败**。
+- 偏离重放：`apply-divergences.sh --check` → **14 项已生效、0 失败**，
+  `handle_div_0014` 有 **21 项断言**。
+- 反向验证：注入 12 种故障逐一确认被拦；其中 **2 条第一轮漏过**并已收紧
+  （详见 `divergences.json` 里 DIV-0014 的 `detection` 字段）。
+- 单测：`DshWebLaunchParserTest` / `HttpHealthCheckerTest` / `DshHealthPolicyTest`
+  已改写与新增。**注意 `HttpHealthCheckerTest` 的上游版本断言的正是这个 bug**
+  （「HTTP 401 视为 webserver 存活」），本次一并改写 —— 这是为了让测试反映正确行为，
+  不是为了让测试通过。
+
+> ⚠️ **真机运行仍未验证。** 上面全部是源码与套件层面的证据。
+> 这次修复的真实效果（自己的 DSH 起来、界面地址指向自己的端口、启动按钮可用）
+> **必须再装一次 APK 才能确认** —— 而且这次要用**独立证据**核对界面结论，
+> 不能只看界面。步骤见 [docs/INSTALL-ON-DEVICE.md](docs/INSTALL-ON-DEVICE.md)。
+
+#### 这一节真正的教训
+
+前几节的教训是「CI 全绿 ≠ 真机能用」。这一节是更进一层的：
+**界面显示的状态 ≠ 设备上真实发生的事。**
+
+此前的验证清单里，每一行都在查「某个东西存在不存在」（层在不在、进程起没起、
+版本对不对）。这一行查的是**一个结论**，而结论可以被一个错误的推理链正确地推出来。
+所以清单里补了一条：**状态结论必须有独立证据** —— 界面说「就绪」时，
+要用进程表与 `/proc/net/tcp` 的 uid 交叉确认那个端口确实是自己的。
+
 ## 决策依据（不要重新推翻）
 
 主干选择基于 2026-10-13 的只读审计，完整证据见 [docs/AUDIT.md](docs/AUDIT.md)。结论摘要：
@@ -452,7 +583,7 @@ dshfusion/
 │   ├── build-runtime-assets.sh  组装可内嵌 APK 的层（android-side + dsh，产出 sha256 侧车）
 │   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 123 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 134 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）
