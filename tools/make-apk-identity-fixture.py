@@ -36,6 +36,11 @@ import sys
 import zipfile
 from pathlib import Path
 
+# 运行环境层占位内容。检查器只断言「这两个条目存在」，不解压它们，
+# 所以内容不必是真 gzip —— 但开头写成 gzip 魔数，免得将来有人
+# 看到一段随机字节就以为是坏的。
+_FAKE_GZIP = b"\x1f\x8b\x08\x00" + b"\x00" * 32
+
 # ---- AXML 常量 ----
 RES_XML_TYPE = 0x0003
 RES_STRING_POOL_TYPE = 0x0001
@@ -243,7 +248,7 @@ def main() -> int:
     scenario = sys.argv[2] if len(sys.argv) > 2 else "good"
 
     known = {"good", "upstream-id", "upstream-ver", "wrong-ns", "wrong-label",
-             "bad-authority", "no-manifest"}
+             "bad-authority", "no-layers", "no-manifest"}
     if scenario not in known:
         print(f"未知场景 {scenario!r}；可用：{sorted(known)}", file=sys.stderr)
         return 2
@@ -254,6 +259,18 @@ def main() -> int:
             z.writestr("AndroidManifest.xml", build_axml(scenario))
         # 塞一个无关文件，让 zip 结构更像真 APK（且 no-manifest 场景下非空）
         z.writestr("classes.dex", b"dex\n035\x00" + b"\x00" * 64)
+
+        # 运行环境层：除 no-layers 外**每个场景都带上**。
+        #
+        # 理由不是「像真 APK」，而是隔离：套件用 check_scenario 断言失败**消息内容**，
+        # 而断言 6（必须含层）对所有夹具都会失败。若不给夹具塞层，
+        # 每个场景都会同时因为自己的原因和缺层而失败，消息里混着两条 ——
+        # 那样「夹具测的是不是它声称的那件事」就说不清了。
+        #
+        # no-layers 是专门测断言 6 本身的场景：身份全对，只有层缺失。
+        if scenario != "no-layers":
+            z.writestr("assets/runtime/android-side.tar.gz", _FAKE_GZIP)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.gz", _FAKE_GZIP)
 
     print(f"已生成 {out_path}（场景 {scenario}）")
     return 0

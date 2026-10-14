@@ -176,12 +176,13 @@
       "phase": 1,
       "target_files": [
         "app/src/main/AndroidManifest.xml",
-        "app/src/main/java/com/dshbox/app/util/viewer/ExternalOpener.kt"
+        "app/src/main/java/com/dshbox/app/util/viewer/ExternalOpener.kt",
+        "app/src/main/java/com/dshbox/app/ui/webview/SandboxFilePickerDialog.kt"
       ],
-      "change": "1) app/src/main/AndroidManifest.xml：FileProvider 的 `android:authorities=\"com.dshbox.app.fileprovider\"` → `\"${applicationId}.fileprovider\"`。\n2) ExternalOpener.kt：`const val FILE_PROVIDER_AUTHORITY = \"com.dshbox.app.fileprovider\"` → `val FILE_PROVIDER_AUTHORITY = \"${BuildConfig.APPLICATION_ID}.fileprovider\"`（去掉 const，因为 APPLICATION_ID 随构建变体变化）。",
+      "change": "1) app/src/main/AndroidManifest.xml：FileProvider 的 `android:authorities=\"com.dshbox.app.fileprovider\"` → `\"${applicationId}.fileprovider\"`。\n2) ExternalOpener.kt：`const val FILE_PROVIDER_AUTHORITY = \"com.dshbox.app.fileprovider\"` → `val FILE_PROVIDER_AUTHORITY = \"${BuildConfig.APPLICATION_ID}.fileprovider\"`（去掉 const，因为 APPLICATION_ID 随构建变体变化）。\n3) SandboxFilePickerDialog.kt：仅 KDoc 里的 authority 示例改成 `content://<applicationId>.fileprovider/...`。**这一条一开始漏登记了**，是 tools/check-import-fidelity.py 报出来的 —— 见 detection。",
       "rationale": "**这是第一次真机验证暴露的问题，而且是我的阶段 1 决策造成的。**\n\n真机安装报 `安装失败(-13)` / `与已安装应用内容提供者冲突`，即 INSTALL_FAILED_CONFLICTING_PROVIDER。\n\n根因：applicationId 只是「安装身份」的一条轴，ContentProvider 的 authority 是**另一条独立的轴** —— Android 要求它全局唯一，两个已安装应用声明同一个 authority 时后装的那个直接失败 -13，**跟 applicationId 是否不同无关**。\n\n阶段 1 把 applicationId 从 com.dshbox.app 改成 com.dshfusion.app，三条身份断言全过、CI 全绿，但 authority 写死成上游的值，与已装的 DSHBox 撞车。我此前把「并存安装必需」理解成只包含 applicationId / 应用名 / 版本号，**漏掉了 authority 这条轴**。\n\n第二重后果（即使装上了也会中）：上游代码里 authority 有两个来源，manifest 写死 `com.dshbox.app.fileprovider`，而 DshWebViewScreen.kt:449 用 `\"${context.packageName}.fileprovider\"` 计算 —— 在 DSHBox 里两者相等所以没事，在 DSHFusion 里 packageName 是 com.dshfusion.app，两者不等，getUriForFile 会抛异常（该文件第 168 行的注释正好警告过这个后果）。所以两处必须一起改。",
-      "detection": "补了两层检查，都做过反向验证：\n- tools/check-apk-identity.py 断言 4：APK 里每个 authority 都必须以 applicationId 开头，且至少存在一个。对那个装不上的真实 APK 跑 → 正确退出 1。\n- tools/check-android-identity.py 检查 4：源码层扫描所有 AndroidManifest.xml 的 android:authorities，以及代码里写死的 `com.dshbox.app.*fileprovider` 字面量。构建前就报，不用等 CI。\n- 夹具新增 bad-authority 场景，套件独立测这条断言（不靠别的断言顺带发现）。",
-      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0011 校验：两处都必须从 applicationId 派生，任一处写死即失败。",
+      "detection": "补了两层检查，都做过反向验证：\n- tools/check-apk-identity.py 断言 4：APK 里每个 authority 都必须以 applicationId 开头，且至少存在一个。对那个装不上的真实 APK 跑 → 正确退出 1。\n- tools/check-android-identity.py 检查 4：源码层扫描所有 AndroidManifest.xml 的 android:authorities，以及代码里写死的 `com.dshbox.app.*fileprovider` 字面量。构建前就报，不用等 CI。\n- 夹具新增 bad-authority 场景，套件独立测这条断言（不靠别的断言顺带发现）。\n\n**漏登记第三个文件是被工具抓出来的。** 改完 manifest 与 ExternalOpener.kt 后，我顺手把 SandboxFilePickerDialog.kt 的 KDoc 示例也改了，但只往 target_files 里登记了两个文件。tools/check-import-fidelity.py 逐 blob 对照上游时报出「1 处未登记的差异」，指名就是这个文件。\n这正是那条硬约束的意义：**未登记的偏离 = 下次同步时静默丢失**。改 KDoc 看着无害，但它同样是一处偏离；漏登记之后，下次合并上游会把上游的旧 KDoc 合回来，而没有人会注意到文档已经和代码不一致。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0011 校验：manifest 与 ExternalOpener.kt 两处都必须从 applicationId 派生，任一处写死即失败；SandboxFilePickerDialog.kt 的 KDoc 不得再出现写死的 `com.dshbox.app.fileprovider`。",
       "conflict_risk": "low",
       "note": "上游 DSHBox 自身也有这个隐患（manifest 与 DshWebViewScreen 用了两种写法，只是恰好相等）。这是**上游缺陷**，但我们不向上游提改动，只在本仓库内适配。"
     }

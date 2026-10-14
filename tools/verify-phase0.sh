@@ -785,7 +785,7 @@ expect 0 "合成 APK：身份正确时应通过" \
     bash -c "python3 tools/make-apk-identity-fixture.py '$SCRATCH/good.apk' good >/dev/null && \
              python3 tools/check-apk-identity.py '$SCRATCH/good.apk'"
 
-for scen in upstream-id upstream-ver wrong-ns wrong-label bad-authority; do
+for scen in upstream-id upstream-ver wrong-ns wrong-label bad-authority no-layers; do
     python3 tools/make-apk-identity-fixture.py "$SCRATCH/$scen.apk" "$scen" >/dev/null
 done
 
@@ -812,6 +812,10 @@ check_scenario wrong-label   "期望 'DSHFusion'"
 # 这一条是真机装不上之后补的：authority 写死成上游的值会让安装失败 -13。
 # 它必须能独立拦住，而不是靠别的断言顺带发现。
 check_scenario bad-authority "不是从 applicationId 派生的"
+# 缺运行环境层：这条以前只是「备注」，所以它如实备注了「不含任何层」
+# 然后 CI 照样全绿 —— 缺层的 APK 一路走到了真机。现在它是硬断言。
+# no-layers 场景的身份全部正确，只有层缺失，确保它只因为这一条失败。
+check_scenario no-layers     "缺运行环境层"
 
 # 源码层的同一条检查（构建前就报，不用等 APK）
 python3 tools/check-android-identity.py >/dev/null 2>&1 \

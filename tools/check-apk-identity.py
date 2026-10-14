@@ -337,6 +337,15 @@ def main() -> int:
         default="DSHFusion",
         help="期望的 android:label 解析结果（默认 DSHFusion）",
     )
+    ap.add_argument(
+        "--allow-missing-runtime-layers",
+        action="store_true",
+        help=(
+            "允许 APK 不含运行环境层（默认不允许）。"
+            "只在「明知这是纯编译检查、不打算装机」时用；"
+            "装了这种 APK 会起不了 DSH，且在线获取运行环境也会在下载完成后失败。"
+        ),
+    )
     args = ap.parse_args()
 
     path = Path(args.apk)
@@ -467,18 +476,50 @@ def main() -> int:
                     f"{args.expect_label!r}：{detail}"
                 )
 
-    # --- 顺带核对：APK 里是否含运行环境层 ---
-    layers = [
+    # --- 断言 6：APK 必须含运行环境层 ---
+    #
+    # 这条原先只是「备注」，于是它如实备注了「不含任何运行环境层」，
+    # 然后 CI 照样全绿。检查发现了问题却没把它变成失败 —— 缺层能一路
+    # 走到真机上，这是原因之一。
+    #
+    # 为什么缺层是硬错误，而不是一句提示：
+    #   OnlineRuntimeImportManager.prepareAndroidSide()（第 458 行）在
+    #   assets/runtime/android-side.tar.* 缺失时返回
+    #       AppError("ONLINE_ASIDE", "cannot prepare android-side layer")
+    #   而这一步在整条流程的**下载之后**才执行。
+    #   所以没有这两层时，用户先等几百 MB 下载完，然后看到失败 ——
+    #   「在线获取运行环境」这条本来用于补救的路，本身也走不通。
+    #   2026-10-14 真机安装成功后才发现。
+    aside = sorted(n for n in names if n.startswith("assets/runtime/android-side.tar."))
+    dsh = sorted(
         n for n in names
-        if n.endswith((".tar.zst", ".tar.gz")) or n.startswith("assets/dsh/")
-    ]
-    if layers:
-        notes.append(f"含 {len(layers)} 个运行环境层文件：{layers[:5]}")
-    else:
-        notes.append(
-            "不含任何运行环境层（无 .tar.zst / assets/dsh/）—— "
-            "这个 APK 能安装，但起不了 DSH"
+        if n.startswith("assets/dsh/") and n.endswith((".tar.zst", ".tar.gz"))
+    )
+    missing = []
+    if not aside:
+        missing.append("assets/runtime/android-side.tar.{gz,zst}")
+    if not dsh:
+        missing.append("assets/dsh/<version>.tar.{gz,zst}")
+
+    if missing:
+        hint = (
+            "先跑 tools/build-runtime-assets.sh，再用 DSHFUSION_RUNTIME_ASSETS "
+            "指向它的输出目录重新构建"
         )
+        if args.allow_missing_runtime_layers:
+            notes.append(
+                "缺运行环境层（已按 --allow-missing-runtime-layers 放行）："
+                + "、".join(missing)
+            )
+        else:
+            problems.append(
+                "缺运行环境层：" + "、".join(missing)
+                + "。这种 APK 装得上，但起不了 DSH，而且「在线获取运行环境」"
+                "也会在下载完成后失败（prepareAndroidSide 硬失败）。" + hint
+            )
+    else:
+        notes.append(f"运行环境层 android-side：{aside[0]}")
+        notes.append(f"运行环境层 dsh：{dsh[0]}")
 
     for n in notes:
         print(f"备注：{n}")

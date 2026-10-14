@@ -515,17 +515,25 @@ def handle_div_0011(entry) -> tuple[str, str]:
     （INSTALL_FAILED_CONFLICTING_PROVIDER）—— authority 全局唯一，与已装的
     DSHBox 撞车，跟 applicationId 是否不同无关。
 
-    两处必须一起改，只改一处会让 getUriForFile 在运行时抛异常：
+    三处必须一起改：
       - manifest 的 android:authorities
       - ExternalOpener.FILE_PROVIDER_AUTHORITY（代码里传给 getUriForFile 的值）
+        上面两处不改，getUriForFile 会在运行时抛异常
+      - SandboxFilePickerDialog.kt 的 KDoc 示例（不改行为，但同样是一处偏离）
+
+    第三处是事后补上的：改前两处时顺手也改了它，却忘了登记进 divergences.json，
+    被 tools/check-import-fidelity.py 逐 blob 对照时抓出来。
+    重放逻辑漏掉它的后果和漏登记一样 —— 下次同步会把上游的旧 KDoc 合回来。
     """
     manifest = ROOT / "app" / "src" / "main" / "AndroidManifest.xml"
     opener = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "util" / "viewer" / "ExternalOpener.kt"
-    if not manifest.exists() or not opener.exists():
+    dialog = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "ui" / "webview" / "SandboxFilePickerDialog.kt"
+    if not manifest.exists() or not opener.exists() or not dialog.exists():
         return PENDING, "基线尚未导入"
 
     m_text = read(manifest)
     o_text = read(opener)
+    d_text = read(dialog)
 
     m_ok = 'android:authorities="${applicationId}.fileprovider"' in m_text
     m_bad = 'android:authorities="com.dshbox.app.fileprovider"' in m_text
@@ -545,14 +553,22 @@ def handle_div_0011(entry) -> tuple[str, str]:
     o_ok = 'FILE_PROVIDER_AUTHORITY = "${BuildConfig.APPLICATION_ID}.fileprovider"' in o_code
     o_bad = 'FILE_PROVIDER_AUTHORITY = "com.dshbox.app.fileprovider"' in o_code
 
-    if m_ok and o_ok:
-        return OK, "两处 authority 都派生自 applicationId"
+    # 第三处只出现在 KDoc 里，所以按**代码行**过滤会把整段注释滤掉 —— 这里要反过来，
+    # 直接对全文匹配。锚点也取得更具体（带上 content:// 与结尾斜杠），
+    # 免得匹配到正文里其它提到 authority 的句子。
+    d_ok = "content://<applicationId>.fileprovider/" in d_text
+    d_bad = "content://com.dshbox.app.fileprovider/" in d_text
+
+    if m_ok and o_ok and d_ok:
+        return OK, "三处 authority 都派生自 applicationId"
     if CHECK_ONLY:
         which = []
         if not m_ok:
             which.append("AndroidManifest.xml")
         if not o_ok:
             which.append("ExternalOpener.kt")
+        if not d_ok:
+            which.append("SandboxFilePickerDialog.kt（KDoc 示例）")
         return FAILED, "authority 未从 applicationId 派生：" + "、".join(which)
 
     changed = []
@@ -572,13 +588,22 @@ def handle_div_0011(entry) -> tuple[str, str]:
                                   "import androidx.core.content.FileProvider\nimport com.dshbox.app.BuildConfig\n", 1)
         write(opener, new_o)
         changed.append("ExternalOpener.kt")
+    if d_bad:
+        new_d = d_text.replace(
+            "content://com.dshbox.app.fileprovider/",
+            "content://<applicationId>.fileprovider/", 1)
+        if new_d == d_text:
+            return FAILED, "SandboxFilePickerDialog.kt 的 KDoc 锚点失效，需人工确认"
+        write(dialog, new_d)
+        changed.append("SandboxFilePickerDialog.kt")
 
     if not changed:
-        return FAILED, "两处 authority 都既不是正确值也不是已知的错值，状态不明，需人工确认"
+        return FAILED, "三处 authority 都既不是正确值也不是已知的错值，状态不明，需人工确认"
 
-    m2, o2 = read(manifest), read(opener)
+    m2, o2, d2 = read(manifest), read(opener), read(dialog)
     if 'android:authorities="${applicationId}.fileprovider"' not in m2 or \
-       'FILE_PROVIDER_AUTHORITY = "${BuildConfig.APPLICATION_ID}.fileprovider"' not in o2:
+       'FILE_PROVIDER_AUTHORITY = "${BuildConfig.APPLICATION_ID}.fileprovider"' not in o2 or \
+       "content://<applicationId>.fileprovider/" not in d2:
         return FAILED, "写入后复核未通过（已改动 " + "、".join(changed) + "）"
     files_changed.extend(str(ROOT / p) for p in changed)
     return OK, "已把 " + "、".join(changed) + " 的 authority 改为从 applicationId 派生"
