@@ -37,3 +37,22 @@
 # ---------------------------------------------------------------------------
 -keep class org.bouncycastle.** { *; }
 -dontwarn org.bouncycastle.**
+
+# ---------------------------------------------------------------------------
+# SnakeYAML（org.yaml:snakeyaml:2.4，Apache-2.0）—— 阶段 2.3 起由 :backup 的
+# CredentialProjection 使用（按 DSH 自己的 `.credentials.yaml` 布局做凭据投影）。
+#
+# **这条规则是保险，不是修复。** 我没有复现出「不加它就坏」的实例：我们只走
+# SafeConstructor + 节点级 compose/serialize，不碰 JavaBean 反射那条路。
+# 但三点事实让「不加」不值得赌：
+#   1. 已解包核对 snakeyaml-2.4.jar —— META-INF 下只有 MANIFEST 与 maven 元数据，
+#      **没有任何 consumer proguard 规则**，R8 可以自由改名与裁剪；
+#   2. 本仓库的 release **开了混淆**（app 的 isMinifyEnabled = true）；
+#   3. 上游 DSHA 的 release 是 **minifyEnabled false** —— 所以「DSHA 装了它能跑」
+#      **不构成**「它在 R8 下能用」的证据。
+#
+# ⚠️ 诚实边界：**这条路径没有被验证过。** CI 只构建 debug（assembleDebug），
+#    release 混淆后的行为要等有人真的构建 release 并运行凭据投影才能说「可用」。
+# ---------------------------------------------------------------------------
+-keep class org.yaml.snakeyaml.** { *; }
+-dontwarn org.yaml.snakeyaml.**

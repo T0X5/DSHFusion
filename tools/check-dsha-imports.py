@@ -136,6 +136,32 @@ def check_derived(doc: dict, adapted_prefix: bytes, copy_prefix: bytes) -> tuple
     return problems, f"{len(items)} 项上游侧已核"
 
 
+def check_original(doc: dict, taken: set) -> list:
+    """本仓库自写、不对应上游文件的测试。只查「还存不存在」与「身份有没有重叠」——
+    它没有上游对应物，所以没有任何哈希可核，这一点必须如实承认。"""
+    problems = []
+    section = doc.get("original")
+    if not isinstance(section, dict):
+        return problems
+    items = section.get("items")
+    if not isinstance(items, list):
+        return [f"original.items 不是列表"]
+    for entry in items:
+        local = str(entry.get("local_path", ""))
+        path = ROOT / local
+        if not local or not path.is_file():
+            problems.append(f"original 声明的 {local or '（空）'} 不存在")
+            continue
+        if local in taken:
+            problems.append(f"{local} 同时出现在 files/derived 与 original（一处代码一种身份）")
+        if not str(entry.get("why", "")).strip():
+            problems.append(f"{local} 的 why 为空 —— 自写文件也要说清为什么必须有它")
+        if not str(entry.get("verified_by", "")).strip():
+            problems.append(f"{local} 没有 verified_by")
+        taken.add(local)
+    return problems
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="核验 DSHA 导入副本的来源头与正文一致性")
     parser.add_argument("--update", action="store_true",
@@ -235,8 +261,12 @@ def main() -> int:
     stray = sorted(set(registered) - on_disk - set(missing))
 
     derived_problems, derived_note = check_derived(doc, adapted_prefix, prefix)
+    # 一处代码只能有一种身份：逐字节副本 / 改写适配 / 本仓库自写。
+    taken = set(registered) | set(derived_paths)
+    original_problems = check_original(doc, taken)
 
-    if missing or bad_header or mismatched or unregistered or stray or derived_problems:
+    if (missing or bad_header or mismatched or unregistered or stray
+            or derived_problems or original_problems):
         print("DSHA 导入副本核验失败：", file=sys.stderr)
         for item in missing:
             print(f"  ✗ 缺失: {item}", file=sys.stderr)
@@ -253,6 +283,8 @@ def main() -> int:
             print(f"  ✗ 登记了但不在导入目录里: {item}", file=sys.stderr)
         for item in derived_problems:
             print(f"  ✗ 改写移植登记有问题: {item}", file=sys.stderr)
+        for item in original_problems:
+            print(f"  ✗ 自写文件登记有问题: {item}", file=sys.stderr)
         # 提示只在真的与逐字节副本有关时出现 —— 错在 derived 段时还讲「正文按设计是
         # 逐字节副本」会把人引到错的地方。
         if missing or bad_header or mismatched or unregistered or stray:

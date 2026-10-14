@@ -1,8 +1,9 @@
 # `:backup` — v5 备份归档的格式与预检
 
-阶段 2.1 与 2.2 的落地模块。它**不**做备份计划、**不**做恢复、**不**碰运行环境；
-它负责两件事：**把「一份备份是不是完整、自洽、没被篡改」变成可判定的**（2.1），
-以及**把「这次要备份哪些东西、哪些绝对不碰」变成可判定的**（2.2）。
+阶段 2.1–2.3 的落地模块。它**不**做备份计划、**不**做恢复、**不**碰运行环境；
+它负责三件事：**把「一份备份是不是完整、自洽、没被篡改」变成可判定的**（2.1）、
+**把「这次要备份哪些东西、哪些绝对不碰」变成可判定的**（2.2），
+以及**把「机器本地凭据不进归档、而 provider 凭据还在」变成可判定的**（2.3）。
 
 ## 这个模块里的代码来自哪里
 
@@ -15,8 +16,9 @@
 > APK 产物身份核验，23/23 步绿。
 > ⚠️ 但**没有在真机上验证过** —— 2.2 还没有导出/恢复入口。
 
-| `com.deepseekharness.app.backup`（11 个类）<br>`com.deepseekharness.app.util`（`BackupScopes`、`FileKind`） | DSHA `467c7eb0` | **逐字节原样副本**（MIT，15 个文件）<br>**另有 3 份测试是「适配副本」** |
+| `com.deepseekharness.app.backup`（**13** 个类）<br>`com.deepseekharness.app.util`（`BackupScopes`、`FileKind`） | DSHA `467c7eb0` | **逐字节原样副本**（MIT，**17** 个文件）<br>**另有 4 份测试/类属于改写或适配** |
 | `com.dshbox.app.backup`（`V5Archive.kt`、`DshBackupScope.kt`、`DshBackupExclusions.kt`） | DSHFusion | 本仓库自己写的 Kotlin |
+| `com.dshbox.app.backup.CredentialProjectionCodesTest` | DSHFusion | 本仓库自写的测试（单列在 `dsha-imports.json` 的 `original` 段） |
 
 阶段 2.1 引入的是容器与预检（`BackupArchive`/`BackupLimits`/`BackupJson`/`BackupControl`、
 `BackupScopes` 与两份原始测试）；阶段 2.2 补上**枚举与写入**那一半
@@ -154,6 +156,82 @@ DSHA 的 `PLUGINS` 范围列了 `plugin-src` / `plugin-sources.json` / `plugin-h
 `DshBackupExclusionsTest` 还会把每个必须保留路径的**每一个祖先目录**逐个问一遍 ——
 有人把 `.dsh/dshbox` 加进排除清单时立刻红，并指出是哪个祖先。
 
+## 阶段 2.3 加了什么：凭据投影（机器本地记录不进归档）
+
+**问题**：`$DSH_HOME/.credentials.yaml` 里混着两类东西 ——
+
+- **provider 凭据**（`refs:` 指向的 API Key）：**必须**跟着备份走，否则换机后要重填；
+- **机器本地记录**（`records:` 里的 `client-connection/browser-session`，
+  即「这台机器上的浏览器会话已授权」）：**不能**跟着备份走 ——
+  它描述的是**这一台设备**的授权状态，带到另一台设备上要么无用、要么是**别人设备的会话**。
+
+**做法**：不是删掉整个文件（那会连 API Key 一起丢），而是**投影** ——
+解析 → 去掉机器本地记录 → 再序列化。`CredentialProjection` 就是干这个的，
+它逐字节来自 DSHA（见下）。它认的机器本地前缀常量是 `"client-connection/"`，
+与 DSH 自己的 `dsh-client-connection` 里 `credentialKey("client-connection", "browser-session")`
+**逐字一致** —— 这不是巧合，是复用成立的前提。
+
+**为什么必须用 YAML 解析器而不是字符串替换**：要改的是「哪个记录」，
+而记录可能写成 flow mapping、可能带引号、可能带注释或锚点。
+字符串替换会在这些形态上出错，而这是**唯一一处处理用户密钥的代码** ——
+出错代价是密钥丢失或泄漏。因此引入 SnakeYAML 2.4（Apache-2.0，DIV-0020）。
+**版本下限是硬要求**：`CredentialProjection` 用 `LoaderOptions` 的
+`codePointLimit` / `maxAliasesForCollections` / `nestingDepthLimit` / `allowDuplicateKeys`，
+这些是它抵御 YAML 炸弹与别名展开的边界 —— 1.x 上它们不存在，**编译期不会报错**。
+
+**序列化的严格程度**（这些是它的安全边界，不是风格偏好）：
+
+| 限制 | 值 | 后果 |
+|---|---|---|
+| 文件上限 | `1 MiB` | 超了报 `CREDENTIAL_PROJECTION_LIMIT`，**在解析前** |
+| 重复键 | 拒绝 | 否则「后一个覆盖前一个」会被用来夹带 |
+| 锚点 / 别名 | 拒绝（`maxAliases 0`） | 否则可用别名展开炸内存 |
+| 嵌套深度 | 32 | |
+| 显式标签 | 拒绝 | 否则可触发任意类构造 |
+| 非有限浮点 | 拒绝 | |
+| 非法 UTF-8 | 拒绝 | `CREDENTIAL_PROJECTION_ENCODING`，也在解析前 |
+| 诊断信息 | **绝不带出密文** | 见 `dsha-imports.json` 里对这条的说明 |
+
+**没有机器本地记录时逐字节不变**：投影发现「没有可删的记录」就**原样返回输入**，
+不做无谓的重新序列化 —— 避免每次备份都产生无意义的字节差异
+（那会让「备份内容变了没有」这个问题失去意义）。
+
+**一处真实的覆盖损失，已登记**：上游有一条测试
+`oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive`
+证明「机器本地记录在**候选阶段**就被投影掉」，而它依赖
+`NativeRestorePlan` → `BackupTree` → `AndroidTreeFileSystem` ——
+正是阶段 2.4 才搬的那条 Android 耦合链。所以 **2.3 删掉了这一条测试方法**，
+并把「它证明的性质在 2.3 没有被验证」写进 `dsha-imports.json` 的
+`changed` 与 `not_imported`（补回阶段 2.4）。
+**删测试而不留痕等于覆盖静默流失**，所以 `verify-phase0.sh` 第 5m 节专门断言这条登记完整。
+
+**上游的断言太弱，因此另写了一条**：上游对 5 种坏输入只断言
+`startsWith("CREDENTIAL_PROJECTION_")` —— 那只能证明「被拒绝了」，
+证明不了「因为正确的原因被拒绝」。`CredentialProjectionCodesTest.kt` 按**实测的**
+具体错误码逐条钉住（实测怎么来的见 [../docs/INCIDENTS.md](../docs/INCIDENTS.md) 第 22 条：
+我按源码推了三个码，**三个全错**）。
+
+**这个模块怎么被验证**（本机就能跑，不依赖 Android）：
+
+```bash
+bash tools/run-backup-jvm-tests.sh     # 编译并运行 backup 的全部 .java + 行为探针
+```
+
+它取 junit/hamcrest/gson/snakeyaml 四个 jar（放进 `.jvm-test-cache/`，已 gitignore），
+**版本必须与 `gradle/libs.versions.toml` 一致** —— 脚本自己 grep 版本目录，对不上退 2；
+取不到 jar 也**退 2，不静默跳过**。然后跑 `tools/check-credential-projection.java`，
+它核验的是**行为**：机器本地记录真的消失了、provider 凭据真的还在、`version: 1` 真的还在、
+没有机器记录时真的逐字节不变、坏输入的诊断里真的没有密钥。
+
+> ⚠️ **诚实边界**：`app/proguard-rules.pro` 里给 SnakeYAML 加的
+> `-keep class org.yaml.snakeyaml.**` 是**保险，不是修复** ——
+> 它的**效果没有被验证**：CI 只构建 debug（`assembleDebug`），
+> 而 release 混淆后的行为要等真的构建 release 并运行凭据投影才能说「可用」。
+> 加它的理由：已解包核对 `snakeyaml-2.4.jar` 的 `META-INF`，
+> **没有任何 consumer proguard 规则**；而本仓库 release 开了混淆，
+> 上游 DSHA 的 release 是 `minifyEnabled false` ——
+> 所以「DSHA 装了它能跑」不构成「它在 R8 下能用」的证据。
+
 ## 这个模块**不**做什么
 
 明确划出去的部分，免得读者以为「格式与预检」等于「能备份能恢复」：
@@ -161,7 +239,7 @@ DSHA 的 `PLUGINS` 范围列了 `plugin-src` / `plugin-sources.json` / `plugin-h
 | 不做的事 | 归属 | 为什么现在不做 |
 |---|---|---|
 | 真正调用枚举与写入（`HostSnapshot.create`） | 阶段 2.4 | 需要逻辑根 → 本机路径的映射与隔离试运行；现在搬进来只会是「有代码没调用方」 |
-| 凭据的**字段级**排除（`settings.yaml` 里的模型凭据、桥 token） | 阶段 2.3 | 2.2 只做了整份 `.dsh/credentials` 的排除，不声称「归档里一定没有密钥」 |
+| 凭据的**字段级**排除（`settings.yaml` 里的模型凭据、桥 token） | 仍未做 | 2.3 做的是**机器本地记录**的投影（见下）；`settings.yaml` 里是否有需要单独排除的字段，**要先在真机上确认它的实际内容**才能决定 |
 | 逻辑根 → 本机路径的映射、隔离试运行、失败回切 | 阶段 2.4 | 切口是 DSHA `NativeRestorePlan.Mapping` 接口 |
 | 自动备份计划（每日 / 1–168h / 停止后，保留 3 份） | 阶段 2.5 | 依赖 2.1–2.3 |
 | 范围与排除的界面文案 | 阶段 2.4 | DSHA 的 `label()`/`describe()` 走它自己那套 i18n；本仓库用 Android 资源 |
@@ -184,6 +262,11 @@ DSHA 侧同样属于 v5 预检、但**刻意没搬**的类，逐条理由记在
 ./gradlew :backup:testDebugUnitTest
 ```
 
+- `CredentialProjectionTest` —— 原样导入的适配副本（3 条语句因工具链差异机械替换）；
+  **上游原本还有 1 条测试方法，2.3 删掉了**，理由见上面「一处真实的覆盖损失」。
+- `CredentialProjectionCodesTest` —— 本仓库自写。上游对坏输入只断言「前缀是
+  `CREDENTIAL_PROJECTION_`」，那条断言**证明不了「因为正确的原因被拒绝」**，
+  所以这一份按**实测的**具体错误码逐条钉住。
 - `V5ArchiveTest` —— DSHFusion 侧，钉**具体错误码**而不是「抛了异常就行」；
 - `BackupArchiveTest`、`BackupJsonTest` —— 原样导入的负面用例，覆盖截断到每一个
   长度、篡改、尾部多余字节、路径穿越与重复、假完整、深层嵌套 JSON、范围夹带。

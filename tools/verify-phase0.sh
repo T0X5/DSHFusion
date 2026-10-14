@@ -1650,6 +1650,122 @@ fi
 [ "$SC_BAD" = "0" ] && ok "备份范围与排除清单齐备"
 
 
+section "5m. 凭据投影：机器本地记录不进归档（阶段 2.3）"
+# 这一节和前几节**性质不同**，值得说明：
+#   5j/5k/5l 查的是「文件在不在、常量一致不一致、字符串在不在」。
+#   而 2.3 要证明的性质是**行为** —— 「client-connection/ 的记录不进归档，
+#   而 provider 凭据一个字节不动」。字符串在、行为错，照样能过 grep。
+#   所以这一节**真编译、真运行**（本机有 JDK 17；`java`/`javac` 都在）。
+#   本机**没有 kotlinc**，所以 .kt 的测试跑不了 —— 那是 android.yml 的事。
+CR_BAD=0
+CR_PROJ="backup/src/main/java/com/deepseekharness/app/backup/CredentialProjection.java"
+CR_SRC="backup/src/main/java/com/deepseekharness/app/backup/CredentialFileBackupSource.java"
+for f in "$CR_PROJ" "$CR_SRC"; do
+    if [ -f "$f" ]; then
+        ok "凭据投影源码在场：$(basename "$f")"
+    else
+        fail "缺少 $f"
+        CR_BAD=1
+    fi
+done
+
+# ① 投影必须认 DSH **自己的**记录键前缀。这不是我们的发明：
+#    dsh-client-connection 里 `credentialKey("client-connection", "browser-session")`
+#    就是那个浏览器会话授权 —— 它是**机器本地**的，跟到另一台设备上没有意义。
+if grep -q '"client-connection/"' "$CR_PROJ" 2>/dev/null; then
+    ok "投影认的是 DSH 自己的机器本地前缀 client-connection/（与 dsh-client-connection 一致）"
+else
+    fail "CredentialProjection 里找不到 client-connection/ 前缀"
+    CR_BAD=1
+fi
+
+# ② 新增依赖必须三处一致：版本目录、模块声明、署名登记。
+#    漏掉任何一处，「能编过」与「合法分发」就是两件事。
+if grep -q '^snakeyaml = "2.4"' gradle/libs.versions.toml \
+   && grep -q 'snakeyaml = { group = "org.yaml"' gradle/libs.versions.toml \
+   && grep -q 'implementation(libs.snakeyaml)' backup/build.gradle.kts; then
+    ok "SnakeYAML 在版本目录与模块声明里（且版本一致）"
+else
+    fail "SnakeYAML 的版本目录条目或模块声明缺失/版本不一致"
+    CR_BAD=1
+fi
+if grep -q '| SnakeYAML | 2.4 |' governance/ATTRIBUTION.md; then
+    ok "SnakeYAML 已登记进署名表（Apache-2.0）"
+else
+    fail "SnakeYAML 没有登记进 governance/ATTRIBUTION.md"
+    CR_BAD=1
+fi
+
+# ③ 混淆保险：SnakeYAML 的 jar **不自带** consumer proguard 规则（已解包核对），
+#    而本仓库 release 开了混淆、上游 DSHA 的 release 没开 ——
+#    所以「DSHA 装了它能跑」不构成证据。
+if grep -q '^-keep class org.yaml.snakeyaml' app/proguard-rules.pro; then
+    ok "app 侧有 SnakeYAML 的 keep 规则（保险；release 混淆路径仍未验证）"
+else
+    fail "app/proguard-rules.pro 里缺少 SnakeYAML 的 keep 规则"
+    CR_BAD=1
+fi
+
+# ④ 真正跑一遍。这是本节唯一能证明**行为**的一步。
+if [ -f tools/run-backup-jvm-tests.sh ]; then
+    # 用 mktemp 而不是写死一个临时文件路径：写死会同时踩两件事 ——
+    # ① 并发运行时互相覆盖；② tools/privacy_audit.py 会把仓库里写死的临时
+    #    目录路径当成「本机痕迹」判失败（那条规则的本意是防发布时带出本机路径）。
+    JVM_LOG=$(mktemp)
+    if bash tools/run-backup-jvm-tests.sh > "$JVM_LOG" 2>&1; then
+        JVM_TESTS=$(grep -o 'OK ([0-9]* tests)' "$JVM_LOG" | grep -o '[0-9]*' | head -1)
+        ok "本机真编译真运行 :backup 的 Java 测试与凭据投影行为核验通过（${JVM_TESTS:-?} 条）"
+    else
+        fail "本机 JVM 测试或凭据投影核验失败 —— 详见下面的输出"
+        sed -n '1,25p' "$JVM_LOG" >&2
+        CR_BAD=1
+    fi
+    rm -f "$JVM_LOG"
+else
+    fail "缺少 tools/run-backup-jvm-tests.sh"
+    CR_BAD=1
+fi
+
+# ⑤ 被删掉的那条上游测试必须**如实登记**，不能悄悄消失。
+#    它证明的性质（机器记录在候选阶段就被投影）在 2.3 **没有被验证**，
+#    这个损失要留在纸上，2.4 才有人知道要补回来。
+if python3 -c "
+import json,sys
+d=json.load(open('governance/dsha-imports.json'))
+it=[i for i in d['derived']['items'] if i['local_path'].endswith('CredentialProjectionTest.java')]
+assert it, '没有登记 CredentialProjectionTest 的适配'
+blob=' '.join(it[0].get('changed',[]))
+assert 'oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive' in blob, '删掉的那条测试没写进 changed'
+assert 'NativeRestorePlan' in blob, '没写清它为什么被删'
+ni=[e for e in d.get('not_imported',{}).get('items',[]) if 'oldV5Archive' in str(e.get('upstream_path',''))]
+assert ni, 'not_imported 里没有那条被删的测试'
+assert ni[0].get('phase')=='2.4', '被删测试的补回阶段不是 2.4'
+" 2>/dev/null; then
+    ok "被删的那条上游测试已如实登记（含「这个性质在 2.3 未验证」与补回阶段 2.4）"
+else
+    fail "被删测试的登记不完整（删测试而不留痕 = 覆盖静默流失）"
+    CR_BAD=1
+fi
+
+# ⑥ 本仓库自写的测试必须单独登记，且与上游身份不重叠。
+if python3 -c "
+import json
+d=json.load(open('governance/dsha-imports.json'))
+o=d.get('original',{}).get('items',[])
+assert o, 'original 段为空'
+paths={e['local_path'] for e in d['files']}|{i['local_path'] for i in d['derived']['items']}
+assert not ({i['local_path'] for i in o} & paths), '自写文件与上游移植身份重叠'
+assert all(i.get('why') and i.get('verified_by') for i in o), '自写文件没写清为什么/谁来核'
+" 2>/dev/null; then
+    ok "本仓库自写的测试单独登记（与上游移植身份不重叠）"
+else
+    fail "original 段缺失或不合规"
+    CR_BAD=1
+fi
+
+[ "$CR_BAD" = "0" ] && ok "凭据投影齐备且行为已核验"
+
+
 
 section "6. 上游仓库未被修改（只读审计承诺）"
 

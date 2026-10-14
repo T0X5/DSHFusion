@@ -20,7 +20,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
 （`README.md`、`.gitignore`）→ **实际导入 765 个文件、25.4 MB**。
-19 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
+20 处偏离已登记，见 [governance/divergences.json](governance/divergences.json)。
 
 **「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
@@ -46,10 +46,17 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
   [docs/INCIDENTS.md](docs/INCIDENTS.md) 第 17–18 条）。
 
 > ⚠️ **第一次真实编译阶段 2.1 红了三次**（类型错误 → 魔数手抄 → 均为测试侧，
-> 主模块每次都编译通过）。**本机没有 JDK/SDK/Gradle，Kotlin 编译不了**，
-> 所以「本机 166 项通过」只覆盖脚本与字节层面，**编译与运行层面的结论只能由 CI 给出**。
+> 主模块每次都编译通过）。
+>
+> 所以「本机通过」只覆盖脚本与字节层面，**编译与运行层面的结论只能由 CI 给出**。
 > 每一条负面用例红了都要先问「它证明的是被测代码错了，还是我的夹具坏了」——
 > 第 17 条就是后者，而当时那三条 ComparatorFailure 长得完全像「拦截成功」。
+>
+> 🔴 **更正（2026-10-14，见 [docs/INCIDENTS.md](docs/INCIDENTS.md) 第 21 条）：
+> 「本机没有 JDK」这条记录是错的 —— 本机一直有完整的 JDK 17（`javac`/`jar`/`keytool` 都在）。
+> 因此 `:backup` 的 **Java 侧**（不含 `.kt`）一直可以在本机真编译真运行。
+> **没有的是 Android SDK、Gradle 与 kotlinc**，Kotlin 与 Android 侧的结论仍然只能由 CI 给出。
+> 这条错误记录让 2.1/2.2 的四次 CI 红里有三次（都是纯 Java 侧问题）本可以两秒发现。**
 
 **阶段 2.2 已实现（2026-10-14，分支 `phase-2.2/scope-backup`）**：范围模型与排除清单。
 
@@ -85,7 +92,50 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 **2.2 只声明「整份 `.dsh/credentials` 不进归档」，不声称「归档里一定没有密钥」** ——
 后者要等 2.3 做完并由它自己的测试作证。
 
-**阶段 2.3–2.5 未做**：凭据排除、隔离试运行与失败回切、自动计划。逐条理由见
+**阶段 2.3 已实现（2026-10-14，分支 `phase-2.3/credential-exclusion`）**：凭据投影
+（把机器本地凭据挡在归档之外）。
+
+- **先审计再动笔，审计推翻了最初的假设。** 我原以为 `CredentialProjection` 处理的是
+  **DSHA 自己的** `.credentials.yaml`，所以要「先弄清 DSHFusion 的凭据布局」才能决定复不复用。
+  实测相反：DSH 自己的凭据就是 `$DSH_HOME/.credentials.yaml`，格式由
+  `@deepseek-ai/dsh-credentials-local` 定义（`version: 1` + `refs:` + `records:`，
+  记录键 `<scope>/<id>`，类型 `api-key`/`grant`）—— **与 DSHA 的投影 schema 逐条一致**。
+  容器里的 DSH 是 `0.2.0-rc.2`，与本仓库锁定的版本相同，所以这份证据对本仓库有效。
+  要删的机器本地记录（`client-connection/browser-session`，浏览器会话授权）就是
+  `dsh-client-connection` 里 `credentialKey("client-connection", "browser-session")` 那一个。
+  **结论：直接复用，不重写** —— 与硬约束 2 一致。
+- **2 个逐字节副本**（`CredentialProjection.java` 283 行、`CredentialFileBackupSource.java` 110 行，
+  零 Android 导入）+ **1 份适配副本**（`CredentialProjectionTest.java`，3 条语句因工具链差异机械替换）
+  + **1 份本仓库自写的测试**（`CredentialProjectionCodesTest.kt`，单列在 `dsha-imports.json`
+  的 `original` 段，不混进 `derived`）。
+- **删掉了上游 1 条测试方法，并如实登记。** `oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive`
+  依赖 `NativeRestorePlan` → `BackupTree` → Android 耦合的 `AndroidTreeFileSystem`/`AndroidBackupFileSystem`，
+  正是登记为阶段 2.4 的那条链。**这是真实的覆盖损失** —— 它证明的性质（机器记录在候选阶段就被投影）
+  **在 2.3 没有被验证**，已写进 `dsha-imports.json` 的 `changed` 与 `not_imported`（补回阶段 2.4）。
+  删测试而不留痕等于覆盖静默流失，所以 5m 节专门断言这条登记完整。
+- **上游那条断言太弱，所以补了一条自己的。** 上游对 5 种坏输入只断言
+  `startsWith("CREDENTIAL_PROJECTION_")` —— 只能证明「被拒绝了」，证明不了「因为正确的原因被拒绝」。
+  新测试按**实测的具体错误码**逐条钉住。
+- **期望值是跑出来的，不是读出来的。** 我先按源码推理，推出 `anchor-alias → _ALIAS`、
+  `explicit-tag → _TAG`、`deep-nesting → _LIMIT` —— **三个全错**（SnakeYAML 在自己的
+  `compose()` 里就先抛了，被兜底 catch 转成 `_FAILED`）。若照推理写进断言，红的是断言不是代码。
+  见 [docs/INCIDENTS.md](docs/INCIDENTS.md) 第 22 条。
+- **本机第一次真正编译并运行 `:backup`。** 新增 `tools/run-backup-jvm-tests.sh`：
+  取 junit/hamcrest/gson/snakeyaml 四个 jar，编译并运行 `backup/src/{main,test}` 的**全部 .java**，
+  再跑 `tools/check-credential-projection.java` 做**行为**核验。**版本必须与版本目录一致**
+  （脚本自己 grep `libs.versions.toml`，对不上退 2；已做注入验证），取不到 jar 也**退 2 不静默跳过**。
+  已接进 `contracts.yml`（补 `actions/setup-java`）。
+- **新增依赖 SnakeYAML 2.4**（Apache-2.0，DIV-0020）：`CredentialProjection` 用的是 SnakeYAML 2.x
+  才有的 `LoaderOptions` 限流项，降到 1.x 是**静默的安全退化**。已解包核对
+  `snakeyaml-2.4.jar` 的 META-INF —— **没有任何 consumer proguard 规则**；而本仓库 release 开了混淆、
+  上游 DSHA 的 release 是 `minifyEnabled false`，所以「DSHA 装了它能跑」不构成证据。
+  app 侧补了 `-keep class org.yaml.snakeyaml.**`。**这条规则是保险，不是修复 ——
+  它的效果没有被验证**，CI 只构建 debug。
+- **刻意没做**：`settings.yaml` 里模型凭据的**字段级**排除。目前的模型凭据走 DSH 自己的
+  凭据存储（与 `.credentials.yaml` 同一条路）；`settings.yaml` 里是否还有需要单独排除的字段，
+  要等确认过它的实际内容才能决定。**没有证据之前不动它。**
+
+**阶段 2.4–2.5 未做**：隔离试运行与失败回切、自动计划。逐条理由见
 [backup/README.md](backup/README.md) 与 `dsha-imports.json` 的 `not_imported`。
 
 > 两个方向都要查，缺一不可：`check-import-fidelity.py` 抓「多出来的改动」，
@@ -186,8 +236,10 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 18 | 新写的检查器**自己**漏抓 | — | 防手抄的正则要求 `ATA` 前至少 2 字符，恰好匹配不了 7 字符的 `DSHDATA`；修好后又在 KDoc 的 `*` 续行上报错 | **DIV-0019** | 第 16 条的下一环：**注入生效了、检查器还是没红**，同样给出虚假安全感且更难察觉。5k 节把注入固化进套件，每次现场证明 |
 | 19 | `.dsh/dshbox` 整目录排除**本来是错的** | —（写代码前被审计挡下） | 那目录里装着三份 overlay，其中「哪些插件被停用」是**安全机制**：丢了会把隔离的坏插件重新加载，真机上出过「每次都起不来」 | —（阶段 2.2） | 排除改成按子路径逐项；`.dsh/bin` **不**排除（没有命名空间，可能是用户自己的）。**前 18 条都是跑出来才发现，这一条是先审计再动笔避免的** |
 | 20 | `Files.writeString` 在骨干的 AGP 下编不过 | CI：`:backup:compileDebugUnitTestJavaWithJavac` 16 处 `cannot find symbol` | **两个上游的工具链不同**：DSHA 用 AGP 9.1.1，单元测试按 JDK 解析 `java.nio.file`；DSHBox 用 AGP 8.9.2，按 `android.jar`（API 36）解析，而它没有 Java 11 的 `readString`/`writeString` | —（阶段 2.2，3 份测试移入 `derived` / `kind: adapted`） | **「我的代码写错了」与「两个上游的工具链不同」报错长得一模一样**。顺带发现来源头在撒谎（改完正文还写「正文未做任何修改」）而检查器只查 `files[]` 不查 `derived` —— 已拆成两种头并强制。**补记：修完还剩 1 处红，是我自己的机械替换留下的悬空限定名（`java.nio.file.new String(…)`）—— 断言 4 只能说「替换发生了」，说不了「替换结果合法」，因此加了断言 5。**补记二：修完编译全过、62 条只红 1 条，而那 1 条是我的断言错了 —— `FULL` 的成员路径就是 `.dsh`，我却要求它 `startsWith(".dsh/")`；本机把谓词在数据上跑了一遍，旧谓词恰好只在那一条上为 false，与 CI 一致** |
+| 21 | **「本机没有 JDK」这条记录是错的** | —（不是运行失败，是**认知**失败） | 本机一直有完整的 JDK 17（`javac`/`jar`/`keytool`），而我从 2.1 起就把它当成「编译层面的结论只能由 CI 给出」 | —（阶段 2.3，顺带发现） | **环境能力也要用证据确认，不能沿用旧结论。** 2.1/2.2 四次 CI 红里有三次是纯 Java 侧、本机两秒就能发现的问题。讽刺的是：第 11 条我就是用 `keytool` 建的密钥库，却没从它反推出「本机有 JDK」。已把「本机真跑」固化进 `tools/run-backup-jvm-tests.sh` |
+| 22 | **我按源码推理错误码，三个全错** | —（写测试时发现） | 上游只断言 `startsWith("CREDENTIAL_PROJECTION_")`，我打算钉具体码，于是按源码推出 `_ALIAS`/`_TAG`/`_LIMIT` —— 实际全是 `_FAILED`：SnakeYAML 在自己的 `compose()` 里就先抛了，被兜底 catch 转掉 | —（阶段 2.3） | **期望值必须来自真实执行，不能来自阅读。** 兜底 `catch` 会把「本来会抛 A」变成「实际抛 B」，而阅读时最容易忽略的正是兜底。先写探针打印实际码，再按实测值写断言。**补记：探针自己也有两个错 —— 我在 `.java` 里写了 Kotlin 的 `toByteArray`（Java 叫 `getBytes`），又把单文件启动当成能带 `-encoding`（它用平台默认字符集，本机是 US-ASCII，中文注释编不过）。两个都不是设计问题，是「没跑就写」** |
 
-**贯穿全部 20 条的同一个病**，值得单独记住：
+**贯穿全部 22 条的同一个病**，值得单独记住：
 
 | 发作形态 | 通过了的检查 |
 |---|---|
@@ -203,6 +255,9 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | **替换发生了、但替换的结果不合法**（悬空限定名 `java.nio.file.new`） | （第 20 条补记；断言 4 只查「旧调用还在不在」） |
 | **断言把正确的实现判失败**（`.dsh` 不是 `.dsh/` 的子串） | （第 20 条补记二；与第 15 条同族 —— 钉了「我以为的形态」而不是「必须成立的性质」） |
 | 页面**看起来**是 DSH，但没验证它来自哪个端口 | （差点第五次发作，见 INCIDENTS 第 14 条） |
+| **关于环境的旧结论被当成事实沿用**（「本机没有 JDK」） | 全部，而且它让我多付了两轮 CI |
+| **期望值来自「读源码」而不是「跑一遍」**（三个错误码全推错） | 全部，尤其是带兜底 catch 的代码 |
+| **一次 `git checkout --` 冲掉了未提交的登记**（同一类错我犯了两次） | 全部 —— 输出被 `2>/dev/null` 吞掉，看起来什么都没发生 |
 
 对应的三条方法论，已经写进上面的硬约束：
 **「步骤通过」≠「产物对」≠「在目标设备上能用」**；**状态结论必须有独立证据**；
@@ -307,8 +362,10 @@ dshfusion/
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
 │   ├── check-dsha-imports.py    DSHA 导入副本核验（来源头 + 正文 sha256，CI 真跑）
 │   ├── check-backup-contract.py 备份模块契约（魔数三处一致 / 不手抄常量 / 错误码有效）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 166 项）
-├── backup/                      阶段 2.1–2.2：v5 归档格式与预检 + 范围与排除（见其 README）
+│   ├── run-backup-jvm-tests.sh  本机真编译真运行 :backup 的 Java 侧（含行为探针）
+│   ├── check-credential-projection.java  凭据投影的行为核验（跑一遍，不是 grep）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 176 项）
+├── backup/                      阶段 2.1–2.3：v5 格式与预检 + 范围与排除 + 凭据投影（见其 README）
 │   └── src/main/java/com/deepseekharness/app/**  DSHA 原样导入（MIT，勿改正文）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/

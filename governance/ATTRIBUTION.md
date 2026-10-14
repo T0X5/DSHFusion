@@ -66,6 +66,7 @@ MIT 代码并入本 GPL-3.0 骨干在法律上是允许的方向（宽松 → �
 | Markwon + commonmark-java | 4.6.2 / 0.13.0 | Apache-2.0 / BSD-2-Clause | Gradle 依赖 | |
 | AndroidX / Compose / Kotlin / Coroutines | — | Apache-2.0 | Gradle 依赖 | |
 | Gson | 2.13.1 | **Apache-2.0** | Gradle 依赖（`:backup`） | 阶段 2.1（DIV-0019）；下限 2.11，因为用到了 `Strictness` |
+| SnakeYAML | 2.4 | **Apache-2.0** | Gradle 依赖（`:backup`） | 阶段 2.3；按 DSH 自己的 `.credentials.yaml` 布局做凭据投影。版本与 DSHA 一致。**已解包核对 jar：META-INF 下无 consumer proguard 规则**，因此 app 侧补了 `-keep class org.yaml.snakeyaml.**`（保险，非修复；release 混淆路径未验证） |
 | dshmarket | — | MIT | **仅设计参照，重写** | 未分发其代码与资源 |
 | awesome-dsh-plugin / awesome-dsh-mobile-plugins | — | CC0-1.0 | **运行时读取，不分发数据** | |
 

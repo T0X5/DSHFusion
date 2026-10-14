@@ -96,6 +96,66 @@ sha256 必须与登记的 `upstream_sha256` 一致。两个断言互相独立，
 用法：`python3 tools/check-backup-contract.py`
 退出码：0 通过；1 有问题。
 
+### `run-backup-jvm-tests.sh` — 本机真编译真运行 `:backup` 的 Java 侧
+
+**这个脚本存在的直接原因是 `docs/INCIDENTS.md` 第 21 条**：这个仓库从阶段 2.1 起
+一直记着「本机没有 JDK，编译层面的结论只能由 CI 给出」——**那条记录是错的**。
+本机一直有完整的 JDK 17。代价是：2.1/2.2 的四次 CI 红里有**三次是纯 Java 侧问题**，
+本机两秒就能发现。
+
+它做四件事：
+
+1. **断言版本一致**：`gradle/libs.versions.toml` 里的 `gson` / `snakeyaml` / `junit`
+   必须分别等于脚本里的 `2.13.1` / `2.4` / `4.13.2`。**对不上退 2**（不是 1 ——
+   「环境不对」与「代码有问题」必须能区分）。做过注入验证：把目录里的 gson 改成
+   2.12.0，脚本拒绝运行。
+2. **取四个 jar** 到 `${DSHFUSION_JVM_CACHE:-<仓库根>/.jvm-test-cache}/lib`。
+   取不到**退 2，绝不静默跳过** —— 「尽力而为地跳过」正是第 13 条那个病。
+3. **编译并运行** `backup/src/main` 与 `backup/src/test` 下的**全部 `.java`**
+   （`.kt` 编不了：本机没有 kotlinc，Kotlin 侧仍然只能靠 CI）。
+   源码清单用 `mapfile -t` 数组收集，**并断言集合非空** —— 编译一个空集合是假通过。
+4. **跑行为探针** `check-credential-projection.java`（见下）。
+
+```bash
+bash tools/run-backup-jvm-tests.sh
+```
+
+退出码：0 全过；1 编译或测试失败；2 环境/版本不对（含取不到 jar）。
+
+> ⚠️ **缓存目录必须和它一起 gitignore。** 这里踩过一次：`.jvm-test-cache/`
+> 一次 `git add -A` 就进了 57 个文件（4 个 jar + 53 个 `.class`），
+> 而既有的「大资产不许入库」断言只匹配 `*.tar.zst`/`*.tar.gz`，**抓不到 jar**。
+> 见 `docs/INCIDENTS.md` 第 24 条。现在 CI 有专门一条断言盯着它。
+
+### `check-credential-projection.java` — 凭据投影的**行为**核验
+
+**为什么是 `.java` 而不是 `.py`**：这条检查要看的是**行为**，不是源码里有没有某个字符串。
+「`CredentialProjection.java` 里有 `"client-connection/"`」证明不了投影真的删掉了记录 ——
+那正是这个仓库反复记的「查『有没有』而缺陷在『在哪』」。
+
+四组断言：
+
+1. 机器本地记录（`client-connection/browser-session`）**值和键名都消失**，
+   而同一文件里的 `provider/main` 凭据与 `version: 1` **原样还在**；
+2. **没有**机器本地记录时，投影输出与输入**逐字节相同**（不做无谓重排）；
+3. 4 种坏输入被拒，**且诊断信息里不含任何密钥、且不带 cause**；
+4. 超 `1 MiB` → `CREDENTIAL_PROJECTION_LIMIT`；非法 UTF-8 → `CREDENTIAL_PROJECTION_ENCODING`
+   （两者都在解析前就挡住）。
+
+**它有两个只有真跑才会暴露的坑，都记在案**：
+
+- **必须用 `javac -encoding UTF-8` 显式编译**，不能走 `java xxx.java` 单文件启动 ——
+  后者不接受 `-encoding`，而本机平台默认字符集是 **US-ASCII**，文件里的中文注释会
+  报 `unmappable character`。所以由 `run-backup-jvm-tests.sh` 负责编译它。
+- **`java` 要带 `-Dfile.encoding=UTF-8`**，否则输出是乱码。
+- 顺带：我在这个 `.java` 文件里写过 Kotlin 的 `toByteArray(Charset)`，
+  而 Java 里叫 `getBytes`。**它不是设计错误，是「没跑就写」**（第 22 条补记）。
+
+用法（通常不单独跑，由上面那个脚本驱动）：
+`javac -encoding UTF-8 -cp "$CP" -d "$OUT" tools/check-credential-projection.java && java -Dfile.encoding=UTF-8 -cp "$CP:$OUT" CheckCredentialProjection`
+
+退出码：0 四组全过；1 有断言失败。
+
 ### `check-exec-bits.py` — 脚本可执行位
 
 读 git 索引里的模式，对照 `governance/inherited-lint-baseline.json` 双向检查：

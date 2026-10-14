@@ -1206,3 +1206,273 @@ if (member.path == ".dsh") assertEquals(DshBackupScope.FULL, scope)   // 只有 
 **「本机全绿」只覆盖脚本与字节层面，编译与运行层面的结论只能由 CI 给出。**
 ②之后补了断言 5，③之后留下了「把谓词在数据上跑一遍」这个本机手段 ——
 但两者都只能覆盖**已经犯过的那一类**，不能替代编译。
+
+---
+
+## 21. 「本机没有 JDK」这条记录**是错的** —— 一直有 JDK 17
+
+**这不是一次运行失败，是一次**认知**失败，而且它已经影响了两轮决策。**
+
+`AGENTS.md` 里从阶段 2.1 起就写着：
+
+> ⚠️ **本机没有 JDK/SDK/Gradle，Kotlin 编译不了**，
+> 所以「本机 166 项通过」只覆盖脚本与字节层面，**编译与运行层面的结论只能由 CI 给出**。
+
+阶段 2.3 开工时我按这条记录行事，默认「改一行 → 只能等 CI 十几分钟」。
+直到我在找 `CredentialProjection` 的格式证据时顺手 `command -v javac`，
+才发现：
+
+```
+java     /usr/bin/java        openjdk version "17.0.20.1"
+javac    /usr/bin/javac       javac 17.0.20.1
+jar      /usr/bin/jar
+keytool  /usr/bin/keytool
+```
+
+**JDK 17 一直都在，而且是完整的（javac / jar / keytool 齐全）。**
+（讽刺的是：这份文档第 11 条记的就是「用 `keytool` 建固定密钥库」——
+`keytool` 属于 JDK，我在那条里用过它，却没有从它反推出「本机有 JDK」。）
+
+### 这条错误记录造成了什么
+
+`:backup` 里**一行 Android API 都没有**（`CredentialProjection` 只依赖 Gson 与 SnakeYAML）。
+这部分**本来就完全可以在本机编译和运行**，却被当成「只有 CI 能跑」：
+
+| 阶段 | 本机其实能发现的 | 实际怎么发现的 |
+|---|---|---|
+| 2.1 | 魔数手抄错一个字节（5 条用例同红） | CI 第一次编译 |
+| 2.2 | 16 处 `Files.writeString` 编不过 | CI 第二次编译 |
+| 2.2 | 悬空限定名 `java.nio.file.new` | CI 第三次编译 |
+| 2.2 | 断言把正确实现判失败 | CI 第四次编译 |
+
+**这四次里有三次是纯 Java 侧的问题，本机两秒就能跑出来。**
+
+### 修法：把「本机真跑」固化下来，而不是靠我记得
+
+新增 `tools/run-backup-jvm-tests.sh`：
+
+- 从 Maven Central 取 4 个 jar（junit / hamcrest / gson / snakeyaml）；
+- **版本必须与 `gradle/libs.versions.toml` 一致** —— 脚本自己 grep 版本目录，
+  对不上直接**退 2 报错**（做过注入验证：把目录里的 gson 改成 2.12.0，脚本拒绝运行）；
+- 取不到 jar 时**退 2 报错，不静默跳过** —— 这正是第 13 条的病；
+- 编译 `backup/src/{main,test}` 的**全部 .java** 并运行，再跑行为探针
+  `tools/check-credential-projection.java`。
+
+并接进 `contracts.yml`（补 `actions/setup-java`），于是它**在 CI 里也真跑**。
+
+### 边界（别把这条当成「本机什么都能跑」）
+
+| | 本机 | CI |
+|---|---|---|
+| `backup/src/**/*.java` 编译 + 运行 | ✅ | ✅ |
+| `backup/src/**/*.kt`（`V5Archive` / `DshBackupScope` / `DshBackupExclusions` 及其测试） | ❌ 无 kotlinc | ✅ |
+| lint / `assembleDebug` / APK 产物核验 | ❌ 无 Android SDK | ✅ |
+
+**所以那句话要改成**：「本机没有 **Android SDK、Gradle 与 kotlinc**；
+但**有 JDK 17**，因此 `:backup` 的 Java 侧能在本机真编译真运行。」
+
+### 教训
+
+**环境能力也要用证据确认，不能沿用旧结论。**
+这条记录不是「一次性的笔误」——它在两个阶段里被当作前提使用，
+每一轮都在替它多付一次 CI 往返。**一条关于环境的断言，和一条关于代码的断言一样，都需要被验证。**
+（与第 13 条同族：**一个「跳过」的分支，会安静地把「没验证」伪装成「已验证」。**）
+
+---
+
+## 22. 我按源码推理错误码，**三个全错**
+
+阶段 2.3 要把「凭据投影拒绝得对不对」钉死。上游 `CredentialProjectionTest`
+对 5 种坏输入只断言 `startsWith("CREDENTIAL_PROJECTION_")` ——
+**只能证明「被拒绝了」，证明不了「因为正确的原因被拒绝」**。
+所以我打算自己写一条按具体错误码断言的测试。
+
+期望值我先**读源码**推了一遍：
+
+| 输入 | 我推的 | 实际 |
+|---|---|---|
+| `records: &record {…}` + `refs: *record` | `_ALIAS` | **`_FAILED`** |
+| `payload: !!java.lang.String '…'` | `_TAG` | **`_FAILED`** |
+| 40 层嵌套 | `_LIMIT` | **`_FAILED`** |
+
+`CredentialProjection.check()` 里确实有 `_ALIAS` / `_TAG` 分支，读起来完全合理。
+但 **SnakeYAML 在自己的 `compose()` 里就先抛了**，被 `portable()` 的兜底 catch
+转成 `_FAILED` —— 于是那两个分支对这几类输入**实际不可达**。
+
+如果我把推理结果写进断言，CI 会红，而**红的是断言，不是代码**
+（与第 15、20 条补记二同族）。
+
+### 修法
+
+先写一个探针，把 15 个用例**跑一遍打印实际码**，再按实测值写断言：
+
+```
+anchor-alias         CREDENTIAL_PROJECTION_FAILED
+explicit-tag         CREDENTIAL_PROJECTION_FAILED
+deep-nesting         CREDENTIAL_PROJECTION_FAILED
+duplicate-key        CREDENTIAL_PROJECTION_DUPLICATE
+nonfinite-float      CREDENTIAL_PROJECTION_NUMBER
+yaml-directive       CREDENTIAL_PROJECTION_SCHEMA
+...
+```
+
+然后写 `CredentialProjectionCodesTest.kt`，并把「实测 vs 推理」的差异
+**写进 KDoc 留在仓库里**，而不是只留在我的对话里：
+
+> 结论：`CredentialProjection.check()` 里的 `_ALIAS` / `_TAG` 分支，
+> 对这几类输入**实际不可达**。这条测试如实钉住**实际行为**，
+> 而不是钉住「源码看起来应该怎样」。
+
+### 补记：探针自己也有两个错
+
+① 我在 **`.java` 文件里写了 Kotlin 的 `toByteArray(Charset)`** ——
+Java 里叫 `getBytes`。javac 的报错很精确（`cannot find symbol: method toByteArray(Charset)`），
+**是我先入为主地读成了「平台类库不全」**，还去查了一遍 JDK 安装。
+
+② 改用单文件源码启动（`java tools/xxx.java`）时，中文注释编不过：
+**那条路用的是平台默认字符集，本机是 US-ASCII，而且不接受 `-encoding`。**
+改成由脚本 `javac -encoding UTF-8` 显式编译 —— 与其它源码的处理方式一致。
+
+两个错都不是「设计问题」，是**没跑就写**。第 21 条刚证明了本机能跑，
+我却在同一次改动里又靠推理走了两步。
+
+### 教训
+
+**期望值必须来自真实执行，不能来自阅读。**
+「我读过源码，所以我知道它会抛什么」——这句话在有兜底 `catch` 的代码里尤其危险：
+**兜底会把「本来会抛 A」变成「实际抛 B」，而阅读时最容易忽略的正是兜底。**
+
+---
+
+## 23. 一次 `git checkout --` 冲掉了整段未提交的登记 —— **同一类错我犯了两次**
+
+阶段 2.2 已经记过一次：`git checkout -- HostSnapshotTest.java` 把**从未提交**的适配
+悄悄丢掉了，当时的结论写得很清楚 ——「**留着备份副本，不要用 `git checkout`**」。
+
+阶段 2.3 我又做了一次。在做 `check-dsha-imports.py` 新增的 `original` 段的反向验证时：
+
+```bash
+python3 -c "…把 derived[0] 的路径改成自写文件…"      # 故意制造身份重叠
+python3 tools/check-dsha-imports.py 2>&1 | grep -m2 "✗"   # 确认它红了 ✓
+git checkout -- governance/dsha-imports.json 2>/dev/null  # ← 这一行
+```
+
+**注入确实红了**（日志有 `✗`），但紧接着的 `git checkout --` 把
+`governance/dsha-imports.json` **整个恢复到 HEAD** —— 而我此前对这一文件的所有改动
+（2 个逐字节副本的登记、适配副本、`not_imported`、`original` 段、`phase` 文案）
+**全都还没提交**。它们一起没了。
+
+**发现它的方式是「看起来不相关的检查同时红了」**：下一次跑套件时报
+「导入目录里有未登记的文件」（那两个新 `.java` 回到了未登记状态）、
+「被删测试的登记不完整」、「original 段缺失」—— 三条同时红。
+如果我只挑其中一条去「修」，会去修一个不存在的登记问题。
+
+### 为什么这次比上次更值得记
+
+上次丢的是**一个文件的适配**，重做一遍就是了。这次丢的是**一整套登记**，
+而且**没有任何备份**。更糟的是：
+
+- 输出被 `2>/dev/null` 吞掉了 —— `git checkout` 是**沉默**的，它不报错、不提示，
+  看起来就像什么都没发生；
+- 我是在三条**看起来不相关**的检查同时失败时才反推出来的，
+  而不是在那一行执行时就发现。
+
+### 修法（这次真的改了做法）
+
+1. **不再用 `git checkout --` 回退未提交的改动。** 需要恢复时就 `cp` 一份备份回来，
+   或者从 `git show HEAD:path` 取（读操作，不碰工作区）。
+2. **注入测试的制造与还原都放在同一个脚本里**，且**不放 `2>/dev/null`** —— 让输出可见。
+3. **验证完就立刻提交**，不要让「已登记」这种昂贵的东西长期停在未提交状态。
+
+### 教训
+
+**「上次记过这个教训」不等于「这次不会犯」。** 第 20 条补记里我刚写过
+「同一类错两次都是我的」，这里是第三次。
+
+一个更准确的推论是：**只要还原手段比制造手段更「强力」，这类事故就会重复。**
+`git checkout --` 是一键的、沉默的、范围是「整个文件」的；而我的登记是逐步
+追加出来的。两者的力道根本不对等。
+
+---
+
+## 24. 依赖缓存被 `git add -A` 收进了仓库（57 个文件，含 4 个 jar）
+
+新增 `tools/run-backup-jvm-tests.sh` 时，它把依赖 jar 与编译产物放在
+仓库根的 `.jvm-test-cache/`（1.4 MB：4 个 jar + 53 个 `.class`）。
+我**没有**同时加 `.gitignore` 规则，然后惯常地 `git add -A` ——
+
+```
+A  .jvm-test-cache/classes/CheckCredentialProjection.class
+A  .jvm-test-cache/classes/com/deepseekharness/app/backup/…（52 个 .class）
+A  .jvm-test-cache/lib/gson-2.13.1.jar
+A  .jvm-test-cache/lib/hamcrest-core-1.3.jar
+A  .jvm-test-cache/lib/junit-4.13.2.jar
+A  .jvm-test-cache/lib/snakeyaml-2.4.jar
+```
+
+**57 个文件，全是本机产物，一个都不该进仓库。**
+
+### 为什么既有的门禁没拦住
+
+`contracts.yml` 里本来就有一条「大资产不许入库」的断言：
+
+```bash
+git ls-files | grep -qE 'runtime/android-assets|\.tar\.zst$|\.tar\.gz$|offline-rootfs'
+```
+
+它匹配的是**层资产**（`*.tar.zst` / `*.tar.gz` / `runtime/android-assets`）——
+**`*.jar` 一个字都不匹配**。所以这条断言对这次的形态是完全瞎的，
+它存在于「防大资产入库」这个目的之下，却只覆盖了那一种大资产。
+
+（同族的还有一条：`libs/zstd-jni-1.5.7-15.aar` 是上游刻意 vendored 的**构建依赖**，
+`.gitignore` 必须放行 —— 所以也不能简单粗暴地禁掉所有二进制。）
+
+### 修法
+
+1. `.gitignore` 加 `/.jvm-test-cache/`（前导斜杠是必要的：它是仓库根下的固定位置）。
+2. `contracts.yml` 的这条断言**加上 `.jvm-test-cache/`**，并在注释里写明
+   「既有两条抓不到 jar」这个**具体原因**，而不是笼统地写「防大文件」。
+3. `git rm -r --cached` 把它从索引里摘掉。
+
+### 教训
+
+**「有一条防 X 的检查」不等于「X 被防住了」。** 这条断言的名字是
+「大资产不许入库」，而它实际只防了 `tar.zst/gz` 这一种形态 ——
+名字覆盖的范围比实现大，于是它自己成了「看起来有门禁」的假信号
+（与第 13、16、18 条同族：**门禁的覆盖面与它宣称的覆盖面不等价**）。
+
+新增任何「本机产物目录」时，**.gitignore 与门禁断言必须和目录一起加**，
+而不是等下一次 `git add -A` 来告诉你。
+
+---
+
+## 25. 我在改文件的同时跑套件 —— 三条失败全是竞态，不是缺陷
+
+阶段 2.3 收尾时我起了后台任务跑 `tools/verify-phase0.sh`（约 90 秒），
+然后**立刻开始编辑文件**：加 `DIV-0020`（其中一次还把 `divergences.json` 写坏过）、
+写 `handle_div_0020`、改 `apply-divergences.sh`、改 `.gitignore`……
+
+套件跑完报 3 项失败：
+
+```
+- 导入文件与上游逐字节一致（差异均已登记）|exit=1 期望=0
+- 所有 JSON 可解析|exit=1 期望=0
+- 恢复后重放仍失败（备份/还原有问题）|fail
+```
+
+**三条全是竞态**：套件读文件时，文件正处在「我改到一半」的状态 ——
+包括那个我写坏过的 `divergences.json`。文件稳定后重跑：**176/176 全过**。
+
+其中「所有 JSON 可解析」最值得注意：它失败的唯一原因，
+是套件恰好在我把 `divergences.json` 拼坏的那几百毫秒里读到了它。
+
+### 教训
+
+**套件读的是工作区；在工作区还在变的时候跑它，得到的结论不属于任何一版代码。**
+更要紧的是它的**失败方向是危险的**：竞态产生的红，长得和真缺陷完全一样。
+如果我没多想就去「修」其中一条，会去修一个不存在的问题 ——
+而这正是第 23 条那次事故的同一种误诊（三条看起来不相关的检查同时红）。
+
+规矩：**要么先停止编辑再跑套件，要么只跑不读工作区的单项检查。**
+另外，`git add -A` 与套件的保真度检查都要读索引，所以
+「一边 `git add` 一边跑套件」同样属于这一类。

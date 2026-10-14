@@ -42,5 +42,9 @@ android {
 
 dependencies {
     implementation(libs.gson)
+    // 阶段 2.3：CredentialProjection 要按 DSH 自己的 `.credentials.yaml` 布局
+    // 解析 / 删记录 / 再序列化回去，所以需要一个严格的 YAML 解析器。
+    // 它随 APK 分发，许可 Apache-2.0（见根 THIRD_PARTY_NOTICES.md）。
+    implementation(libs.snakeyaml)
     testImplementation(libs.junit)
 }

@@ -203,14 +203,14 @@
       "conflict_risk": "medium —— 上游若调整 android.yml 的步骤结构，锚点会失效。但我们是**插入**而非改写上游已有步骤，合并时冲突面很小，通常能自动合入。",
       "note": "上游不提交 runtime/ 是刻意的判断（层是可再生构建产物，118 MB 不该进 git），我们沿用 —— DSHFusion 的 `.gitignore` 同样忽略 `/runtime/`。区别只在于：上游把建层留在树外的人工流程里，我们把它放进 CI，否则「克隆即可构建」不成立。"
     },
-  {
+    {
       "id": "DIV-0013",
       "title": "docs/BUILD_RUNBOOK.md 加一条 zstd 警告横幅（上游该文件里的 gzip 建议会造出坏产物）",
       "upstream": "dshbox",
       "type": "adaptation",
       "phase": 1,
       "target_files": [
-          "docs/BUILD_RUNBOOK.md"
+        "docs/BUILD_RUNBOOK.md"
       ],
       "change": "在文件最前面插入一段 6 行的引用块，说明：该文件第 1.2/1.4 节里「zstd 缺装会自动降级 gzip」这条建议**只适用于上游仓库内的打包与消费**，不能用于任何要进 APK 的层，因为 AGP 会解压 `.gz` 资源并去掉扩展名，使层变成应用侧找不到的 `.tar`。横幅本身不改动上游正文一个字。",
       "rationale": "这是一份**要照着做**的 runbook，不是背景说明。它第 38 行写「`zstd` 缺装会自动降级 gzip」、第 50 行写「不存在则 pack 脚本自动 gzip」、第 117 行写「若某层用 gzip 制作，同样可解（gzip→commons-compress）」。\n\n这三句对**上游**都是真的 —— `BundleManager` 确实按魔数嗅探、确实能解 gzip。**问题在于它们答的不是同一个问题**：层不是直接交给 `BundleManager` 的，它要先过 AGP 的资源打包，而 AGP 会解压 `.gz` 并去掉扩展名。\n\n我本人就是被这份 runbook（配合 `pack_runtime.sh` 的默认值）说服、用 gzip 建层，结果 CI 全绿而产物里是 `assets/runtime/android-side.tar`，应用侧 `startsWith(\"android-side.tar.\")` 匹配不上 —— 等于没建。见 AGENTS.md 的「修好了？没有」专节。\n\n所以这条横幅的价值不在「更正一处笔误」，而在于**在读者照着做之前拦住他**。放在最前面是因为没人会读完整篇 runbook 才动手。",
@@ -218,8 +218,8 @@
       "reapply": "由 tools/apply-divergences.sh 的 handle_div_0013 校验：`docs/BUILD_RUNBOOK.md` 开头必须是那 6 行横幅，且正文三处 gzip 原文仍在（说明我们只做了插入）。上游若改了这份文档，横幅可能被冲掉 —— 重放会重新插到最前面。",
       "conflict_risk": "none —— 纯前置插入，不触碰上游任何一行。上游改这份文件时 git 会按上下文合并，冲突面仅限文件头。",
       "note": "选择改这份上游文件而不是只在 DSHFusion 自有文档里写警告，是因为**这份文件本身就是要照着做的**：读者打开它就直接开干，不会先去读 AGENTS.md。偏离登记 + 重放脚本保证了它在下次上游同步时不会静默消失。"
-  },
-  {
+    },
+    {
       "id": "DIV-0014",
       "title": "DSH 端口改为内核动态分配 + 健康检查必须核验身份（写死 3080 会与其它 DSH 应用互撞，并把别人的服务误报成「DSH 就绪」）",
       "upstream": "dshbox",
@@ -256,8 +256,7 @@
       "reapply": "无脚本可自动重放 —— 这处偏离跨 22 个文件、且是语义改动，不适合用锚点插入。同步上游后按以下顺序人工核对：\n1. `git diff <上游新提交> -- common/.../Constants.kt sandbox-manager/.../HttpHealthChecker.kt sandbox-manager/.../DshHealthPolicy.kt` —— 这三处是语义核心，冲突必须人工判。\n2. 核对 `SandboxProcessRunner` 的命令行仍带 `--port`（上游若改了 DSH 入口写法，这条最容易丢）。\n3. 跑 `tools/verify-phase0.sh` 与三个单测文件。\n上游若自行引入动态端口，则应删除本条偏离并在 note 里记明「已由上游解决」。",
       "conflict_risk": "high —— 这是本次融合里冲突面最大的一处：跨 22 个文件，且改的都是上游**正在演进**的核心运行期代码（进程启动命令行、健康判定、UI 地址展示）。上游若重构健康检查或 DSH 启动方式，会与本条正面冲突。\n刻意避免了两类更脆的写法：不改 DSH 自身源码（仍然零补丁，符合本项目一贯策略）、不引入新的跨模块依赖（`DshWebLaunchParser` 放在 sandbox-manager 内，common 不反向依赖它）。",
       "note": "**这是本项目第一次把「界面显示的状态」与「设备上真实发生的事」对上的修复。** 此前所有验证都停在「产物里有层」「进程起来了」，而这次是「界面说就绪」对不上「进程根本没起」—— 说明此前的验证清单缺了一条：**状态结论必须有独立证据**。真机核验方式已记入 docs/INSTALL-ON-DEVICE.md：界面报就绪时，用进程表与 /proc/net/tcp 的 uid 交叉确认那个端口确实是自己的。\n\n**另一个有意不做的改进**：探测路径目前仍是配置项 `healthPath`（默认 `/`），而不是从 DSH 打印的那一行里派生。既然端口和 token 都从那里学，路径同理 —— 派生能**从结构上**消除「配置与 DSH 不一致」这一类问题。不做的理由是 `healthPath` 是上游配置项，改成派生会扩大偏离面；当前用「两条断言钉住 + KDoc 写明实测数据」把风险降到可接受。若将来上游动了 healthPath 的语义，这条应升级为派生实现。\n\n**改命令行参数时，「加一个参数」不是局部改动（2026-10-14 补）。**\n加 `--host` / `--port` 时我只考虑了「端口要传下去」，没有考虑「这一行的顺序被别的东西依赖」。\n而依赖它的那条规则（dsh 启动器的 pass-through）**当时没有写在项目里的任何地方** ——\n我是从 `bin.js` 的模块注释里读到的。\n**一个隐含前提被破坏时，破坏它的人往往是唯一不知道它存在的人。**\n所以修复同时做了三件事：把规则写进参数 KDoc 与行内注释（放在下一个人会读的地方）、\n写进本登记、并加一条单测把它变成**可执行的事实**。\n\n这次失败也再次印证了本项目的一条老规矩：**「产物核验通过」与「在目标设备上能用」是两件事** ——\nAPK 里的层格式对、架构对、签名对、断言 7 全绿，DSH 依然一次都没起来。\n\n未做而有意留下的：端口**每次启动都变**（不记忆上次可用端口）。审计报告里 DSHA 的做法是「动态分配并复用上次可用端口」，那对需要固定地址的外部工具有用；但它引入一个新的失败模式（复用的端口恰好被别人占了），而当前阶段的首要目标是「不再互撞、不再误报」。地址在界面上随时可见，先保证正确，再谈稳定。"
-    }
-,
+    },
     {
       "id": "DIV-0015",
       "title": "dsh 运行环境层必须按目标架构（arm64）构建，不能跟随构建宿主",
@@ -355,6 +354,24 @@
       "reapply": "本条是新增，不覆盖上游任何行，因此不存在「上游改了导致重放失败」的情况。重新建立时需要：\n\n1. 版本目录加 Gson（版本 ≥2.11）；\n2. `settings.gradle.kts` 加 `include(\":backup\")`；\n3. 恢复 `backup/build.gradle.kts`；\n4. 用 `git checkout <tag> -- backup/` 恢复模块源码，然后跑 `tools/check-dsha-imports.py` 确认导入副本没被顺手改过。\n\n`tools/apply-divergences.sh` 的 `handle_div_0019` 负责核验这三处。**注意**：模块源码本身**不**由该脚本重放（那是 33 KB 的逐字节副本），只由 `check-dsha-imports.py` 按 sha256 守护。",
       "conflict_risk": "low —— 三处都是新增行，不修改上游既有行。唯一可能冲突的是 `libs.versions.toml`：上游若自己引入 Gson（或改名 `gson` 条目），需要合并而不是叠加。",
       "note": "**这是阶段 2 的第一条偏离，也是本项目第一次「从 DSHA 搬代码」。** 前 18 条都只动 DSHBox 骨干自身的行；这一条开始把 DSHA 的实现纳入仓库，因此引入了两种新的可核验性要求：导入副本的逐字节溯源（`check-dsha-imports.py`）与「导入不是偏离」的登记方式。\n\n**登记范围有意收窄。** `governance/dsha-imports.json` 里逐文件记了 DSHA 路径、锁定提交、blob 与 sha256；而本条目只登记**对骨干的构建配置偏离**。把「导入」本身也塞进 `divergences.json` 会模糊这个文件的本意（对骨干的偏离清单，供同步时重放），所以两者分开：`divergences.json` 管「我们改了骨干什么」，`dsha-imports.json` 管「我们从 DSHA 拿了什么」。\n\n**阶段 2.1 刻意没做的事**：没有搬 `NativeRestorePlan`（零 Android 依赖，但价值全经 `Mapping` 接口表达，没有 DSHFusion 的 Mapping 实现时就是死代码 —— `Mapping` 正是 2.4 的切口）；没有搬 `NativeRestoreTargets` / `DataRootPolicy`（深绑 DSHA 的 rootfs 分包模型，必须重写）；没有做范围备份（2.2）、凭据排除（2.3）、自动计划（2.5）；**写入侧的目录枚举也没有做** —— 容器本身可写且已被 `V5ArchiveTest` 验证，但「备份哪些逻辑根」属于 2.2 的范围决策，提前写一遍会与 2.2 打架。"
+    },
+    {
+      "id": "DIV-0020",
+      "title": "`:backup` 增加 SnakeYAML 依赖（阶段 2.3 的凭据投影），并给 app 补 keep 规则",
+      "upstream": "dshbox",
+      "type": "config",
+      "phase": 2,
+      "target_files": [
+        "gradle/libs.versions.toml",
+        "backup/build.gradle.kts",
+        "app/proguard-rules.pro"
+      ],
+      "change": "三处，都是为了阶段 2.3 的凭据投影：\n\n**① `gradle/libs.versions.toml` 新增 SnakeYAML 2.4**（`versions` 与 `libraries` 各一行），版本与 DSHA 一致。\n\n**② `backup/build.gradle.kts` 新增 `implementation(libs.snakeyaml)`。**\n\n**③ `app/proguard-rules.pro` 新增 `-keep class org.yaml.snakeyaml.** { *; }` 与 `-dontwarn`。**\n\n第 ③ 处**是保险，不是修复** —— 我没有复现出「不加它就坏」的实例（`CredentialProjection` 只走 SafeConstructor + 节点级 compose/serialize，不碰 JavaBean 反射那条路）。加它是因为三点事实：已解包核对 `snakeyaml-2.4.jar`，**META-INF 下只有 MANIFEST 与 maven 元数据，没有任何 consumer proguard 规则**；本仓库 release 开了混淆，而**上游 DSHA 的 release 是 `minifyEnabled false`** —— 所以「DSHA 装了它能跑」不构成「它在 R8 下能用」的证据。",
+      "rationale": "**为什么必须引入 YAML 解析器。** DSH 的凭据存在 `$DSH_HOME/.credentials.yaml`（DSH 自己的 `dsh-credentials-local` 模块定义：`version: 1` + `refs:` + `records:`，记录键是 `<scope>/<id>`，记录类型 `api-key` / `grant`）。要「删掉机器本地记录、保留 provider 凭据、再写回去」，就必须按这个布局解析与再序列化 —— 用字符串替换去改 YAML 会在 flow mapping、引号、注释、锚点上出错，而这是**唯一一处处理用户密钥的代码**，出错代价是密钥丢失或泄漏。\n\n**为什么是复用而不是自己写。** DSHA 的 `CredentialProjection` 已经实现了这一整套，含 fail-closed 的严格解析（拒绝重复键、锚点/别名、显式标签、非有限数、超限、非法 UTF-8）与「诊断里绝不带出密文」。它逐字节导入本仓库（见 `governance/dsha-imports.json`），因此它需要的 YAML 解析器也一并引入 —— 这才是复用而不是重写。\n\n**为什么版本必须与 DSHA 一致（2.4）。** `CredentialProjection` 用的是 SnakeYAML 2.x 才有的 `LoaderOptions`（`setCodePointLimit` / `setMaxAliasesForCollections` / `setNestingDepthLimit` / `setAllowDuplicateKeys`）。这些正是它的安全边界所在，降到 1.x 会**静默**失去其中几项。\n\n**为什么加依赖而不是改用项目现有的东西。** 骨干里没有任何 YAML 解析器，`org.json` 也处理不了 YAML。这与 DIV-0019 加 Gson 是同一个判断：宁可多一个 Apache-2.0 依赖，也不要为了省依赖而重写一层安全关键代码。\n\nSnakeYAML 是 Apache-2.0，方向上是宽松并入 GPL-3.0 骨干，已在 `governance/ATTRIBUTION.md` 的传递上游表里补记。",
+      "detection": "四层：\n\n1. **`tools/check-dsha-imports.py`**：核验凭据投影那两个逐字节副本（含来源头与正文 sha256）与改写/适配登记。\n2. **`tools/run-backup-jvm-tests.sh`（新增）**：从 Maven Central 取 4 个 jar，编译并运行 `backup/src/{main,test}` 的**全部 .java**，再跑行为探针。**版本必须与 `libs.versions.toml` 一致，脚本自己 grep 版本目录，对不上退 2**（已做注入：把目录里的 gson 改成 2.12.0，脚本拒绝运行）。取不到 jar 也退 2，**不静默跳过**（第 13 条的病）。\n3. **`tools/check-credential-projection.java`（新增）**：核验的是**行为**而不是字符串 —— 机器本地记录（`client-connection/`）不进投影结果、provider 凭据原样保留、`version: 1` 还在、没有机器记录时逐字节不变、坏输入的诊断里不含密钥且不带 cause、超限与非法 UTF-8 在解析前就被挡住。\n4. **`tools/verify-phase0.sh` 第 5m 节**：核验三处构建配置与署名登记，并**真跑**上面第 2、3 层。\n\n**本条第一次做到「本机真编译真运行」**：本机一直有 JDK 17，此前被误记为没有（见 `docs/INCIDENTS.md` 第 21 条），于是 2.1/2.2 的 4 次 CI 红里有 3 次是纯 Java 侧、本机两秒就能发现的问题。",
+      "reapply": "本条是新增行，不覆盖上游任何行。重新建立时需要：\n\n1. 版本目录加 SnakeYAML（版本必须 ≥2，且建议与 DSHA 一致）；\n2. `backup/build.gradle.kts` 加 `implementation(libs.snakeyaml)`；\n3. `app/proguard-rules.pro` 加 `-keep class org.yaml.snakeyaml.** { *; }`。\n\n`tools/apply-divergences.sh` 的 `handle_div_0020` 负责核验这三处。**注意**：凭据投影的源码本身**不**由该脚本重放（那是逐字节副本），只由 `check-dsha-imports.py` 按 sha256 守护。",
+      "conflict_risk": "low —— 三处都是新增行。唯一可能冲突的是 `libs.versions.toml`（上游若自己引入 SnakeYAML）与 `proguard-rules.pro`（上游若加了同类规则）。",
+      "note": "**阶段 2.3 的实质是「让归档里没有机器本地凭据」，而这件事必须由行为证明。** 因此本条的检验重心刻意放在**跑一遍**上，而不是「源码里有 `client-connection/` 这个字符串」。\n\n**未验证的部分如实记**：`app/proguard-rules.pro` 那条 keep 规则的**效果没有被验证** —— CI 只构建 debug（`assembleDebug`），release 混淆后的行为要等有人真的构建 release 并运行凭据投影才能说「可用」。规则本身是保险，不是已证明的修复。\n\n**另一件刻意没做的事**：没有改 `settings.yaml` 里模型凭据的**字段级**排除。DSHFusion 目前的模型凭据走 DSH 自己的凭据存储（与 `.credentials.yaml` 同一条路）；`settings.yaml` 里是否有需要单独排除的字段，要等确认过它的实际内容才能决定 —— **没有证据之前不动它**，比照 DIV-0019 的收窄登记。"
     }
   ]
 }

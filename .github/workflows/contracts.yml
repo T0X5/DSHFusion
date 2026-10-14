@@ -125,6 +125,24 @@ jobs:
           # 并反向检查导入目录里没有未登记的文件。
           python3 tools/check-dsha-imports.py
 
+      - name: Set up JDK 17 (for the :backup JVM tests)
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: :backup JVM tests, compiled and run for real
+        run: |
+          set -euo pipefail
+          # 与 android.yml 的 `testDebugUnitTest` 刻意重叠，但**不是重复**：
+          # 那一条要等 AGP/Gradle/Android SDK 全部就绪（十几分钟），
+          # 这一条两秒出结果，且**不需要 Android SDK**。
+          # 更重要的是它跑得起来的前提不同 —— android.yml 只在 main/develop 上触发，
+          # 叠放的阶段 PR 拿不到任何 Android CI（见 docs/FUSION-PLAN.md）。
+          # 依赖版本由脚本自己对着 gradle/libs.versions.toml 断言，取不到就**退 2 报错**，
+          # 不会静默变成「跳过」。
+          bash tools/run-backup-jvm-tests.sh
+
       - name: Backup module contract (magic / no hand-copied constants / error codes)
         run: |
           set -euo pipefail
@@ -148,7 +166,15 @@ jobs:
             echo "::error::运行环境大资产被误提交进仓库"
             exit 1
           fi
-          echo "无镜像与大资产入库。"
+          # :backup 本机测试的依赖与编译产物缓存（1.4 MB，含 4 个 jar 与几十个 .class）。
+          # 上面两条都抓不到它 —— 它们匹配的是 tar.zst/gz 与 runtime 资产，**不匹配 jar**。
+          # 2026-10-14 实测：`.gitignore` 缺这一条时 `git add -A` 一次就暂存了 57 个文件。
+          # 这条断言的意义与「缺层只记成备注」相反：**发现得了，而且判失败。**
+          if git ls-files | grep -q '\.jvm-test-cache/'; then
+            echo "::error::本机 JVM 测试缓存被误提交进仓库（应被 .gitignore 覆盖）"
+            exit 1
+          fi
+          echo "无镜像、大资产与测试缓存入库。"
 
       - name: Phase 0 verification suite (success and failure paths)
         run: bash tools/verify-phase0.sh

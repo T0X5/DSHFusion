@@ -27,6 +27,11 @@ app/build/
 captures/
 *.apk
 *.ap_
+# tools/run-backup-jvm-tests.sh 的依赖与编译产物缓存（1.4 MB）。
+# 前导斜杠是必须的：它是仓库根下的固定位置，而 tools 里若出现同名目录不该被一起忽略。
+# 2026-10-14 实测：没有这一条时 `git add -A` 会把 4 个 jar 与 53 个 .class 一起暂存
+# （57 个文件），而既有的「大资产不入库」断言只匹配 *.tar.zst/*.gz，**抓不到 jar**。
+/.jvm-test-cache/
 # *.aar 排除的是构建产物；但上游刻意 vendored 了 libs/zstd-jni-1.5.7-15.aar
 # 作为构建依赖（app/build.gradle.kts 引用），必须放行，否则克隆后无法构建。
 *.aar

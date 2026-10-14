@@ -1634,6 +1634,73 @@ def handle_div_0019(entry) -> tuple[str, str]:
 
 
 
+def handle_div_0020(entry) -> tuple[str, str]:
+    """`:backup` 的 SnakeYAML 依赖 + app 的 keep 规则（DIV-0020，阶段 2.3）。
+
+    三处缺一不可，且**每一处缺失的后果都不一样**：
+      - 缺版本目录条目 -> 依赖解析失败（大声）；
+      - 缺模块声明 -> `CredentialProjection` 编译不过（大声）；
+      - 缺 keep 规则 -> **只在 release 混淆后才坏，而且是静默的**
+        （debug 构建完全正常，CI 也只构建 debug）。
+
+    所以这里**卡 SnakeYAML 的主版本号**：`CredentialProjection` 用的是 2.x 才有的
+    `LoaderOptions`（codePointLimit / maxAliasesForCollections / nestingDepthLimit /
+    allowDuplicateKeys）。降到 1.x 是**静默的安全退化** —— 那几项限流是它抵御
+    YAML 炸弹与别名展开攻击的边界，编译期不会报错。
+
+    ⚠️ 诚实边界：本 handler 只能证明「keep 规则在位」，
+    **证明不了「keep 规则的效果」** —— 那需要构建 release 并运行凭据投影。
+    """
+    problems: list[str] = []
+
+    catalog = ROOT / "gradle" / "libs.versions.toml"
+    if not catalog.exists():
+        return PENDING, "gradle/libs.versions.toml 尚未导入"
+    text = read(catalog)
+    version_match = re.search(r'^snakeyaml\s*=\s*"([^"]+)"', text, re.M)
+    if not version_match:
+        problems.append("版本目录没有 snakeyaml 版本条目")
+    else:
+        version = version_match.group(1)
+        try:
+            major = int(version.split(".")[0])
+        except (IndexError, ValueError):
+            problems.append(f"snakeyaml 版本号无法解析：「{version}」")
+        else:
+            if major < 2:
+                problems.append(
+                    f"snakeyaml {version} 是 1.x —— LoaderOptions 的限流项不可用，"
+                    "那是静默的安全退化")
+    if not re.search(r'^snakeyaml\s*=\s*\{\s*group\s*=\s*"org\.yaml"', text, re.M):
+        problems.append("版本目录没有 org.yaml:snakeyaml 库条目")
+
+    module = ROOT / "backup" / "build.gradle.kts"
+    if not module.exists():
+        problems.append("backup/build.gradle.kts 不存在")
+    elif "libs.snakeyaml" not in read(module):
+        problems.append("backup/build.gradle.kts 没有依赖 libs.snakeyaml")
+
+    # 凭据投影本体必须在位，否则这个依赖是给谁用的就说不清了。
+    projection = (ROOT / "backup" / "src" / "main" / "java" / "com" / "deepseekharness"
+                  / "app" / "backup" / "CredentialProjection.java")
+    if not projection.exists():
+        problems.append("没有导入 CredentialProjection.java（依赖将无人使用）")
+
+    proguard = ROOT / "app" / "proguard-rules.pro"
+    if not proguard.exists():
+        problems.append("app/proguard-rules.pro 不存在")
+    elif not re.search(r'^-keep class org\.yaml\.snakeyaml\.\*\*', read(proguard), re.M):
+        problems.append(
+            "app/proguard-rules.pro 缺少 SnakeYAML 的 keep 规则 —— "
+            "release 混淆后可能静默失效，而 CI 只构建 debug")
+
+    if not problems:
+        return OK, "SnakeYAML 依赖与 keep 规则都在位（限流项 ≥2.x；keep 规则的**效果**未验证）"
+
+    detail = "；".join(problems[:4])
+    return FAILED, f"凭据投影依赖接入不完整：{detail}"
+
+
 HANDLERS = {
     "DIV-0001": handle_div_0001,
     "DIV-0002": handle_div_0002,
@@ -1654,6 +1721,7 @@ HANDLERS = {
     "DIV-0017": handle_div_0017,
     "DIV-0018": handle_div_0018,
     "DIV-0019": handle_div_0019,
+    "DIV-0020": handle_div_0020,
 }
 
 

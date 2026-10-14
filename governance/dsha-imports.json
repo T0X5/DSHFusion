@@ -17,7 +17,7 @@
     "copyright": "Copyright (c) 2026 qiannianhuanxiang",
     "license_file": "governance/upstream-licenses/DSHA/LICENSE"
   },
-  "phase": "阶段 2.1–2.2 —— 备份归档 v5 的格式、预检、范围枚举与写入",
+  "phase": "阶段 2.1–2.3 —— 备份归档 v5 的格式、预检、范围枚举、写入与凭据投影",
   "derived": {
     "note": "**改写/适配后移植**的 DSHA 代码。与 files[] 不同：正文不是逐字节副本，所以不能靠 sha256 证明「没改」，只能如实列清「保留了哪条不变式、改掉了什么、为什么」。凡是正文可逐字节保留的，一律走 files[] 而不是这里。`kind: adapted` 是「只做机械等效替换」，`kind: rewritten` 是「结构重写」。",
     "items": [
@@ -91,10 +91,27 @@
         ],
         "why": "**不是测试写错，是两个上游的工具链不同。** DSHA 用 AGP 9.1.1，单元测试按 JDK 解析 `java.nio.file`，所以 `Files.readString/writeString`（Java 11+）编得过；DSHBox 用 AGP 8.9.2，`compileDebugUnitTestJavaWithJavac` 按 `android.jar`（API 36）解析，而 Android 的 `java.nio.file.Files` 没有这两个方法 —— 于是 `:backup:compileDebugUnitTestJavaWithJavac` 报 16 处 `cannot find symbol`。只能二选一：改这几行，或把整块 `:backup` 改成纯 JVM 模块。**选前者**，因为阶段 2.4 要搬的 `BackupTree` / `AndroidBackupFileSystem` / `AndroidTreeFileSystem` 必须要 Android，改模块类型早晚要改回来。",
         "verified_by": "tools/check-dsha-imports.py"
+      },
+      {
+        "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/CredentialProjectionTest.java",
+        "upstream_bytes": 9635,
+        "upstream_sha256": "f8958562ab6b50a2ab372a5f6b889d79fa8f6fd76ed06d9f533891f0b011ee26",
+        "local_path": "backup/src/test/java/com/deepseekharness/app/backup/CredentialProjectionTest.java",
+        "kind": "adapted",
+        "kept": [
+          "6 条测试与它们钉的性质一字未改：投影后仍被 provider 读得到、没有机器记录的源**逐字节不变**（不因重新序列化而抖动）、未知 schema/标签/别名/重复键/非有限数一律拒绝且诊断里不含密文、真实 HostSnapshot 归档走投影且保留源字节、「同元数据但原始字节变了」仍被拒、未选中或取消的恢复不动机器记录"
+        ],
+        "changed": [
+          "3 处 `Files.writeString(…, …)` 改为 `Files.write(…, ….getBytes(StandardCharsets.UTF_8))`、1 处 `Files.readString(…)` 改为 `new String(Files.readAllBytes(…), StandardCharsets.UTF_8)`（共 4 个调用点 / 3 条语句）—— 原因同第 20 条：本仓库的 AGP 8.9.2 让单元测试按 android.jar 解析 java.nio.file，而它没有 Java 11 的这两个方法",
+          "其中 1 处跨 3 行的调用被括号配对改写器合并成 1 行（纯排版，语义不变）",
+          "**删掉了 1 条测试方法**：`oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive`（44 行、4 条断言）。它依赖 `NativeRestorePlan.inspect`，而 NativeRestorePlan → BackupTree → AndroidTreeFileSystem / AndroidBackupFileSystem 正是本仓库登记为**阶段 2.4** 的那条 Android 耦合链。**这是一次真实的覆盖损失，不是「不需要」**：它证明的是「归档里的机器记录会在候选阶段就被投影，来不及变成活动记录」。2.4 搬进 NativeRestorePlan 时必须把它一起搬回来。"
+        ],
+        "why": "这些测试是 2.3 唯一能证明「投影真的删掉了机器记录、且没顺手改坏 provider 凭据」的东西，必须原样保留。只有 3 条语句因为工具链差异必须机械替换。",
+        "verified_by": "tools/check-dsha-imports.py"
       }
     ]
   },
-  "why_verbatim": "能逐字节保留的一律逐字节保留：主源码（容器、预检、枚举与写入）共 15 个文件、零 Android 依赖，是一套自洽且带完整负面用例的实现；按硬约束 2「能直接保留的成熟实现就保留，不要重写」，保持逐字节一致而不是重写为 Kotlin。包名保留 DSHA 原名（com.deepseekharness.app.*）是**有意的**：它让「这段代码不是我们写的」在源码层面自带标识，也让将来比对 DSHA 上游改动时可以直接逐 blob 比。\n\n**两类例外，都进 derived 段**：`kind: adapted` 是只做机械等效替换的适配副本（`:backup` 的 3 份测试文件，因为 DSHFusion 的工具链是 DSHBox 的 AGP 8.9.2，单元测试按 android.jar 解析 `java.nio.file`，没有 Java 11 的 `readString`/`writeString`；DSHA 用的 AGP 9.1.1 按 JDK 解析，所以它编得过）；`kind: rewritten` 是本仓库按真实布局重写的（`DshBackupScope.kt`）。两者的来源头与逐字节副本**不同**，由 check-dsha-imports.py 强制。",
+  "why_verbatim": "能逐字节保留的一律逐字节保留：主源码（容器、预检、枚举与写入）共 17 个文件、零 Android 依赖，是一套自洽且带完整负面用例的实现；按硬约束 2「能直接保留的成熟实现就保留，不要重写」，保持逐字节一致而不是重写为 Kotlin。包名保留 DSHA 原名（com.deepseekharness.app.*）是**有意的**：它让「这段代码不是我们写的」在源码层面自带标识，也让将来比对 DSHA 上游改动时可以直接逐 blob 比。\n\n**两类例外，都进 derived 段**：`kind: adapted` 是只做机械等效替换的适配副本（`:backup` 的 3 份测试文件，因为 DSHFusion 的工具链是 DSHBox 的 AGP 8.9.2，单元测试按 android.jar 解析 `java.nio.file`，没有 Java 11 的 `readString`/`writeString`；DSHA 用的 AGP 9.1.1 按 JDK 解析，所以它编得过）；`kind: rewritten` 是本仓库按真实布局重写的（`DshBackupScope.kt`）。两者的来源头与逐字节副本**不同**，由 check-dsha-imports.py 强制。",
   "divergences": {
     "note": "导入本身不是对骨干的偏离，未登记进 divergences.json。唯一与骨架相关的偏离是新增 :backup 模块与 Gson 依赖，登记为 DIV-0019。",
     "registered_as": [
@@ -213,6 +230,22 @@
       "upstream_bytes": 1178,
       "upstream_sha256": "2839faf46ff9f1e41101d614c36530cdad63e738ee442a5eacfba5ee449103d8",
       "role": "未知线格式名必须抛错，不能默认成某个种类"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/CredentialProjection.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/CredentialProjection.java",
+      "upstream_bytes": 13563,
+      "upstream_sha256": "2875499dc695307e09e9aab462489344ecb7f7a68895065f3fc0b228fe884333",
+      "blob": "784699e3bd3e0a906f81249705853bf6c850d2a9",
+      "role": "按 DSH 自己的 `.credentials.yaml` 布局做凭据投影：删掉机器本地记录（`client-connection/`），保留 provider 凭据；解析失败一律 fail-closed 且不把含密文的 YAML 诊断带出来"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/CredentialFileBackupSource.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/CredentialFileBackupSource.java",
+      "upstream_bytes": 3636,
+      "upstream_sha256": "15dc65263dfd57d72ec3eca0900e79cc952c0fa9cafccca27492781b063e6298",
+      "blob": "2b26a94a205ac6beac9166f935c0117d5cdcdbf6",
+      "role": "把投影包在一个 BackupSource 外面：条目 token 同时绑定**原始字节**与**投影后字节**的摘要，因此「源在读取过程中变了」会被 CREDENTIAL_PROJECTION_SOURCE_CHANGED 挡住"
     }
   ],
   "not_imported": {
@@ -281,6 +314,11 @@
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeConfigurationReset.java",
         "reason": "与 NativeRestorePlan 同属 DSHA 的原生恢复模型。"
+      },
+      {
+        "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/CredentialProjectionTest.java#oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive",
+        "reason": "依赖 NativeRestorePlan（→ BackupTree → AndroidTreeFileSystem / AndroidBackupFileSystem），属于阶段 2.4 的恢复编排。**这条测试证明的性质（机器记录在候选阶段就被投影）在 2.3 没有被验证** —— 2.4 必须把它连同 NativeRestorePlan 一起搬回来。",
+        "phase": "2.4"
       }
     ]
   },
@@ -289,5 +327,15 @@
     "// Copyright (c) 2026 qiannianhuanxiang",
     "// **适配后**移植（正文与上游不同）。逐条改动见 governance/dsha-imports.json 的 derived 段。"
   ],
-  "provenance_note": "两种来源头，对应两种身份：`provenance_header` = 逐字节副本（files[]），`adapted_header` = 只做机械等效替换的适配副本（derived 里 kind=adapted）。本检查器**强制**两者各自出现在对的文件上 —— 否则「原样复制」这句话可以由文件自己随便写，而没有任何东西会不同意。"
+  "provenance_note": "两种来源头，对应两种身份：`provenance_header` = 逐字节副本（files[]），`adapted_header` = 只做机械等效替换的适配副本（derived 里 kind=adapted）。本检查器**强制**两者各自出现在对的文件上 —— 否则「原样复制」这句话可以由文件自己随便写，而没有任何东西会不同意。",
+  "original": {
+    "note": "本仓库自己写的、**不对应任何上游文件**的测试。它们存在的理由是上游那一条断言太弱 —— 诚实起见单列一段，不混进 derived（derived 的语义是「改写了上游的什么」）。",
+    "items": [
+      {
+        "local_path": "backup/src/test/java/com/dshbox/app/backup/CredentialProjectionCodesTest.kt",
+        "why": "上游 CredentialProjectionTest 对 5 种坏输入只断言 startsWith(\"CREDENTIAL_PROJECTION_\")，只能证明「被拒绝了」，证明不了「因为正确的原因被拒绝」。这条按**实测**的具体错误码逐条钉住，并如实记录 anchor/tag/deep-nesting 三类实际抛 _FAILED（读源码会推成 _ALIAS/_TAG/_LIMIT，三个全错）。",
+        "verified_by": "tools/check-credential-projection.java（本机与 CI 真跑）"
+      }
+    ]
+  }
 }

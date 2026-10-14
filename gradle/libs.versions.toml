@@ -22,6 +22,12 @@ bcpg = "1.78.1"
 # 因为那里用了 com.google.gson.Strictness —— 这是「拒绝重复键 / 拒绝深层嵌套」
 # 那层保护的实现基础，不能用 org.json 替代（它不检测重复键、不流式限长）。
 gson = "2.13.1"
+# SnakeYAML 只服务于 :backup 的**凭据投影**（阶段 2.3 的 CredentialProjection）。
+# 它按 DSH 自己的 `.credentials.yaml` 布局解析、删掉机器本地记录、再序列化回去，
+# 所以需要一个**严格**的 YAML 解析器：CredentialProjection 用 SafeConstructor +
+# 自定义 Resolver + 节点级 compose/serialize，不走 JavaBean 反射，也不接受锚点/别名。
+# 版本与 DSHA 一致（org.yaml:snakeyaml:2.4，Apache-2.0）。
+snakeyaml = "2.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -50,6 +56,7 @@ markwon-ext-tables = { group = "io.noties.markwon", name = "ext-tables", version
 kxml2 = { group = "net.sf.kxml", name = "kxml2", version.ref = "kxml2" }
 bcpg = { group = "org.bouncycastle", name = "bcpg-jdk18on", version.ref = "bcpg" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
+snakeyaml = { group = "org.yaml", name = "snakeyaml", version.ref = "snakeyaml" }
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
