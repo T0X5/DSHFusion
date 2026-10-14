@@ -115,7 +115,16 @@ class DshBackupScopeTest {
                         actualLeaf,
                     )
                 }
-                assertTrue("${scope.id} 的 ${member.path} 应落在 .dsh 下", member.path.startsWith(".dsh/"))
+                // `.dsh` **本身**是合法的成员路径（FULL 就是整根），所以不能要求它以
+                // `.dsh/` 开头 —— 第一版这里写成 `startsWith(".dsh/")`，把正确的实现判失败，
+                // 白烧了一轮 CI。同事故表第 15 条：断言要钉性质，别钉我以为的形态。
+                assertTrue(
+                    "${scope.id} 的 ${member.path} 既不在 .dsh 下、也不是 .dsh 本身",
+                    member.path == ".dsh" || member.path.startsWith(".dsh/"),
+                )
+                if (member.path == ".dsh") {
+                    assertEquals("只有 FULL 能整根，${scope.id} 不该有整根成员", DshBackupScope.FULL, scope)
+                }
             }
         }
     }

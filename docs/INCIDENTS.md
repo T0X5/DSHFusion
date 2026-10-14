@@ -1157,3 +1157,34 @@ assertEquals("unknown original", java.nio.file.new String(Files.readAllBytes(uno
 断言 4 与断言 5 的差别，正是这个仓库反复踩的那个坑的又一次显形 ——
 前面是「有文件」vs「文件对」、「步骤通过」vs「产物对」，
 这里是「替换执行了」vs「替换后的代码是合法 Java」。
+
+#### 补记二：断言把**正确的实现**判失败（第四次 CI，run 38632643360）
+
+这一轮是好消息：`compileDebugKotlin` / `compileDebugUnitTestJavaWithJavac` 全过，
+**62 条测试跑了 61 条通过**，只红 1 条 —— `DshBackupScopeTest.membersLineUpElementWise`
+（`DshBackupScopeTest.kt:118`）。
+
+```kotlin
+assertTrue(member.path.startsWith(".dsh/"))   // 我写的
+```
+
+而 `FULL` 的成员路径**就是** `.dsh`（整个 DSH home 是它的根）。
+`.dsh`.startsWith(`.dsh/`) 是 `false` —— **红的不是代码，是我的断言**。
+
+改成钉性质而不是钉形态：
+
+```kotlin
+assertTrue(member.path == ".dsh" || member.path.startsWith(".dsh/"))
+if (member.path == ".dsh") assertEquals(DshBackupScope.FULL, scope)   // 只有 FULL 能整根
+```
+
+**这与事故表第 15 条是同一个病**（通知栏那次的「第一版断言把正确实现判失败」）。
+两次都是**断言钉住了「我以为的实现形态」**，而不是「必须成立的性质」。
+
+**本机验证手段**：编不了 Kotlin，但可以把**谓词**在数据上跑一遍 ——
+从 `DshBackupScope.kt` 里解析出 6 个成员，逐条求值：新谓词全过；
+**旧谓词恰好只在 `FULL/dsh` 上为 false**，与 CI 报的失败位置一致。
+这既验证了修法，也反过来证明了「红的是断言不是代码」这个诊断本身。
+
+> 这不能替代编译与真跑 —— 它只覆盖「谓词 vs 数据」这一层，
+> 而这一层恰好就是本次失败的所在。
