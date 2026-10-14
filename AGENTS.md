@@ -53,6 +53,18 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 **阶段 2.2 已实现（2026-10-14，分支 `phase-2.2/scope-backup`）**：范围模型与排除清单。
 
+> ✅ **阶段 2.2 已通过真实 CI**（run [38633884134](https://github.com/T0X5/DSHFusion/actions/runs/38633884134)，
+> commit `c7e83fa`）：**23/23 步全绿** —— `testDebugUnitTest`（`:backup` **62 条测试全过**）、
+> `lintDebug`、`assembleDebug`、APK 产物身份核验，产物 `dshapp-debug-apk` 128,790,096 字节。
+> 但**2.2 仍未在真机上验证过**：它只是「能判定范围与排除对不对」，
+> 还没有导出/恢复入口，装到手机上无可操作的东西（见下面「刻意没做」）。
+>
+> 走到这一步红了**四次**，四次全在测试侧、主模块每次都编译通过：
+> ① 16 处 `Files.writeString` 编不过（工具链差异，见第 20 条）→
+> ② 我自己机械替换留下的悬空限定名 `java.nio.file.new String(…)` →
+> ③ 断言把正确实现判失败（`FULL` 的路径就是 `.dsh`，我却要求 `startsWith(".dsh/")`）→
+> ④ 全绿。**三次里有两次是我造成的**，而两次本机都「看起来没问题」。
+
 - **枚举与写入那一半也搬进来了**（`BackupFileSystem`/`BackupSource`/`FileBackupSource`/
   `HostSnapshot`/`GuestDataResolver`，共 11 个逐字节副本 + 4 份原始测试）——
   它们全是纯 JVM、零 Android 导入。`BackupTree` 刻意**没搬**：它引用

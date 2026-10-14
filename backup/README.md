@@ -10,6 +10,11 @@
 
 | 包 | 来源 | 性质 |
 |---|---|---|
+> ✅ **本模块已通过真实 CI**（run 38633884134，commit `c7e83fa`）：
+> `:backup:testDebugUnitTest` **62 条测试全过**、`lintDebug`、`assembleDebug`、
+> APK 产物身份核验，23/23 步绿。
+> ⚠️ 但**没有在真机上验证过** —— 2.2 还没有导出/恢复入口。
+
 | `com.deepseekharness.app.backup`（11 个类）<br>`com.deepseekharness.app.util`（`BackupScopes`、`FileKind`） | DSHA `467c7eb0` | **逐字节原样副本**（MIT，15 个文件）<br>**另有 3 份测试是「适配副本」** |
 | `com.dshbox.app.backup`（`V5Archive.kt`、`DshBackupScope.kt`、`DshBackupExclusions.kt`） | DSHFusion | 本仓库自己写的 Kotlin |
 
