@@ -144,8 +144,8 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 | 2.2 | 范围备份（全量 / 只对话 / 只插件 / 只设置） | DSHA `BackupScope`＋枚举/写入侧 | ✅ PR #6（CI 通过 run 38633884134） | 依赖 2.1；范围是纯逻辑，好测 |
 | 2.3 | 凭据排除（机器本地记录 **投影**掉，而不是整份删除） | DSHA `CredentialProjection`＋`CredentialFileBackupSource` | ✅ **已通过真实 CI**（run [38643847540](https://github.com/T0X5/DSHFusion/actions/runs/38643847540)，commit `19e95bd`，**24/24 步全绿**；`:backup` **76 条测试**、产物 128,791,472 字节）。分支 `phase-2.3/credential-exclusion`，PR #8 | 安全项，独立可测 |
 | 2.4a | **恢复核心**：预检 + 候选构建 + 校验（`NativeRestorePlan`/`BackupTree`） | DSHA `NativeRestorePlan`＋`BackupTree`＋`DataFormatEvidence`＋`RuntimeDescriptor` | ✅ **已通过真实 CI**（run [38647873314](https://github.com/T0X5/DSHFusion/actions/runs/38647873314)，commit `0629409`，**24/24 步全绿**；`:backup` **85 条测试 / 12 个类**、产物 128,789,848 字节）。分支 `phase-2.4/restore-core`，PR #10 | 会毁数据的那条路径，必须先能本机真跑 |
-| 2.4b-① | **恢复的落点**：逻辑根 → 本机路径映射（**落在 `user-data/` 的成员上，不是 runtime 槽**） | DSHA `NativeRestoreTargets` **不导入**（见下），另写 `HostRestoreMapping.java` | ✅ **已实现**（2026-10-14，同一分支）。本机真跑 **53 条** Java 测试（42 → 53），含**端到端往返**与**改动注入**；成员表与 `DshBackupScope` 的一致性由 `check-backup-contract.py` 逐项核验并做过漂移注入 | **一个成员一个 group**：`read` 指向成员自己，于是候选树不把整个 `.dsh` 卷进来 |
-| 2.4b-② | **提交候选树到活动目录 + 失败回切** | 无上游可搬 | 🔴 **未做**。`buildCandidates()` 只写 `task/candidate/`，提交这一步不存在 | ⚠️ 候选树与活动树之间的**原子性没有测试覆盖** —— 提交若被进程杀死，活动树会半新半旧。**已知缺口，不是已解决项** |
+| 2.4b-① | **恢复的落点**：逻辑根 → 本机路径映射（**落在 `user-data/` 的成员上，不是 runtime 槽**） | DSHA `NativeRestoreTargets` **不导入**（见下），另写 `HostRestoreMapping.java` | ✅ **已实现**（2026-10-14，同一分支）。✅ **已通过真实 CI**（run [38651955250](https://github.com/T0X5/DSHFusion/actions/runs/38651955250)，`0aea1dd`，**24/24 步全绿**，`:backup` **96 条 / 13 个类**）。本机真跑 **53 条** Java 测试（42 → 53），含**端到端往返**与**改动注入**；成员表与 `DshBackupScope` 的一致性由 `check-backup-contract.py` 逐项核验并做过漂移注入 | **一个成员一个 group**：`read` 指向成员自己，于是候选树不把整个 `.dsh` 卷进来 |
+| 2.4b-② | **提交候选树到活动目录 + 失败回切** | 无上游可搬 | 🔴 **未做**。`buildCandidates()` 只写 `task/candidate/`，提交这一步不存在 | ⚠️ 提交的**崩溃恢复没有测试覆盖**。设计已写清（见下）：rename 换入在内容层面是原子的，要处理的是两次 rename 之间的空窗与 aside 残留。**设计不是实现** |
 | 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA `AutomaticBackups` | 未开始 | 最后做，依赖 2.1–2.4 |
 
 **2.2 落地时校正了本表的两处假设**（都是对照真实代码后改的，不是推测）：
@@ -377,6 +377,43 @@ DSH_HOME = /root/projects/.dsh  →  宿主 filesDir/user-data/.dsh
 `tools/check-backup-contract.py` 逐项核验 6 个成员，并且**做过漂移注入自证**。
 为容纳自写文件而放宽 `check-dsha-imports.py` 的反向扫描时，同时加了一条注入证明
 **放宽是有界的**（未登记的 `.java` 仍须变红）—— 见 `docs/INCIDENTS.md` 第 30 条。
+
+#### 2.4b-② 的设计（**未实现**，但已经把可用的原语读清楚了）
+
+先更正本文件前面一处说法。我先前写「提交若被进程杀死，活动树会半新半旧」——
+**读了 `BackupFileSystem` 之后，这句话对「基于 rename 的提交」是不准确的**：
+
+```java
+void move(File source, File target) throws IOException;   // 不覆盖
+default void atomic(File directory, String name, byte[] bytes)   // 带崩溃恢复的持久化写
+void syncDirectory(File directory) throws IOException;    // 持久化屏障
+```
+
+候选树是在**活动目录之外**完整建好、逐文件校验过 sha256 的（2.4a 已完成）。
+把 `candidate/<成员>` 用 `move`（同文件系统内的 rename）换进活动位置，
+**内容层面是原子的** —— 活动树在任何瞬间要么是旧的整棵、要么是新的整棵，
+不存在半新半旧。真正要处理的是另外两件事：
+
+| 真实的失败形态 | 处理 |
+|---|---|
+| **两次 rename 之间目标不存在**（`move` 不覆盖，所以必须先移走旧的） | 提交前用 `fs.atomic()` 写一份**日志**（它自带 `name.previous` 的崩溃恢复），恢复时据此把 `aside` 移回来 |
+| `aside` 残留（提交成功但没来得及删） | 日志记到 `COMMITTED` 相位；恢复时按摘要判定，再删 |
+
+所以恢复判定**不能只看文件在不在，要看摘要**：
+
+| 日志相位 | `active` | `aside` | 判定 |
+|---|---|---|---|
+| `PREPARED` | 缺失 | 在 | 死在两次 rename 之间 → 把 `aside` 移回 `active` |
+| `PREPARED` | 在，摘要 == `candidateDigest` | 在 | 换进去了、没删 aside → 完成收尾（删 aside） |
+| `PREPARED` | 在，摘要 == `beforeDigest` | 在 | 还没开始换 → 回退（删 candidate，删 aside） |
+| `PREPARED` | 在，摘要**都不是** | 任意 | **拒绝并报错** —— 不猜，不覆盖 |
+| `COMMITTED` | 在，摘要 == `candidateDigest` | 任意 | 收尾 |
+
+**还有一条必须先断言的前提**：`task` 与 `user-data` 必须在**同一个文件系统**上
+（`fs.stat(...).device` 相等），否则 `move` 会退化成跨设备拷贝，原子性假设当场失效。
+这条检查要在提交前做，而不是靠「反正都在 `filesDir` 下」这种推断。
+
+未做，所以不声称任何一条成立。
 
 ### 阶段 2 验收
 
