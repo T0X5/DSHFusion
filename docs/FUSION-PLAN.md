@@ -165,6 +165,59 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 重新加载，真机上出过「每次都起不来」的事故）。排除必须按子路径逐项。
 完整理由见 [INCIDENTS.md](INCIDENTS.md) 第 19 条。
 
+### 2.4 动手前的只读审计结论（2026-10-14，尚未实施）
+
+**为什么先做这一步**：2.4 是阶段 2 里唯一**必然引入 Android 耦合**的一项，
+而 2.1–2.3 的全部价值建立在「`:backup` 的 Java 侧能在本机真编译真运行」之上
+（`tools/run-backup-jvm-tests.sh`）。照直觉把 6 个类一起搬进来，会让那个工具**失效** ——
+而它失效的方式是「编译不过」，不是在评审里看得出来的设计问题。所以先量清楚。
+
+**实测的类与依赖（数字来自真实文件，不是估计）**：
+
+| 类 | 行数 | `android.*` 导入 | 依赖 |
+|---|---|---|---|
+| `DataRootPolicy` | 42 | **0** | 叶子 |
+| `BackupTree` | 304 | **0** | `AndroidTreeFileSystem`(10 处)、`AndroidBackupFileSystem`(1 处) |
+| `NativeRestorePlan` | 402 | **0** | `BackupTree`(6)、`BackupFileSystem`(6) |
+| `NativeRestoreTargets` | 301 | 2 | `NativeRestorePlan`(7)、`DataRootPolicy`(4)、`BackupTree`(3)、`AndroidBackupFileSystem`(1) |
+| `AndroidBackupFileSystem` | 377 | 2 | `ParcelFileDescriptor`、`Environment` |
+| `AndroidTreeFileSystem` | 600 | 5 | `Os`、`OsConstants`、`StructStat`、`ErrnoException`、`system.*` |
+
+**第一处校正：「零 `android.*` 导入」不等于「不依赖 Android」。**
+`BackupTree` 一个 `android.*` 都没导入，但它有 **10 处**引用 `AndroidTreeFileSystem`。
+`NativeRestorePlan` 同理 —— 它零导入，却通过 `BackupTree` **传递地**依赖
+`AndroidTreeFileSystem`。**照「导入数」挑文件会挑错。** 判据必须是**可达性**。
+
+**第二处校正（对 2.3 的直接影响）：Android 特异性只集中在 2 个文件。**
+真正碰 Android API 的只有 `AndroidTreeFileSystem`（600 行，`Os` 快速路径）
+与 `AndroidBackupFileSystem`（377 行，`ParcelFileDescriptor`/`Environment`）。
+其余 4 个（`DataRootPolicy`/`BackupTree`/`NativeRestorePlan`/`NativeRestoreTargets`，
+合计 1049 行）**源码里没有任何 Android 调用**，只是类型上引用了那两个。
+
+⇒ **2.4 的落点因此有解**：6 个类全进 `:backup`（它本来就是 `com.android.library`，
+Android API 可用），但 `tools/run-backup-jvm-tests.sh` 必须
+**按「是否可达 Android 类」排除**，而不是按「有没有 `android.*` 导入」排除。
+排除集合要**显式列出并断言恰好等于预期的 2 个文件** —— 否则它会随着将来新增文件
+**静默变大**，重演第 13 条（检查默默缩水）。
+
+**第三处（待实证，不要凭推理定）：2.3 删掉的那条测试方法可能可以在 2.4 补回。**
+`oldV5ArchiveMachineRecordIsProjectedInCandidateBeforeItCanBecomeActive`
+**只用了 `NativeRestorePlan`**（2 处引用），不需要 `NativeRestoreTargets`。
+所以只要 `BackupTree` 的类文件在类路径上，它**可能**能跑 ——
+但 `BackupTree` 引用的 `AndroidTreeFileSystem` 是否会**在类加载/校验阶段**就被解析，
+取决于 JVM 的惰性解析行为，**读源码判断不了**。
+
+> ⚠️ 这条**必须由真实执行回答**，否则就是第 22 条的重演（我按源码推的三个错误码全错）。
+> 具体做法：把方法恢复回去、`run-backup-jvm-tests.sh` 里真跑一遍，看它是
+> `OK` 还是 `NoClassDefFoundError`。**两种结果都要如实记** ——
+> 若跑不了，说明这条覆盖在 2.4 仍然缺失，得另想办法（例如让 `BackupTree` 接受
+> 一个注入的文件系统实现，从而在测试里不触及 Android 类）。
+
+**第四处：DSHA 的 `RuntimeTrial`（739 行、1 处 `Context`）与 DSHBox 的双目录
+不是同一个模型，不能照搬。** 它是 2.4 里唯一「思路可借、代码要重写」的部分 ——
+DSHBox 的 `runtime-current/` ↔ `runtime-new/` 切换是它自己的机制。
+具体怎么落，等它自己的审计做完再定；**不要因为 `RuntimeTrial` 长得像就搬。**
+
 ### 阶段 2 验收
 
 - 导出的备份能在**另一台设备**上恢复，且对话、附件、配置、用户插件齐全；
