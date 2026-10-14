@@ -127,22 +127,41 @@ APK 身份核验通过 ✔
 
 ## 3. 安装
 
-> ### ⚠️ 2026-10-14 实测：第一次安装**失败**（-13），已修，待重新验证
+> ### ⚠️ 这一次仍然需要先卸载一次（而且只有这一次）
+>
+> 你现在手机上装的那个版本，是用 **CI 每次现生成的随机调试密钥**签的。
+> 新构建改用**固定密钥库**（DIV-0017），所以两者签名不同，
+> 覆盖安装会报「签名不一致」。
 >
 > ```
-> 安装失败(-13)
-> 失败原因：与已安装应用内容提供者冲突
+> 设置 → 应用 → DSHFusion → 卸载
 > ```
 >
-> **根因**：FileProvider 的 authority 写死成 `com.dshbox.app.fileprovider`，
-> 与已装的 DSHBox 撞车。authority 是**独立于 applicationId 的另一条身份轴**，
-> Android 要求它全局唯一 —— 跟 applicationId 是否不同无关。
+> **从这次之后就不需要再卸载了** —— 以后每个构建都是同一个身份，
+> 可以直接覆盖升级（`adb install -r` 或点安装包）。
 >
-> 已按 DIV-0011 修复（两处 authority 都改为从 applicationId 派生），
-> 并补了源码层与产物层两道检查。
+> 代价说明：卸载会清掉应用私有数据，包括已经下好的运行环境层
+> （几百 MB，下次启动要重新获取）。这是最后一次付这个代价。
 >
-> **但下面的步骤还没有在修复后的构建上跑过。** 等你重新构建（或等 CI 出新的
-> artifact）之后再按本文件操作，并把结果回填到第 6 节。
+> 想确认新构建的签名是对的？看 APK 的证书 SHA-256 指纹应该是：
+>
+> ```
+> 76:D5:88:D4:4A:AD:12:B0:0A:AC:0A:15:87:73:8B:C9:
+> 1E:FC:18:2B:7C:0B:00:B2:88:A5:82:60:58:E9:81:26
+> ```
+>
+> （`apksigner verify --print-certs app-debug.apk`，或看 CI 日志里
+> `Restore signing keystore` 那一步打印的指纹。）
+
+> ### ⚠️ 2026-10-14 记录：更早的两次安装
+>
+> 第一次**失败 -13**（`INSTALL_FAILED_CONFLICTING_PROVIDER`）：
+> FileProvider 的 authority 写死成 `com.dshbox.app.fileprovider`，与已装的 DSHBox 撞车。
+> authority 是**独立于 applicationId 的另一条身份轴**，Android 要求它全局唯一。
+> 已按 DIV-0011 修复（两处 authority 都改为从 applicationId 派生）。
+>
+> 第二次**成功**（run 38510120522）。此后又装了 v3、v4，
+> 每次都是因为签名不一致而卸载重装 —— 这正是 DIV-0017 要解决的问题。
 
 
 **方式 A：手机浏览器**
@@ -159,8 +178,7 @@ adb install -r app-debug.apk
 预期：`Success`。因为 applicationId 是 `com.dshfusion.app`，
 **不会**覆盖你已装的 DSHBox（`com.dshbox.app`）—— 两者并存。
 
-> ⚠️ 这是 debug 签名的 APK。将来如果你换成正式签名，必须先卸载再装，
-> 否则会报签名不一致。
+> 注意 `adb install -r` 只在签名一致时才能覆盖。第一次仍需按上面的说明先卸载。
 
 ---
 
@@ -234,6 +252,27 @@ grep -i ':0C08' /proc/net/tcp      # 0C08 = 3080；换成你实际看到的端�
 修复后这个按钮会带上**本实例的**地址与启动令牌。点开应该直接进入 DSH 的 Web 界面
 （不是登录页、不是错误页）。如果弹「启动令牌尚未就绪」，说明 DSH 还没打印出地址，
 回到第 1 步。
+
+#### 如果还是起不来：去应用自己的日志里读原文
+
+`logcat` 对这个问题基本没用（实测只有 5 行），`/data/data` 也读不到。
+**唯一能看到 DSH 真实报错的地方是应用内建的日志页**：
+
+```
+设置 → 诊断与日志 → 运行日志 → DSH 进程日志（process-dsh.log）
+```
+
+上一轮的根因就是从那里读出来的：
+
+```
+dsh: fatal uncaught exception: Error: dsh: host preparation failed:
+     No usable native binding found for node-addon-require-builtin-linux-arm64-gnu (auto)
+```
+
+`No usable native binding found for …-linux-arm64-gnu` 的意思是
+**打进 APK 的那层是 x86_64 的**（DIV-0015）—— 层本身格式正确、内容也在，
+只是架构错了，装到 arm64 手机上必然起不来。已修复，但如果你在新构建上
+又看到这一行，说明层还是被在 x86_64 上建了，请把这段原文发我。
 
 **如果第 4 步失败**，可能的原因（按可能性排序）：
 
