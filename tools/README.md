@@ -28,9 +28,8 @@
 
 ### `check-dsha-imports.py` — DSHA 导入副本核验
 
-核验从 DSHA 导入的代码（阶段 2.1–2.2 在 `backup/` 模块里）：
-文件必须**正好**以
-`governance/dsha-imports.json` 里那 3 行来源头开头，去掉头之后的**正文**
+核验从 DSHA 导入的代码（阶段 2.1–2.2 在 `backup/` 模块里）：文件必须**正好**以
+`governance/dsha-imports.json` 里登记的那几行来源头开头，去掉头之后的**正文**
 sha256 必须与登记的 `upstream_sha256` 一致。两个断言互相独立，改哪边都会红。
 
 > 与上面那个保真度检查器有个**刻意的区别**：它的期望值**内嵌在仓库里**，
@@ -39,33 +38,36 @@ sha256 必须与登记的 `upstream_sha256` 一致。两个断言互相独立，
 > 第 13 条记录的问题（一条红了很久没人看见的断言）。新增导入路径时刻意不再沿用那个模式。
 
 反向也查：导入目录里出现未登记的 `.java`、或登记的文件不在磁盘上，都报错。
+（反向检查把 `derived` 的 `local_path` 也算作已登记 —— 漏掉这一点会把
+「从 `files[]` 移到 `derived[]`」误判成「未登记的文件」。）
 
-### 两类登记：逐字节副本 vs 改写后移植
+用法：`python3 tools/check-dsha-imports.py`
+      `python3 tools/check-dsha-imports.py --update`（仅复核过上游改动后使用；会警告正文已不再一致）
+退出码：0 一致（成功信息里会写明「改写/适配移植 N 项上游侧已核 / 未核」）；1 有差异。
 
-`.java` 一律进 `files[]`（逐字节副本，靠 sha256 证明「没改」）；
-`.kt` 一律是本仓库自己写的。两者之间有一层：**改写后移植** ——
-比如 `DshBackupScope.kt` 来自 DSHA 的 `BackupScope.java`，但正文改了。
+#### 两类登记、两种来源头
 
-这种只能进 `derived.items[]`，而且**不能靠 sha256 证明任何事**，所以改成核对
-「改写者有没有说清保留了哪条不变式、改掉了什么、为什么」：
+| 登记位置 | `kind` | 正文 | 来源头 | 靠什么核验 |
+|---|---|---|---|---|
+| `files[]` | ——（逐字节副本） | 与上游**逐字节相同** | `provenance_header` | 正文 sha256 ＋ 头的精确匹配 |
+| `derived.items[]` | `adapted` | 只做机械等效替换 | `adapted_header` | 头 ＋ `kept`/`changed` 非空 ＋ 禁止两种身份重叠 |
+| `derived.items[]` | `rewritten` | 本仓库按真实布局重写 | **不许带**「原样复制」头 | 同上 |
+
+`derived` **不能靠 sha256 证明任何事**，所以改成核对「改写者有没有说清保留了哪条
+不变式、改掉了什么、为什么」：
 
 - `kept` / `changed` 必须都是非空字符串列表 —— 否则「改写」就成了把任意代码
   洗成「上游移植」的通道，这是本节真正的治理断言；
 - 同一路径**不能**同时出现在 `files[]` 与 `derived.items[]`（一处代码一种身份）；
-- `upstream_sha256` 格式、`upstream_bytes` 正数、`kind` 取值、`verified_by` 指向的文件存在。
-
-导出码：`python3 tools/check-dsha-imports.py`
-退出码：0 一致（成功信息里会写明「改写移植 N 项上游侧已核 / 未核」）；1 有差异。
+- `upstream_sha256` 格式、`upstream_bytes` 正数、`kind` 取值、`verified_by` 指向的文件存在；
+- **头不能撒谎**：`adapted` 必须带 `adapted_header`，`rewritten` 不许带「原样复制」头。
+  没有这条，文件可以自己声称是逐字节副本，而没有任何东西会不同意 ——
+  这条是被一次真实情况逼出来的：3 份测试文件改完正文后，头还写着「正文未做任何修改」。
+  见 [../docs/INCIDENTS.md](../docs/INCIDENTS.md) 第 20 条。
 
 > 上游侧哈希只有在仓库外的审计副本存在时才能核对。这里**不**让它悄悄走一个跳过分支
 > （那正是 [../docs/INCIDENTS.md](../docs/INCIDENTS.md) 第 13 条的坑），
 > 而是把「已核 / 未核」写进成功信息里，让跳过变成看得见的事实。
-
-反向也查：导入目录里出现未登记的 `.java`、或登记的文件不在磁盘上，都报错。
-
-用法：`python3 tools/check-dsha-imports.py`
-      `python3 tools/check-dsha-imports.py --update`（仅复核过上游改动后使用；会警告正文已不再一致）
-退出码：0 一致；1 有差异。
 
 ### `check-backup-contract.py` — 备份模块「测试与容器不能各说各话」
 
