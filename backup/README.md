@@ -325,6 +325,12 @@ return digestTree(fs, root, control);          // ← 通用回退，功能完�
 
 **本机 Java 测试：33 → 42 条**（+`NativeRestorePlanTest` 的 8 条 + 恢复的这 1 条）。
 
+> ✅ **阶段 2.4a 已通过真实 CI**（run [38647873314](https://github.com/T0X5/DSHFusion/actions/runs/38647873314)，
+> commit `0629409`）：24/24 步全绿，`:backup` **85 条测试 / 12 个测试类**。
+> 其中 `NativeRestorePlanTest` 的 8 条由 `android.yml` **单独钉住条数** ——
+> 「总数够了」不代表「新那 8 条在里面」（`docs/INCIDENTS.md` 第 26 条）。
+> **仍未在真机上验证过**：还没有导出/恢复的界面入口。
+
 ### 8 条恢复测试各自钉住什么
 
 它们全部来自 DSHA，一条未改（除工具链差异）：
