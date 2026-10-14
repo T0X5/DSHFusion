@@ -389,10 +389,10 @@
     <string name="move_plan_target_system_dir">La cible « %1$s » se trouve dans un répertoire système (proc/sys/dev/system/apex/tmp/.dshbox) et ne peut pas être une destination de déplacement</string>
     <string name="move_progress_copying_name">Copie de %1$s</string>
     <string name="move_progress_moving_name">Déplacement de %1$s</string>
-    <string name="notify_action_open_dsh">Ouvrir DSH</string>
-    <string name="notify_action_restart_dsh">Redémarrer DSH</string>
-    <string name="notify_action_start_dsh">Démarrer DSH</string>
-    <string name="notify_action_stop_sandbox">Arrêter le bac à sable</string>
+    <string name="notify_action_open_dsh">Ouvrir</string>
+    <string name="notify_action_restart_dsh">Redémarrer</string>
+    <string name="notify_action_start_dsh">Démarrer</string>
+    <string name="notify_action_stop_sandbox">Arrêter</string>
     <string name="notify_dsh_error">Erreur DSH</string>
     <string name="notify_dsh_other">DSH…</string>
     <string name="notify_dsh_ready">DSH prêt</string>

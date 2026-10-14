@@ -389,10 +389,10 @@
     <string name="move_plan_target_system_dir">El destino ”%1$s“ está en un directorio del sistema (proc/sys/dev/system/apex/tmp/.dshbox) y no puede ser un destino de movimiento</string>
     <string name="move_progress_copying_name">Copiando %1$s</string>
     <string name="move_progress_moving_name">Moviendo %1$s</string>
-    <string name="notify_action_open_dsh">Abrir DSH</string>
-    <string name="notify_action_restart_dsh">Reiniciar DSH</string>
-    <string name="notify_action_start_dsh">Iniciar DSH</string>
-    <string name="notify_action_stop_sandbox">Detener entorno aislado</string>
+    <string name="notify_action_open_dsh">Abrir</string>
+    <string name="notify_action_restart_dsh">Reiniciar</string>
+    <string name="notify_action_start_dsh">Iniciar</string>
+    <string name="notify_action_stop_sandbox">Detener</string>
     <string name="notify_dsh_error">Error de DSH</string>
     <string name="notify_dsh_other">DSH…</string>
     <string name="notify_dsh_ready">DSH listo</string>

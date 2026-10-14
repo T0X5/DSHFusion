@@ -19,7 +19,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
 （`README.md`、`.gitignore`）→ **实际导入 765 个文件、25.4 MB**。
-17 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
+18 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
 
 **「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
@@ -119,8 +119,9 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 12 | 启动命令参数顺序 | `error: unknown option '--patch'` | **我自己改坏的**：DIV-0014 把 `--patch` 挪到了首个未知旗标之后 | 并入 **DIV-0014** | 补下标断言 + 单测 + 套件断言三层 |
 | 13 | 一条红了很久没人看见的断言 | — | 该节需要仓库外的审计副本，CI 里走「跳过」分支 | — | 从真实数据推导期望集合；本机跑过才算数 |
 | 14 | 自有 DSH 第一次跑起来 | ✅ **起来了** | — | — | 进程 uid + 端口 owner + 浏览器 ESTABLISHED 三重独立证据 |
+| 15 | 通知栏动作只剩一个字 | 4 个按钮显示为 `打…/启…/重…/停…` | **个数与长度相乘**：4 个动作把动作栏分成四份 × 6 个语言都是长文案；且「打开/启动」本该互斥 | **DIV-0018** | 动作随状态收敛到 ≤3 个 + 文案改短；断言要钉**性质**，别钉「我以为的实现形态」（第一版断言把正确实现判失败） |
 
-**贯穿全部 14 条的同一个病**，值得单独记住：
+**贯穿全部 15 条的同一个病**，值得单独记住：
 
 | 发作形态 | 通过了的检查 |
 |---|---|
@@ -231,7 +232,7 @@ dshfusion/
 │   ├── build-runtime-assets.sh  组装可内嵌 APK 的层（android-side + dsh，产出 sha256 侧车）
 │   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 145 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 148 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）

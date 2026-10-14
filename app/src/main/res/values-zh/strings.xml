@@ -369,10 +369,10 @@
     <string name="move_plan_target_system_dir">目标「%1$s」位于系统目录（proc/sys/dev/system/apex/tmp/.dshbox），不能作为移动目标</string>
     <string name="move_progress_copying_name">正在复制 %1$s</string>
     <string name="move_progress_moving_name">正在移动 %1$s</string>
-    <string name="notify_action_open_dsh">打开 DSH</string>
-    <string name="notify_action_restart_dsh">重启 DSH</string>
-    <string name="notify_action_start_dsh">启动 DSH</string>
-    <string name="notify_action_stop_sandbox">停止沙箱</string>
+    <string name="notify_action_open_dsh">打开</string>
+    <string name="notify_action_restart_dsh">重启</string>
+    <string name="notify_action_start_dsh">启动</string>
+    <string name="notify_action_stop_sandbox">停止</string>
     <string name="notify_dsh_error">DSH 异常</string>
     <string name="notify_dsh_other">DSH…</string>
     <string name="notify_dsh_ready">DSH 就绪</string>

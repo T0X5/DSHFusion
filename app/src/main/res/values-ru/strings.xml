@@ -399,10 +399,10 @@
     <string name="move_plan_target_system_dir">Цель \u00ab%1$s\u00bb находится в системном каталоге (proc/sys/dev/system/apex/tmp/.dshbox) и не может быть целью перемещения</string>
     <string name="move_progress_copying_name">Копирование %1$s</string>
     <string name="move_progress_moving_name">Перемещение %1$s</string>
-    <string name="notify_action_open_dsh">Открыть DSH</string>
-    <string name="notify_action_restart_dsh">Перезапустить DSH</string>
-    <string name="notify_action_start_dsh">Запустить DSH</string>
-    <string name="notify_action_stop_sandbox">Остановить песочницу</string>
+    <string name="notify_action_open_dsh">Открыть</string>
+    <string name="notify_action_restart_dsh">Перезапуск</string>
+    <string name="notify_action_start_dsh">Запустить</string>
+    <string name="notify_action_stop_sandbox">Стоп</string>
     <string name="notify_dsh_error">Ошибка DSH</string>
     <string name="notify_dsh_other">DSH…</string>
     <string name="notify_dsh_ready">DSH готов</string>

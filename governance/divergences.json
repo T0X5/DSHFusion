@@ -313,6 +313,30 @@
       "reapply": "两处都是本项目自有改动，上游不会碰：`app/build.gradle.kts` 的 `debug` 块加一行（上游若给 debug 加了别的 signingConfig，以本条的意图为准 —— 固定身份优先）；`android.yml` 的还原步骤整段保留。\n\n**密钥库本身不在仓库里**，所以重放不涉及二进制。若将来密钥库丢失，需要生成新的并更新两处：Secret 内容 + 工作流里的期望指纹。**换密钥的代价是已装版本必须卸载重装一次**，所以不要轻易换。",
       "conflict_risk": "low —— `debug` 块加一行，冲突面极小。真正的风险不在代码冲突，而在**密钥库的管理**：它是这个应用的长期身份，丢了就只能卸载重装、从头开始。",
       "note": "**密钥库的备份**：已导出一份到设备的 `Download/dshfusion-keystore-backup/`（含 jks 与 properties），请另存到仓库之外的安全位置。GitHub 上的 Secret 是唯一的工作副本 —— Secret 可以重写，但**内容丢了就找不回来**（GitHub 不允许读回 Secret 的值）。\n\n**这个密钥库的定位**：它是**稳定性**措施，不是安全边界。口令与密钥都不比 Android 标准调试密钥更保密（那套口令是公开的 `android`）。它解决的是「同一个应用身份」问题。\n\n**将来若决定公开或分发**：先重新评估 —— 那时它才变成真正的发布密钥，届时应换一把新密钥、把它从 Secret 管理改为更严格的流程，并重新考虑 `docs/PHASE1-PREREQUISITES.md` 里关于数据迁移的结论。\n\n**为什么不用「提交进仓库」这个更简单的做法**：能省掉 Secret 管理，且不依赖 PAT 权限。但上游 `.gitignore` 里「签名密钥：绝不入库」是一条有理由的约定（上游是**分发**的，它的 release key 泄露是实质风险），本项目当前虽然私有自用，但没有必要在能两全的时候破例 —— GitHub 的 Actions Secret 恰好提供了这个两全。代价是多一个 Secret 依赖，而这个代价已经在上面「密钥库的备份」里说明了。"
+    },
+    {
+      "id": "DIV-0018",
+      "title": "通知栏动作不再被压成「一个字 + 省略号」：动作随状态变化（最多 3 个）、文案改短",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+        "app/src/main/java/com/dshbox/app/service/DshNotifyActions.kt",
+        "app/src/test/java/com/dshbox/app/service/DshNotifyActionsTest.kt",
+        "app/src/main/res/values/strings.xml",
+        "app/src/main/res/values-zh/strings.xml",
+        "app/src/main/res/values-ar/strings.xml",
+        "app/src/main/res/values-es/strings.xml",
+        "app/src/main/res/values-fr/strings.xml",
+        "app/src/main/res/values-ru/strings.xml"
+      ],
+      "change": "两处一起改，缺一处都不够：\n\n**① 动作个数随状态变化（最多 3 个）。** 上游固定放 4 个动作。新增纯函数 `dshNotifyActions(dshState)` 与枚举 `DshNotifyAction`（`service/DshNotifyActions.kt`），`SandboxService.buildNotification()` 改为按它的结果循环 `addAction`：\n\n| DSH 状态 | 动作 |\n|---|---|\n| `READY` | 打开 / 重启 / 停止 |\n| `STARTING`、`RUNNING` | 重启 / 停止 |\n| `UNINITIALIZED`、`STOPPED`、`ERROR` | 启动 / 停止 |\n\n三条规则：**打开与启动互斥**（上游同时列出两个，既是压缩文案的直接原因，也让人选错 —— DSH 已经在跑时「启动」是误导，没在跑时「打开」无处可开）；**运行中才给「重启」**；**「停止」永远在场且排最后**（它是沙箱卡住时唯一的出路）。\n\n**② 6 个语言的动作文案改成单个短词。** 只改值，不改键名、不改键集合：\n\n| 键 | default | zh | ar | es | fr | ru |\n|---|---|---|---|---|---|---|\n| `notify_action_open_dsh` | `Open` | `打开` | `فتح` | `Abrir` | `Ouvrir` | `Открыть` |\n| `notify_action_start_dsh` | `Start` | `启动` | `تشغيل` | `Iniciar` | `Démarrer` | `Запустить` |\n| `notify_action_restart_dsh` | `Restart` | `重启` | `إعادة` | `Reiniciar` | `Redémarrer` | `Перезапуск` |\n| `notify_action_stop_sandbox` | `Stop` | `停止` | `إيقاف` | `Detener` | `Arrêter` | `Стоп` |\n\n改短之前的值分别是 `Open DSH` / `打开 DSH` / `Restart DSH` / `重启 DSH` / `Stop sandbox` / `停止沙箱`，以及 ru 的 `Перезапустить DSH`、es 的 `Detener entorno aislado`。",
+      "rationale": "真机截图（2026-10-14）：DSHFusion 的常驻通知里，4 个动作按钮**全部只显示一个字加省略号** —— 「打… / 启… / 重… / 停…」。设备字体缩放是正常的 1.0（`settings get system font_scale` = 1.0），所以不是用户把字调大了。\n\n原因是两条叠加：**动作个数**与**文案长度**。Android 把动作栏按个数平分宽度并在放不下时省略，4 个动作每个只能分到约四分之一，而文案是 4～6 个字符（es / ru 更长）。两个因素各自都不致命、乘在一起就一个字都放不下。\n\n**这是上游的既有缺陷，不是 DSHFusion 引入的** —— 上游那 4 个 `addAction` 与那 4 条文案一直如此，只是在 DSHBox 的设备/语言组合下没那么刺眼。登记为 adaptation 而不是上游缺陷认领，是因为修法（按状态收敛动作）本身也是 DSHFusion 的取舍。\n\n**为什么两条都要改、而不是只改文案**：只改文案的话，ru 的 `Перезапуск`、fr 的 `Redémarrer` 仍在四分之一宽度里；只减个数的话，4～6 字符的文案在三分之一宽度里依然紧张。先减个数（结构）、再改短（余量），两条都改才留出冗余。\n\n顺带修掉一个语义问题：「打开」与「启动」本来就不该同时出现。",
+      "detection": "三层，都做过故障注入：\n\n1. **单测** `DshNotifyActionsTest`（7 个 `@Test`）钉四条性质：任何状态动作数 ≤ 3；「打开」与「启动」不同时出现；「停止」始终在场且排最后；`READY` 之外不出现「打开」。\n2. **`tools/verify-phase0.sh`**：`handle_div_0018` 核验 6 个语言的 4 条文案都已改短（两个方向都查：既不能还含旧的长文案，也不能是空/单个 DSH），并断言 `SandboxService` 不再出现裸的 4 连 `addAction`、且确实调用了 `dshNotifyActions`。\n3. **`apply-divergences.sh --check`** 的 `handle_div_0018`。\n\n**真机确认方式（这一步还没做）**：装上带本修复的版本后，拉下通知栏看 4 个按钮是否变成 3 个且文案完整。**在真机看到之前，这一条只能记成「已改、未验证」** —— 本机没有 JDK/Android SDK，Kotlin 无法编译，CI 是第一次真实编译。",
+      "reapply": "`tools/apply-divergences.sh` 的 `handle_div_0018` 负责核验。**可以**自动重放（纯值替换 + 一处结构改动），但重放需要知道 6 个语言 × 4 条的新值，而它们已在本文的 `change` 里写明；与其在脚本里再抄一遍（多一个会漂移的事实来源），沿用 DIV-0016 的做法：脚本只核验。\n\n上游若改了这段通知代码，冲突点在 `buildNotification()` 的动作装配那一段，以及 `DshNotifyActions.kt` 这个**新增文件**是否还在（它不来自上游，不会被同步覆盖）。",
+      "conflict_risk": "low",
+      "note": "**这是本项目第一次为「真机上的可用性」而不是「能不能起来」登记的偏离。** 前 17 条都是「装不上 / 起不来 / 身份冲突 / 误报」这一类会让人**做不成事**的问题；这一条只是**看不清**，但它同样是真机才暴露的。\n\n**有意没做的一件事**：没有把动作栏改成 `NotificationCompat.Action` 的图标形式，也没有加 `setStyle(BigTextStyle)` —— 那些都要动上游更多代码，而当前证据只支持「个数 + 长度」这个解释。**如果改完仍然不全，下一个怀疑对象是设备/主题对动作按钮的 padding**，而不是继续在这里加码。\n\n**未验证的部分要如实记**：本机无法编译 Kotlin，所以这次修复的验证链是「Python 模拟的单测断言」（仅推演，未编译）→ CI 首次真实编译 → 真机截图对照。在拿到真机截图之前，不得标记为已修好。"
     }
   ]
 }

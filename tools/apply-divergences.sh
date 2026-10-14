@@ -1505,6 +1505,69 @@ def handle_div_0017(entry) -> tuple[str, str]:
     return FAILED, f"固定签名仍有缺口：{detail}"
 
 
+
+def handle_div_0018(entry) -> tuple[str, str]:
+    """通知栏动作：个数随状态收敛 + 文案改短（DIV-0018）。
+
+    这条偏离是「两个因素相乘」造成的，所以**两边都要查**：
+      - 只查文案 -> 4 个动作仍会把三分之一宽度再切一刀；
+      - 只查个数 -> ru/fr 的长词在三分之一宽度里依然紧张。
+    任一边回退，真机上那个「一个字 + 省略号」就会回来。
+    """
+    langs = ("values", "values-zh", "values-ar", "values-es", "values-fr", "values-ru")
+    keys = {
+        "notify_action_open_dsh": "Open",
+        "notify_action_start_dsh": "Start",
+        "notify_action_restart_dsh": "Restart",
+        "notify_action_stop_sandbox": "Stop",
+    }
+    base = ROOT / "app" / "src" / "main" / "res"
+    # 上游那 4 条长文案的尾巴：出现任意一个就说明这一条被回退了。
+    stale = (" DSH", "沙箱", "sandbox", "الصندوق", "entorno aislado", "bac à sable", "песочницу")
+    missing: list[str] = []
+    checked = 0
+
+    for lang in langs:
+        f = base / lang / "strings.xml"
+        if not f.exists():
+            return PENDING, f"app/src/main/res/{lang}/strings.xml 尚未导入"
+        body = read(f)
+        for key in keys:
+            m = re.search(r'<string name="%s">(.*?)</string>' % key, body, re.S)
+            if not m:
+                missing.append(f"{lang} 缺 {key}")
+                continue
+            value = m.group(1)
+            checked += 1
+            if not value.strip():
+                missing.append(f"{lang}/{key} 是空值")
+            elif any(s in value for s in stale):
+                missing.append(f"{lang}/{key} 仍是长文案「{value}」")
+
+    # 结构那一半：动作装配必须走纯函数，不能再是 4 个连着的 addAction。
+    svc = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "service" / "SandboxService.kt"
+    if not svc.exists():
+        return PENDING, "SandboxService.kt 尚未导入"
+    body = read(svc)
+    if "for (action in dshNotifyActions(dshState))" not in body:
+        missing.append("buildNotification 没有按 dshNotifyActions(dshState) 循环装配动作")
+    # addAction 必须只有**一处**（循环里那处），且不能把具体文案写死在调用上。
+    # 上游是 4 处写死调用；只要回到 2 处以上，动作个数就又不受状态控制了。
+    n_add = len(re.findall(r"\.addAction\(", body))
+    if n_add != 1:
+        missing.append(f"addAction 调用应恰好 1 处（循环内），实际 {n_add} 处")
+    for line in body.splitlines():
+        if "addAction" in line and "notify_action_" in line:
+            missing.append("addAction 又写死了具体文案：" + line.strip()[:60])
+
+    if not missing:
+        return OK, f"通知栏动作已收敛（{checked} 条文案 + 动作装配走纯函数）"
+
+    detail = "；".join(missing[:4])
+    return FAILED, f"通知栏动作仍有问题：{detail}"
+
+
+
 HANDLERS = {
     "DIV-0001": handle_div_0001,
     "DIV-0002": handle_div_0002,
@@ -1523,6 +1586,7 @@ HANDLERS = {
     "DIV-0015": handle_div_0015,
     "DIV-0016": handle_div_0016,
     "DIV-0017": handle_div_0017,
+    "DIV-0018": handle_div_0018,
 }
 
 

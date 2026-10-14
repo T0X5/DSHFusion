@@ -379,10 +379,10 @@
     <string name="move_plan_target_system_dir">Target "%1$s" is in a system directory (proc/sys/dev/system/apex/tmp/.dshbox) and cannot be a move destination</string>
     <string name="move_progress_copying_name">Copying %1$s</string>
     <string name="move_progress_moving_name">Moving %1$s</string>
-    <string name="notify_action_open_dsh">Open DSH</string>
-    <string name="notify_action_restart_dsh">Restart DSH</string>
-    <string name="notify_action_start_dsh">Start DSH</string>
-    <string name="notify_action_stop_sandbox">Stop sandbox</string>
+    <string name="notify_action_open_dsh">Open</string>
+    <string name="notify_action_restart_dsh">Restart</string>
+    <string name="notify_action_start_dsh">Start</string>
+    <string name="notify_action_stop_sandbox">Stop</string>
     <string name="notify_dsh_error">DSH error</string>
     <string name="notify_dsh_other">DSH…</string>
     <string name="notify_dsh_ready">DSH ready</string>

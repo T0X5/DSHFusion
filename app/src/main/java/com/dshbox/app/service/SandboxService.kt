@@ -933,18 +933,26 @@ class SandboxService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(contentTitle)
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(0xFF10A37F.toInt())
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(0, ctx.getString(R.string.notify_action_open_dsh), openPending)
-            .addAction(0, ctx.getString(R.string.notify_action_start_dsh), startDshPending)
-            .addAction(0, ctx.getString(R.string.notify_action_restart_dsh), restartDshPending)
-            .addAction(0, ctx.getString(R.string.notify_action_stop_sandbox), stopSandboxPending)
-            .build()
+
+        // 动作随状态变化，最多 3 个。上游固定放 4 个，Android 会把动作栏平分宽度、
+        // 把文案压成「一个字 + 省略号」；「打开」与「启动」还本来就互斥。见 DIV-0018。
+        for (action in dshNotifyActions(dshState)) {
+            val (labelRes, pending) = when (action) {
+                DshNotifyAction.OPEN -> R.string.notify_action_open_dsh to openPending
+                DshNotifyAction.START -> R.string.notify_action_start_dsh to startDshPending
+                DshNotifyAction.RESTART -> R.string.notify_action_restart_dsh to restartDshPending
+                DshNotifyAction.STOP -> R.string.notify_action_stop_sandbox to stopSandboxPending
+            }
+            builder.addAction(0, ctx.getString(labelRes), pending)
+        }
+        return builder.build()
     }
 
     private fun createNotificationChannel() {

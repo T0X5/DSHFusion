@@ -1376,6 +1376,80 @@ if [ "$GI_BAD" = "0" ]; then
     fi
 fi
 
+section "5i. 通知栏动作不被压成「一个字 + 省略号」（DIV-0018）"
+
+# 真机截图（2026-10-14）：DSHFusion 的常驻通知里 4 个动作按钮**全部只显示**
+# 「打… / 启… / 重… / 停…」。设备 font_scale = 1.0，不是用户把字调大了。
+# 成因是两个因素相乘：**动作个数**（4 个把动作栏平分成四份）与**文案长度**
+# （4～6 个字符，ru/es 更长）。所以两边都要查 —— 只查一边，另一边回退时
+# 这个 bug 会原样回来。见 governance/divergences.json 的 DIV-0018。
+NOTIFY_BAD=0
+for lang in values values-zh values-ar values-es values-fr values-ru; do
+    f="app/src/main/res/$lang/strings.xml"
+    if [ ! -f "$f" ]; then
+        fail "缺少 $f"
+        NOTIFY_BAD=1
+        continue
+    fi
+    for key in notify_action_open_dsh notify_action_start_dsh \
+               notify_action_restart_dsh notify_action_stop_sandbox; do
+        v="$(sed -n "s|.*<string name=\"$key\">\(.*\)</string>.*|\1|p" "$f")"
+        case "$v" in
+            "") fail "$lang 的 $key 读不出来"; NOTIFY_BAD=1 ;;
+            *" DSH"*|*沙箱*|*sandbox*|*الصندوق*|*"entorno aislado"*|*"bac à sable"*|*песочницу*)
+                fail "$lang 的 $key 仍是长文案：$v"; NOTIFY_BAD=1 ;;
+        esac
+    done
+done
+[ "$NOTIFY_BAD" = "0" ] \
+    && ok "6 个语言的 4 条通知动作文案都已改短（不再含旧的长文案）"
+
+# 结构那一半：动作个数必须由状态决定，不能是写死的 4 个。
+# ⚠️ 这里查的是「恰好 1 处 addAction」而不是「0 处」—— 修复后的写法是
+# 在循环里调用一次、文案由 labelRes 决定。第一版断言写成「0 处」，
+# 结果把**正确的实现**判成了失败（见本次提交的说明）。
+if python3 - <<'PYEOF'
+import re, pathlib, sys
+p = pathlib.Path("app/src/main/java/com/dshbox/app/service/SandboxService.kt")
+body = p.read_text(encoding="utf-8")
+if "for (action in dshNotifyActions(dshState))" not in body:
+    print("buildNotification 没有按 dshNotifyActions(dshState) 循环装配动作", file=sys.stderr)
+    sys.exit(1)
+n = len(re.findall(r"\.addAction\(", body))
+if n != 1:
+    print(f"addAction 调用应恰好 1 处（循环内），实际 {n} 处", file=sys.stderr)
+    sys.exit(1)
+for line in body.splitlines():
+    if "addAction" in line and "notify_action_" in line:
+        print("addAction 又写死了具体文案：" + line.strip()[:60], file=sys.stderr)
+        sys.exit(1)
+sys.exit(0)
+PYEOF
+then
+    ok "通知栏动作由 dshNotifyActions(dshState) 决定（仅 1 处 addAction，文案不写死）"
+else
+    fail "通知栏动作装配没有收敛到状态函数"
+fi
+
+# 纯函数本身在不在、单测在不在。单测断言的是四条性质，
+# 不是「实现长什么样」—— 那样写的话重构一次就得改测试。
+NA_KT="app/src/main/java/com/dshbox/app/service/DshNotifyActions.kt"
+NA_TEST="app/src/test/java/com/dshbox/app/service/DshNotifyActionsTest.kt"
+if [ -f "$NA_KT" ] && [ -f "$NA_TEST" ]; then
+    missing_assert=""
+    for needle in "neverMoreThanThreeActions" "openAndStartAreMutuallyExclusive" \
+                  "stopIsAlwaysPresentAndLast" "notRunningOffersStartThenStop"; do
+        grep -q "fun $needle" "$NA_TEST" || missing_assert="$missing_assert $needle"
+    done
+    if [ -n "$missing_assert" ]; then
+        fail "DshNotifyActionsTest 少断言：$missing_assert"
+    else
+        ok "DshNotifyActions 纯函数与四条性质单测都在场"
+    fi
+else
+    fail "缺少 DshNotifyActions.kt 或其单测"
+fi
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do
