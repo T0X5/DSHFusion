@@ -34,6 +34,7 @@
 | [tools/README.md](tools/README.md) | 每个工具的用途、用法与退出码 |
 | [docs/PHASE0-VERIFICATION.md](docs/PHASE0-VERIFICATION.md) | 阶段 0 验证报告（命令、输出、退出码） |
 | [docs/PHASE1-PREREQUISITES.md](docs/PHASE1-PREREQUISITES.md) | 阶段 1 前置审计：运行时资产 · 许可证 · 数据迁移 |
+| [docs/INSTALL-ON-DEVICE.md](docs/INSTALL-ON-DEVICE.md) | 真机安装步骤（手动执行） |
 | [governance/ATTRIBUTION.md](governance/ATTRIBUTION.md) | 署名与许可义务 |
 | [LICENSE-PENDING.md](LICENSE-PENDING.md) | 许可状态说明（为何暂不设许可证） |
 

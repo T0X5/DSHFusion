@@ -49,7 +49,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | 上游 `android.yml` 在 DSHFusion 下的首次真实运行 | ✅ **通过**（run 38478523535，含单元测试 / lint / APK 组装） |
 | APK **产物**身份核验（DIV-0008） | ✅ **已通过**（run 38483533327 第 15 步）—— 对 CI 真实产物解二进制清单核验 |
 | 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
-| 生成的 APK 装到真机上验证 | ❌ **未做**（无设备连接、无 adb） |
+| 生成的 APK 装到真机上验证 | ❌ **未做** —— 步骤见 [docs/INSTALL-ON-DEVICE.md](docs/INSTALL-ON-DEVICE.md)，由用户手动执行 |
 | APK 内含运行环境层（能真正跑起 DSH） | ❌ 不含 —— 仓库未提交 `runtime/`，CI 只做编译 |
 | `upstream-watch.yml` 真实运行 | ✅ **已跑通**（run 38483621472，手动触发）—— 检出 DSHA 有新提交并建了 Issue #2 |
 
@@ -175,6 +175,7 @@ dshfusion/
 │   ├── UPSTREAM-SYNC.md         双上游长期同步流程
 │   ├── PHASE0-VERIFICATION.md   阶段 0 验证报告（命令、输出、退出码）
 │   ├── PHASE1-PREREQUISITES.md  阶段 1 前置审计（资产 / 许可 / 数据迁移）
+│   ├── INSTALL-ON-DEVICE.md     真机安装步骤（给用户手动执行）
 │   └── upstream-reports/        每次同步生成的变更摘要
 ├── tools/
 │   ├── README.md                工具清单（各自用途、用法、退出码）
