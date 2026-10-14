@@ -1,7 +1,8 @@
 # `:backup` — v5 备份归档的格式与预检
 
-阶段 2.1 的落地模块。它**不**做备份计划、**不**做恢复、**不**碰运行环境；
-它只负责一件事：**把「一份备份是不是完整、自洽、没被篡改」变成可判定的**。
+阶段 2.1 与 2.2 的落地模块。它**不**做备份计划、**不**做恢复、**不**碰运行环境；
+它负责两件事：**把「一份备份是不是完整、自洽、没被篡改」变成可判定的**（2.1），
+以及**把「这次要备份哪些东西、哪些绝对不碰」变成可判定的**（2.2）。
 
 ## 这个模块里的代码来自哪里
 
@@ -9,8 +10,17 @@
 
 | 包 | 来源 | 性质 |
 |---|---|---|
-| `com.deepseekharness.app.backup`（5 个类）<br>`com.deepseekharness.app.util.BackupScopes` | DSHA `467c7eb0` | **逐字节原样副本**（MIT） |
-| `com.dshbox.app.backup`（`V5Archive.kt`） | DSHFusion | 本仓库自己写的 Kotlin 门面 |
+| `com.deepseekharness.app.backup`（11 个类）<br>`com.deepseekharness.app.util`（`BackupScopes`、`FileKind`） | DSHA `467c7eb0` | **逐字节原样副本**（MIT） |
+| `com.dshbox.app.backup`（`V5Archive.kt`、`DshBackupScope.kt`、`DshBackupExclusions.kt`） | DSHFusion | 本仓库自己写的 Kotlin |
+
+阶段 2.1 引入的是容器与预检（`BackupArchive`/`BackupLimits`/`BackupJson`/`BackupControl`、
+`BackupScopes` 与两份原始测试）；阶段 2.2 补上**枚举与写入**那一半
+（`BackupFileSystem`/`BackupSource`/`FileBackupSource`/`HostSnapshot`/`GuestDataResolver`、
+`FileKind` 与四份原始测试）。
+
+> `.java` 一律是 DSHA 的逐字节副本，`.kt` 一律是本仓库自己写的 ——
+> 这个命名约定让「哪段不是我们写的」在文件名层面就能看出来，
+> 也正好是 `check-dsha-imports.py` 反向检查那条「导入目录里没有未登记 `.java`」的边界。
 
 包名保留 DSHA 原名不是疏忽。它让两件事变简单：
 
@@ -66,17 +76,70 @@ bytes[32]           SHA-256（覆盖以上全部字节）
 这两者会不一样，而且差异有实际意义：清单的 `roots` 只声明了根，
 一个声明为 `application` 的根底下可以装任意范围的记录。
 
+## 阶段 2.2 加了什么：范围与排除
+
+`DshBackupScope.kt` 是**改写后移植** DSHA 的 `BackupScope.java`（登记在
+`dsha-imports.json` 的 `derived` 段 —— 正文不是逐字节副本，所以不能靠 sha256
+证明「没改」，只能如实列清保留了哪条不变式、改掉了什么、为什么）。
+`DshBackupExclusions.kt` 是本仓库自己写的排除清单。
+
+### 范围
+
+四个范围（`FULL`/`SESSIONS`/`SETTINGS`/`PLUGINS`），每个范围声明
+「读取起点、合并位置、v5 记录范围」三元组。三条不变式由单测逐项钉住：
+
+- **部分备份绝不叫全量的名字**（`DSHFusion-backup-` 只给 `FULL` 用，且各前缀互不包含）——
+  否则老版本会把一份「只有会话」的归档按全量恢复，清掉配置与插件；
+- **读取起点与合并位置逐项对应**（DSHA 的同名用例只比长度，挡不住顺序错位）；
+- **记录范围必须是容器认识的，且部分范围不能声称自己能带别的范围的记录** ——
+  后者直接对接 2.1 容器的 `ROOT_SCOPE_MISMATCH` / `UNKNOWN_SCOPE` 判定。
+
+DSHA 的 `PLUGINS` 范围列了 `plugin-src` / `plugin-sources.json` / `plugin-history` /
+`plugin-safe-mode.json`。**这四个在 DSHFusion 里根本不存在**（全库 grep 无引用）——
+它们是 DSHA 自建插件管理的目录。本仓库的插件实体与清单在
+`.dsh/profiles/<profile>/`（见 `PluginPaths.profileDir` / `nodeModulesDir`），
+所以这里按本仓库的实证布局校正。照搬会备份一个永远为空的目录。
+
+### 排除：`.dsh/dshbox` **不能**整目录排除
+
+这是阶段 2.2 最有价值的一次审计结论，因为它推翻的是第一直觉。
+
+`.dsh/dshbox` 从名字看就是「我方随包资产目录」，直觉是整目录排除。
+但 `DshboxLayoutMigration` 的类注释写着：
+
+> 三份层文件承载**用户状态**：官方插件开关、**哪些插件被停用**、绝对安全模式整层。
+> 其中「被停用」是安全机制：丢了会把此前被隔离的坏插件重新加载 ——
+> 真机上出过「每次都起不来」的事故。
+
+那三份文件就在 `.dsh/dshbox/` 里面。所以排除必须**按子路径逐项**：
+
+| 排除（重铺得出来） | 保留（看着像资产，其实是状态） |
+|---|---|
+| `.dsh/dshbox/bin` | `.dsh/dshbox/dsh-official-plugin` |
+| `.dsh/dshbox/dshbox-plugins` | `.dsh/dshbox/plugin-market` |
+| `.dsh/dshbox/pilot`、`mobile-adapt`、`mobile-pilot` | `.dsh/dshbox/safe-mode` |
+| `.dsh/pnpm-store`（内容寻址的 pnpm store，可由锁文件重建） | `.dsh/dshbox/plugin-guard.json` |
+| `.dsh/credentials`（整份凭据，字段级属于 2.3） | |
+
+**`.dsh/bin` 刻意不排除。** 它没有命名空间 —— `SandboxService.removeLegacyAssetDirs()`
+的注释明确写着「每次启动都无条件删会静默吃掉用户自己建的 `~/.dsh/bin`」。
+同理，它可能是用户自己放东西的地方；丢用户数据比多备份一份脚本严重得多。
+
+`DshBackupExclusions.checkInvariants()` 把「排除项写宽了」变成可执行断言，
+`DshBackupExclusionsTest` 还会把每个必须保留路径的**每一个祖先目录**逐个问一遍 ——
+有人把 `.dsh/dshbox` 加进排除清单时立刻红，并指出是哪个祖先。
+
 ## 这个模块**不**做什么
 
 明确划出去的部分，免得读者以为「格式与预检」等于「能备份能恢复」：
 
 | 不做的事 | 归属 | 为什么现在不做 |
 |---|---|---|
-| 决定备份哪些逻辑根（全量 / 只对话 / 只插件 / 只设置） | 阶段 2.2 | 那是范围决策，与格式无关 |
-| 凭据排除（桥 token、`.credentials.yaml` 字段级） | 阶段 2.3 | 安全项，独立可测 |
+| 真正调用枚举与写入（`HostSnapshot.create`） | 阶段 2.4 | 需要逻辑根 → 本机路径的映射与隔离试运行；现在搬进来只会是「有代码没调用方」 |
+| 凭据的**字段级**排除（`settings.yaml` 里的模型凭据、桥 token） | 阶段 2.3 | 2.2 只做了整份 `.dsh/credentials` 的排除，不声称「归档里一定没有密钥」 |
 | 逻辑根 → 本机路径的映射、隔离试运行、失败回切 | 阶段 2.4 | 切口是 DSHA `NativeRestorePlan.Mapping` 接口 |
 | 自动备份计划（每日 / 1–168h / 停止后，保留 3 份） | 阶段 2.5 | 依赖 2.1–2.3 |
-| 写入侧的目录枚举 | 阶段 2.2 | 容器可写且已验证，但枚举策略会与 2.2 的范围决策打架 |
+| 范围与排除的界面文案 | 阶段 2.4 | DSHA 的 `label()`/`describe()` 走它自己那套 i18n；本仓库用 Android 资源 |
 
 DSHA 侧同样属于 v5 预检、但**刻意没搬**的类，逐条理由记在
 [`../governance/dsha-imports.json`](../governance/dsha-imports.json) 的 `not_imported` 里。

@@ -1029,3 +1029,50 @@ V5ArchiveTest > manifestThatUnderReportsItsOwnEntriesIsRejected FAILED          
   **注入生效了，但检查器还是没红** —— 同样给出虚假安全感，而且更难察觉，
   因为它留下了「已做过注入」的记录。所以 5k 节把注入**固化进套件**，
   每次跑都现场证明一次，而不是只留一句「我做过了」。
+
+### `.dsh/dshbox` 整目录排除是错的 —— 那里面装的是用户状态（2026-10-14，阶段 2.2）
+
+**现象**：没有现象。这是一次**在写代码之前**被审计挡下来的错误设计。
+
+**本来要写的东西**：阶段 2.2 要给备份定排除清单。`.dsh/dshbox` 是我方随包资产目录
+（`Constants.DSHBOX_ASSETS_RELATIVE_DIR`），注释写着「这里的一切都是我们的固定资产」，
+直觉就是 `".dsh/dshbox"` 一整条加进排除列表 —— 干净、好解释、一看就懂。
+
+**审计挡下来它的那句话**，在 `DshboxLayoutMigration` 的类注释里：
+
+> 三份层文件承载**用户状态**：
+> - 官方插件开关（`feature-overlay.yml`）
+> - **哪些插件被停用**（`plugin-overlay.yml`）
+> - 绝对安全模式整层（`absolute-overlay.yml`）
+>
+> 其中「被停用」是安全机制：丢了会把此前被隔离的坏插件重新加载 ——
+> 真机上出过「每次都起不来」的事故。所以整理目录时**必须连内容一起搬**。
+
+那三份文件（迁移后的新路径是 `dsh-official-plugin/`、`plugin-market/`、`safe-mode/`）
+**就在 `.dsh/dshbox/` 里面**。再加一个 `PluginPaths.guardStateFile`：
+`dshbox/plugin-guard.json` = 安全模式的隔离清单与归因记录。
+
+所以整目录排除会把「哪些插件被停用」这份**安全机制**从备份里抹掉。
+而这个失败的形态恰好是最难发现的：备份成功、恢复也成功、
+用户只在**下一次启动加载了坏插件、起不来**的时候才知道 —— 而且那时已经很难归因。
+
+**修正**：排除改成**按子路径逐项**。可排除的（重铺得出来）是
+`dshbox/bin`、`dshbox/dshbox-plugins`、`dshbox/pilot`、`dshbox/mobile-adapt`、
+`dshbox/mobile-pilot`、`.dsh/pnpm-store`；必须保留的是那三份 overlay 加隔离清单。
+
+**顺带挡下的第二个错**：`.dsh/bin` **不能**排除。`SandboxService.removeLegacyAssetDirs()`
+的注释专门说明 `.dsh/bin` 这个**名字没有命名空间**，
+「每次启动都无条件删会静默吃掉用户自己建的 `~/.dsh/bin`」，所以那是一次性清理。
+同理它可能是用户自己放东西的地方 —— 丢用户数据比多备份一份脚本严重得多。
+有命名空间的 `.dsh/dshbox/bin` 才是可以安全排除的那个。
+
+**怎么防止再犯**：`DshBackupExclusions.checkInvariants()` 把「排除项写宽了」
+变成可执行断言；`DshBackupExclusionsTest` 还会把每个必须保留路径的
+**每一个祖先目录**逐个问一遍 `isExcluded` —— 有人把 `.dsh/dshbox` 加进排除清单时，
+那条会立刻红并指出是哪个祖先。做过注入，两条都真的会红。
+
+**结论（值得单独记）**：这一条与前面 18 条的形态不同 —— 它**没有对应的报错**，
+因为代码还没写就改掉了。前面所有事故都是「跑出来才发现」，
+这一条是「先审计再动笔」直接避免的，正好是「不盲目覆盖、先审计再决定融合方式」
+这条要求在阶段 2 的第一次兑现。**审计的价值不在于能列出多少功能，
+而在于能在动手之前认出哪一个看起来最自然的设计是错的。**

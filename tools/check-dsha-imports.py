@@ -47,6 +47,80 @@ def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def check_derived(doc: dict) -> tuple[list[str], str]:
+    """核验「改写后移植」的登记。
+
+    与 files[] 不同，这里的正文**不是**逐字节副本，所以没法靠 sha256 证明「没改」。
+    能查、也真正重要的是三件事：
+
+    1. 声明的文件确实在磁盘上；
+    2. 它**没有**同时出现在逐字节副本清单里（一处代码只能有一种身份）；
+    3. 改写者必须写清**保留了哪条不变式**与**改掉了什么** —— 否则「改写」就成了
+       把任意代码洗成「上游移植」的通道；这条是本节真正的治理断言。
+
+    返回 (问题列表, 上游侧核对结论)。上游侧的 sha256 只有在仓库外的审计副本存在时
+    才能核对，所以结论会如实标出「本机核对」还是「未核」——
+    而不是让它悄悄走一个跳过的分支（见 docs/INCIDENTS.md 第 13 条）。
+    """
+    problems: list[str] = []
+    items = ((doc.get("derived") or {}).get("items")) or []
+    if not items:
+        return problems, "无改写移植项"
+
+    verbatim = {entry["local_path"] for entry in (doc.get("files") or [])}
+    upstreams = {entry["local_path"]: entry.get("upstream_sha256") for entry in items}
+    if len(upstreams) != len(items):
+        problems.append("derived 里有重复的 local_path")
+    overlap = sorted(verbatim & set(upstreams))
+    for path in overlap:
+        problems.append(f"{path} 同时登记成「逐字节副本」与「改写移植」—— 一处代码只能有一种身份")
+
+    audit = ROOT.parent / "audit" / "DSHA"
+    checked = 0
+    unchecked = 0
+    for entry in items:
+        path = ROOT / entry["local_path"]
+        if not path.is_file():
+            problems.append(f"声明的改写文件不存在: {entry['local_path']}")
+        for field in ("kept", "changed"):
+            values = entry.get(field)
+            if not isinstance(values, list) or not values or not all(
+                    isinstance(v, str) and v.strip() for v in values):
+                problems.append(
+                    f"{entry.get('local_path')} 的 {field} 必须是非空字符串列表"
+                    f" —— 不写清保留/改掉了什么，「改写」就成了洗代码的通道")
+        digest = str(entry.get("upstream_sha256", ""))
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            problems.append(f"{entry.get('local_path')} 的 upstream_sha256 不是小写 sha256")
+        if not isinstance(entry.get("upstream_bytes"), int) or entry["upstream_bytes"] <= 0:
+            problems.append(f"{entry.get('local_path')} 的 upstream_bytes 不是正数")
+        if entry.get("kind") not in {"rewritten", "adapted", "reimplemented"}:
+            problems.append(f"{entry.get('local_path')} 的 kind 取值不在允许集合内")
+        verified_by = entry.get("verified_by")
+        if verified_by and not (ROOT / verified_by).is_file():
+            problems.append(f"{entry.get('local_path')} 声明的 verified_by 不存在: {verified_by}")
+
+        source = audit / entry.get("upstream_path", "")
+        if source.is_file():
+            payload = source.read_bytes()
+            if sha256_bytes(payload) != digest:
+                problems.append(
+                    f"{entry.get('local_path')} 的上游正文哈希与审计副本不符: {entry.get('upstream_path')}")
+            elif len(payload) != entry["upstream_bytes"]:
+                problems.append(
+                    f"{entry.get('local_path')} 的上游字节数与审计副本不符: {entry.get('upstream_path')}")
+            else:
+                checked += 1
+        else:
+            unchecked += 1
+
+    if unchecked and not checked:
+        return problems, f"{len(items)} 项（本机无审计副本，上游侧未核）"
+    if unchecked:
+        return problems, f"{checked}/{len(items)} 项上游侧已核，{unchecked} 项无审计副本未核"
+    return problems, f"{len(items)} 项上游侧已核"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="核验 DSHA 导入副本的来源头与正文一致性")
     parser.add_argument("--update", action="store_true",
@@ -132,7 +206,9 @@ def main() -> int:
     # 登记了但不在导入目录里的（写错路径）也一并报出来
     stray = sorted(set(registered) - on_disk - set(missing))
 
-    if missing or bad_header or mismatched or unregistered or stray:
+    derived_problems, derived_note = check_derived(doc)
+
+    if missing or bad_header or mismatched or unregistered or stray or derived_problems:
         print("DSHA 导入副本核验失败：", file=sys.stderr)
         for item in missing:
             print(f"  ✗ 缺失: {item}", file=sys.stderr)
@@ -147,6 +223,8 @@ def main() -> int:
             print(f"  ✗ 导入目录里有未登记的文件: {item}", file=sys.stderr)
         for item in stray:
             print(f"  ✗ 登记了但不在导入目录里: {item}", file=sys.stderr)
+        for item in derived_problems:
+            print(f"  ✗ 改写移植登记有问题: {item}", file=sys.stderr)
         print(
             "\n这些文件的**正文**按设计是 DSHA 的逐字节副本（只有来源头是本项目加的）。"
             "若确实需要改动，请先说明理由 —— 改动会同时失去「可原样比对上游」这个性质。",
@@ -158,7 +236,7 @@ def main() -> int:
     print(
         f"DSHA 导入副本核验通过：{len(registered)} 个文件、{total_bytes} 字节（含来源头），"
         f"正文逐字节与 {upstream.get('id', '?')}@{str(upstream.get('locked_commit', '?'))[:12]} 一致；"
-        f"导入目录内无未登记文件。")
+        f"导入目录内无未登记文件；改写移植 {derived_note}。")
     return 0
 
 

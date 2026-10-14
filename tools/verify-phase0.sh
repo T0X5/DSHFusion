@@ -1575,6 +1575,81 @@ fi
 
 [ "$BC_BAD" = "0" ] && ok "备份模块契约与注入自证齐备"
 
+section "5l. 备份范围与排除清单（阶段 2.2）"
+# 这一节的每一条都对应一种「看起来成功、其实数据没了」的失败。
+SC_BAD=0
+SC_SCOPE="backup/src/main/java/com/dshbox/app/backup/DshBackupScope.kt"
+SC_EXCL="backup/src/main/java/com/dshbox/app/backup/DshBackupExclusions.kt"
+if [ -f "$SC_SCOPE" ] && [ -f "$SC_EXCL" ]; then
+    # ① 部分备份绝不叫全量的名字：老版本会按全量恢复，清掉配置与插件
+    if grep -q '"DSHFusion-backup-"' "$SC_SCOPE" && grep -q 'isFull' "$SC_SCOPE"; then
+        ok "范围前缀与 isFull 都在场（部分备份不会叫全量名字）"
+    else
+        fail "DshBackupScope 缺少全量前缀或 isFull 判定"
+        SC_BAD=1
+    fi
+    # ② PLUGINS 范围必须按本仓库布局校正，不能照搬 DSHA 那四个不存在的目录
+    dsha_only=0
+    for name in plugin-src plugin-sources.json plugin-history plugin-safe-mode.json; do
+        grep -q "\"$name\"" "$SC_SCOPE" && dsha_only=1
+    done
+    if [ "$dsha_only" = "0" ] && grep -q '"\.dsh/profiles"' "$SC_SCOPE"; then
+        ok "插件范围用的是本仓库布局 .dsh/profiles（没照搬 DSHA 专有目录）"
+    else
+        fail "插件范围仍含 DSHA 专有目录，或缺少 .dsh/profiles"
+        SC_BAD=1
+    fi
+    # ③ 排除清单不能把 .dsh/dshbox 整目录排掉 —— 那会丢掉三份承载状态的 overlay，
+    #    其中「哪些插件被停用」是安全机制（真机上出过「每次都起不来」）。
+    if grep -q '".dsh/dshbox"' "$SC_EXCL" && ! grep -q 'REGENERATED = listOf(.dsh/dshbox.)' "$SC_EXCL"; then
+        fail "排除清单里出现了 .dsh/dshbox 整目录"
+        SC_BAD=1
+    fi
+    if grep -q 'MUST_KEEP' "$SC_EXCL" && grep -q 'checkInvariants' "$SC_EXCL"; then
+        ok "排除清单区分「可再生」与「承载状态」，并有可执行的结构不变式"
+    else
+        fail "排除清单缺少 MUST_KEEP 或 checkInvariants"
+        SC_BAD=1
+    fi
+    # ④ .dsh/bin 没有命名空间，可能装着用户自己的东西，不能排除
+    if grep -qE '^\s*"\.dsh/bin",?\s*$' "$SC_EXCL"; then
+        fail "排除清单把 .dsh/bin 排掉了（可能静默丢掉用户自己放的东西）"
+        SC_BAD=1
+    else
+        ok ".dsh/bin 未被排除（它没有命名空间，可能是用户自己的目录）"
+    fi
+    # ⑤ 排除逻辑与范围一一对应的性质必须有单测
+    for t in DshBackupScopeTest DshBackupExclusionsTest; do
+        if [ -f "backup/src/test/java/com/dshbox/app/backup/$t.kt" ]; then
+            ok "$t 在场"
+        else
+            fail "缺少 $t"
+            SC_BAD=1
+        fi
+    done
+    # ⑥ 改写后移植必须如实登记（不能塞进逐字节副本清单）
+    if python3 -c "
+import json,sys
+d=json.load(open('governance/dsha-imports.json'))
+items=d.get('derived',{}).get('items',[])
+paths={e['local_path'] for e in d['files']}
+assert items, 'derived 为空'
+assert not ({i['local_path'] for i in items} & paths), '两种身份重叠'
+assert all(i.get('kept') and i.get('changed') for i in items), '没写清保留/改掉了什么'
+" 2>/dev/null; then
+        ok "改写后移植已登记，且写清了保留与改动（与逐字节副本身份不重叠）"
+    else
+        fail "derived 登记缺失或不合规"
+        SC_BAD=1
+    fi
+else
+    fail "缺少 DshBackupScope.kt 或 DshBackupExclusions.kt"
+    SC_BAD=1
+fi
+
+[ "$SC_BAD" = "0" ] && ok "备份范围与排除清单齐备"
+
+
 
 section "6. 上游仓库未被修改（只读审计承诺）"
 
