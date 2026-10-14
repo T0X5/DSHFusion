@@ -46,6 +46,30 @@ expect() {
 
 section() { printf '\n=== %s ===\n' "$1"; }
 
+# ok/fail：给「条件式」断言用的计数器包装。
+#
+# 为什么需要单独一对：expect 只能测「某个命令的退出码等于某个值」。
+# 而有些断言是「读了输出再判断」（比如「注入后必须报出这条具体原因，
+# 而不是碰巧退出 1」），那种必须自己 if/else。
+#
+# ⚠️ 这两个函数曾经**不存在**，而调用它们的地方照样「通过」——
+# 因为本脚本没有 set -e，`ok: command not found` 只会打到 stderr，
+# 不改变退出码，断言就静默变成了空操作。那次事故让 5d、5e 两节共 11 项
+# 断言全部没执行，而套件仍然报「全部通过」。
+# 教训：**检查器本身必须有测试**，否则它会安静地什么都不查。
+# 现在 5d/5e/5f 用的就是这两个函数，且套件总数会随它们变化。
+ok() {
+    printf '  [PASS] %s\n' "$1"
+    PASS=$((PASS + 1))
+    RESULTS+=("PASS|$1|ok")
+}
+
+fail() {
+    printf '  [FAIL] %s\n' "$1"
+    FAIL=$((FAIL + 1))
+    RESULTS+=("FAIL|$1|fail")
+}
+
 # 按解释器显式调用工具，不依赖可执行位。
 # 理由：ZIP 归档不保留 Unix 权限位，解压后脚本会变成 644，
 # 直接执行会得到 exit=126（权限不足）。这是归档格式的限制，不是脚本的问题，
@@ -848,6 +872,43 @@ else
 fi
 cp "$LIC_BAK" LICENSE
 cp "$GPL_BAK" "$GPL_COPY"
+
+section "5f. install_dsh.sh 不再有默认 DSH 版本（DIV-0010）"
+
+# R3 原先写的是「已从结构上消除」，那是过头话：新脚本只是新增了一条正确路径，
+# 没有碰 install_dsh.sh 里那个 0.1.0-rc.6 默认值。这一节测的就是那个默认值没了。
+INSTALL_DSH="runtime-bundle/scripts/install_dsh.sh"
+# 只看正文，去掉注释行。
+# 这个区分是必需的：脚本的注释里**故意**引用了原来那个默认值
+# （「这里原本写的是 DSH_VERSION="${DSH_VERSION:-0.1.0-rc.6}"」），
+# 不过滤注释就会把它当成「默认值还在」而误报。
+# 第一次写这条断言时正是这么误报的 —— 假阳性同样是坏检查。
+if sed 's/#.*$//' "$INSTALL_DSH" | grep -qE 'DSH_VERSION="\$\{DSH_VERSION:-[0-9]'; then
+    fail "install_dsh.sh 正文仍有默认 DSH 版本（DIV-0010 未生效）"
+else
+    ok "install_dsh.sh 正文无默认 DSH 版本（注释里的引用不算）"
+fi
+if grep -q '必须显式指定 DSH_VERSION' "$INSTALL_DSH" 2>/dev/null; then
+    ok "install_dsh.sh 有空值守卫"
+else
+    fail "install_dsh.sh 缺少空值守卫"
+fi
+# 未指定版本时必须失败，且退出码是 2（不是 0、不是 1）
+rc=0
+bash "$INSTALL_DSH" >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 2 ]; then
+    ok "未指定 DSH_VERSION → 退出 2（失败即报错）"
+else
+    fail "未指定 DSH_VERSION 时退出码是 $rc，期望 2"
+fi
+# 守卫必须在 npm install 之前 —— 否则会先装一个错版本再报错
+guard_line=$(grep -n '必须显式指定 DSH_VERSION' "$INSTALL_DSH" | head -1 | cut -d: -f1)
+npm_line=$(grep -n 'npm install' "$INSTALL_DSH" | head -1 | cut -d: -f1)
+if [ -n "$guard_line" ] && [ -n "$npm_line" ] && [ "$guard_line" -lt "$npm_line" ]; then
+    ok "守卫在 npm install 之前（不会先装错再报错）"
+else
+    fail "守卫不在 npm install 之前：guard=$guard_line npm=$npm_line"
+fi
 
 section "6. 上游仓库未被修改（只读审计承诺）"
 

@@ -152,6 +152,21 @@
       "safety": "**GPL-3.0 全文没有被删除，只是换了位置。** 它按原样保存在 governance/upstream-licenses/DSHBox/LICENSE，SHA-256 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986，由 governance/upstream-license-hashes.json 记录并在 CI 中核验。handle_div_0009 会**正向核验**该副本仍然存在且哈希一致 —— 只检查「根目录不再是 GPL」是不够的，那等于允许许可证被换掉后凭空消失。",
       "reapply": "由 tools/apply-divergences.sh 的 handle_div_0009 校验：根 LICENSE 含 DSHFusion 标记且不再是 GPL 全文，同时上游 GPL 副本存在且哈希正确。",
       "conflict_risk": "low"
+    },
+    {
+      "id": "DIV-0010",
+      "title": "install_dsh.sh 取消默认 DSH 版本，改为失败即报错",
+      "upstream": "dshbox",
+      "type": "adaptation",
+      "phase": 1,
+      "target_files": [
+        "runtime-bundle/scripts/install_dsh.sh"
+      ],
+      "change": "`DSH_VERSION=\"${DSH_VERSION:-0.1.0-rc.6}\"` 改为无默认值：未显式指定就打印错误并以 2 退出。",
+      "rationale": "**这条偏离同时是对我自己上一轮结论的纠正。** 我此前把风险 R3 写成「已从结构上消除」，理由是 tools/build-dsh-layer.sh 的版本只来自 upstreams.json。这个说法过头了：新脚本只是**新增了一条正确的路径**，并没有消除 install_dsh.sh 里那个陈旧的 0.1.0-rc.6 默认值。上游文件里的坑还在，只是暂时没人踩。现在把默认值去掉 —— 静默装出一个错版本，比大声拒绝危险得多。",
+      "scope_note": "本脚本在 DSHFusion 里**没有任何地方执行它**：app 走的是 SandboxManager.installDshFromNpm 的 Kotlin 路径，RuntimeUpdateManager/DshUpdateScreen 里对它的提及都只是注释。所以这个改动不影响运行，它修的是一个潜在的坑。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0010 校验：脚本含 DSH_VERSION 空值守卫，且正文里不再出现版本默认值。",
+      "conflict_risk": "low"
     }
   ]
 }

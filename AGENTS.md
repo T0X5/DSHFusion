@@ -19,7 +19,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
 （`README.md`、`.gitignore`）→ **实际导入 765 个文件、25.4 MB**。
-9 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
+10 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
 
 **「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
@@ -197,7 +197,7 @@ dshfusion/
 │   ├── build-dsh-layer.sh       构建 DSH 运行环境层（版本取自 upstreams.json）
 │   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 92 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 109 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）
@@ -242,10 +242,14 @@ compileSdk 36、minSdk 29、arm64-v8a**。
 > [docs/PHASE1-PREREQUISITES.md](docs/PHASE1-PREREQUISITES.md) 第 1 节。
 >
 > **R1（DSH 层没有构建脚本）已解决**：`tools/build-dsh-layer.sh` 现在能构建它，
-> 且版本从 `governance/upstreams.json` 读 —— 顺手把 R3（`install_dsh.sh` 默认
-> `0.1.0-rc.6` 与实际适配的 `0.2.0-rc.2` 不一致）从结构上消灭了：
-> 只有一个事实来源，两处不可能再分歧。
-> 该脚本不需要 Debian 沙箱或 arm64 主机 —— `@deepseek-ai/dsh` 是纯 JS 的 npm 包。
+> 且版本从 `governance/upstreams.json` 读 —— 单一事实来源，这个脚本自身不会漂移。
+>
+> **R3 我一度说成「已从结构上消除」，那是过头话，已更正。** 新脚本只是新增了
+> 一条正确的路径，并没有碰 `install_dsh.sh:8` 那个 `0.1.0-rc.6` 默认值。
+> 现按 DIV-0010 处理：取消默认值，未显式指定 `DSH_VERSION` 就报错退出。
+> 该脚本在 DSHFusion 里**没有任何地方执行它**，所以修的是潜在的坑，不是发作中的 bug。
+>
+> `build-dsh-layer.sh` 不需要 Debian 沙箱或 arm64 主机 —— `@deepseek-ai/dsh` 是纯 JS 的 npm 包。
 
 ## 编码约定
 

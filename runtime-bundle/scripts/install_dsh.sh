@@ -5,7 +5,34 @@
 
 set -euo pipefail
 
-DSH_VERSION="${DSH_VERSION:-0.1.0-rc.6}"
+# DIV-0010：**不再提供默认版本**。
+#
+# 这里原本写的是 `DSH_VERSION="${DSH_VERSION:-0.1.0-rc.6}"`，而实际适配的
+# DSH 是 0.2.0-rc.2。默认值一旦与实际适配版本不一致，脚本就会在没人指定的
+# 情况下静默装出一个错的版本 —— 而且装完还打印「pin exact version」，
+# 让人以为一切正常。这正是 R3 记录的那个漂移。
+#
+# 现在改为失败即报错。理由：版本号只应有一个事实来源
+# （governance/upstreams.json 的 tracked_version，由 tools/build-dsh-layer.sh 读取）。
+# 本脚本被直接调用时，调用方必须自己说清要哪个版本；猜一个默认值是错的。
+#
+# 注：本脚本在 DSHFusion 里**没有任何地方执行它** —— app 走的是
+# SandboxManager.installDshFromNpm 的 Kotlin 路径。所以这个改动不影响运行，
+# 它修的是一个还没被人踩到的坑。
+if [ -z "${DSH_VERSION:-}" ]; then
+    cat >&2 <<'ERR'
+错误：必须显式指定 DSH_VERSION。
+
+    DSH_VERSION=0.2.0-rc.2 runtime-bundle/scripts/install_dsh.sh
+
+版本号不要在这里猜。当前适配的版本见
+governance/upstreams.json 的 transitive_upstreams[id=deepseek-harness].tracked_version，
+或用 tools/build-dsh-layer.sh 直接构建该层（它自己会读这个字段）。
+
+（本脚本原先默认 0.1.0-rc.6，与实际适配的 0.2.0-rc.2 不符，故取消默认值。）
+ERR
+    exit 2
+fi
 DSH_NPM_REGISTRY="${DSH_NPM_REGISTRY:-https://registry.npmjs.org}"
 PNPM_DIR="${PNPM_DIR:-/opt/dshapp/pnpm-cache}"
 

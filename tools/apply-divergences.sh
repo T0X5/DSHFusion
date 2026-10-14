@@ -508,6 +508,66 @@ def handle_div_0006(entry) -> tuple[str, str]:
     return OK, "已为 android.yml 补上顶层 permissions: contents: read"
 
 
+def handle_div_0010(entry) -> tuple[str, str]:
+    """install_dsh.sh 取消默认 DSH 版本。
+
+    上游写的是 `DSH_VERSION="${DSH_VERSION:-0.1.0-rc.6}"`，而实际适配的是
+    0.2.0-rc.2。默认值一旦与实际不符，脚本就会在没人指定的情况下静默装出
+    一个错版本，并且还打印「pin exact version」—— 让人以为一切正常。
+
+    改为失败即报错。版本号只应有一个事实来源（upstreams.json 的
+    tracked_version，由 build-dsh-layer.sh 读取），调用方必须自己说清要哪个版本。
+
+    注意：本脚本在 DSHFusion 里没有任何地方执行它。这条偏离修的是潜在的坑，
+    不是正在发作的 bug —— 记录在此以免被误读为「修了一个线上问题」。
+    """
+    path = ROOT / "runtime-bundle" / "scripts" / "install_dsh.sh"
+    if not path.exists():
+        return PENDING, "install_dsh.sh 尚未导入"
+
+    text = read(path)
+    has_guard = "必须显式指定 DSH_VERSION" in text
+    # 正文（去掉注释与提示文案）里不应再有版本默认值
+    body_lines = [
+        ln for ln in text.splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    body = "\n".join(body_lines)
+    has_default = bool(re.search(r'DSH_VERSION="\$\{DSH_VERSION:-[0-9]', body))
+
+    if has_guard and not has_default:
+        return OK, "install_dsh.sh 已要求显式指定 DSH_VERSION"
+    if not has_guard and not has_default:
+        return FAILED, "install_dsh.sh 既没有默认版本也没有空值守卫，状态不明"
+    if CHECK_ONLY:
+        return FAILED, "install_dsh.sh 仍有默认 DSH 版本（DIV-0010 未生效）"
+
+    original = text
+    old = 'DSH_VERSION="${DSH_VERSION:-0.1.0-rc.6}"'
+    if old not in text:
+        return FAILED, (
+            "找不到 DSH_VERSION 默认值那一行，锚点失效"
+            "（上游可能已改动该文件，需人工确认后更新 divergences.json）"
+        )
+    guard = (
+        'if [ -z "${DSH_VERSION:-}" ]; then\n'
+        '    echo "错误：必须显式指定 DSH_VERSION（见 governance/upstreams.json）。" >&2\n'
+        '    exit 2\n'
+        'fi'
+    )
+    write(path, text.replace(old, guard, 1))
+    files_changed.append(str(path))
+
+    after = read(path)
+    if "必须显式指定 DSH_VERSION" not in after:
+        revert(path, original)
+        return FAILED, "写入后未发现空值守卫（已还原）"
+    if re.search(r'DSH_VERSION="\$\{DSH_VERSION:-[0-9]', after):
+        revert(path, original)
+        return FAILED, "写入后仍存在版本默认值（已还原）"
+    return OK, "已取消 install_dsh.sh 的默认 DSH 版本"
+
+
 def handle_div_0009(entry) -> tuple[str, str]:
     """根目录 LICENSE 改为许可状态说明，而不是上游的 GPL-3.0 全文。
 
@@ -753,6 +813,7 @@ HANDLERS = {
     "DIV-0007": handle_div_0007,
     "DIV-0008": handle_div_0008,
     "DIV-0009": handle_div_0009,
+    "DIV-0010": handle_div_0010,
 }
 
 

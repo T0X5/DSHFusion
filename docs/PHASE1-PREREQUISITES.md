@@ -91,7 +91,7 @@ OUT_FILE="$OUT_DIR/${LAYER_NAME}.${EXT}"     # 文件名跟随实际格式
 |---|---|---|---|
 | R1 | **dsh 层没有仓库内构建脚本**。`build_arm64_runtime_bundle.sh:45,108,112` 明确只做 base/node/android-side 三层并打印「no DSH」「DSH is a SEPARATE product」；`install_dsh.sh` 是**guest 内**安装脚本，不是打包脚本 | 中 | ✅ **已解决**：`tools/build-dsh-layer.sh`，已真跑通（见 1.6） |
 | R2 | **PRoot 二进制是预编译 vendored**，构建来源未在仓库内记录。`THIRD_PARTY_NOTICES.md` 写「二进制来自 termux-packages 构建」，但没有可核对的版本号或校验和 | 中 | 记录来源假设；不声称已核验 |
-| R3 | **`install_dsh.sh:8` 默认版本 `0.1.0-rc.6`** 与实际内嵌的 `0.2.0-rc.2` 不一致 | 低 | ✅ **已从结构上消除**：新脚本的版本只来自 `governance/upstreams.json`，脚本正文里不含任何版本字面量（套件有断言拦这件事） |
+| R3 | **`install_dsh.sh:8` 默认版本 `0.1.0-rc.6`** 与实际内嵌的 `0.2.0-rc.2` 不一致 | 低 | ⚠️ **部分解决，此前我把它说过头了**（见下方更正） |
 
 ### 1.6 阶段 1 的处置
 
@@ -106,9 +106,25 @@ OUT_FILE="$OUT_DIR/${LAYER_NAME}.${EXT}"     # 文件名跟随实际格式
    ```
 
    版本不写死在脚本里，而是从 `governance/upstreams.json` 的
-   `transitive_upstreams[id=deepseek-harness].tracked_version` 读 —— 这正是
-   **R3 的根治办法**：`install_dsh.sh:8` 那个 `0.1.0-rc.6` 默认值之所以会漂移，
-   就是因为版本号在两处各写了一份。单一事实来源让它们不可能再分歧。
+   `transitive_upstreams[id=deepseek-harness].tracked_version` 读。
+
+   > ### ⚠️ 更正（2026-10-13）：R3 没有被「从结构上消除」
+   >
+   > 我最初在这里写的是「R3 已从结构上消除，单一事实来源让两处不可能再分歧」。
+   > **这个说法是错的，已改正。**
+   >
+   > 新脚本只是**新增了一条正确的路径**，它并没有碰 `install_dsh.sh:8` 里那个
+   > `0.1.0-rc.6` 默认值。那个默认值当时仍然存在，仍然会在被直接调用时装错版本。
+   > 换句话说：我增加了一个不会漂移的入口，但**没有消除原有的漂移源** ——
+   > 这是两件不同的事，我混为一谈了。
+   >
+   > 现在已按 **DIV-0010** 处理：`install_dsh.sh` 取消默认值，未显式指定
+   > `DSH_VERSION` 就报错退出（2）。静默装出一个错版本，比大声拒绝危险得多。
+   >
+   > 补充一个查证结果：**本脚本在 DSHFusion 里没有任何地方执行它。**
+   > app 走的是 `SandboxManager.installDshFromNpm` 的 Kotlin 路径；
+   > `RuntimeUpdateManager.kt:68` 与 `DshUpdateScreen.kt:72` 提到它，但都只是注释。
+   > 所以这条偏离修的是一个**潜在的坑**，不是正在发作的 bug。
 
    脚本会：核对装出来的版本与 pin 一致（不一致直接失败，否则「已适配 X」变成假话）；
    跑 `node lib/bin.js --version` 冒烟测试；有 `zstd` 用 zstd、否则退回 gzip
