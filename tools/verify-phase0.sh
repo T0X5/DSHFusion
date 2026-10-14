@@ -789,6 +789,66 @@ expect 2 "失败路径：包里没有 AndroidManifest.xml" \
     bash -c "python3 tools/make-apk-identity-fixture.py '$SCRATCH/no-manifest.apk' no-manifest >/dev/null && \
              python3 tools/check-apk-identity.py '$SCRATCH/no-manifest.apk'"
 
+section "5e. 许可状态：根 LICENSE 是说明而非 GPL 全文（DIV-0009）"
+
+# 这一节的重点不是「根目录不再是 GPL」，而是「GPL 没丢」。
+# 只检查前者等于允许许可证在换位置的过程中凭空消失。
+if grep -q 'GNU GENERAL PUBLIC LICENSE' LICENSE 2>/dev/null; then
+    fail "根 LICENSE 仍是 GPL-3.0 全文（DIV-0009 未生效）"
+else
+    ok "根 LICENSE 不是 GPL-3.0 全文"
+fi
+if grep -q '许可状态：私有自用' LICENSE 2>/dev/null; then
+    ok "根 LICENSE 含 DSHFusion 许可状态标记"
+else
+    fail "根 LICENSE 缺少 DSHFusion 许可状态标记"
+fi
+expect 0 "受保护的上游 GPL 副本存在且哈希正确（换位置不等于删掉）" \
+    run_tool tools/check-license-hashes.py
+expect 0 "许可原件核验覆盖 5 个文件" \
+    bash -c "python3 tools/check-license-hashes.py 2>&1 | grep -q '5 个文件'"
+
+# 故障注入：把受保护的 GPL 副本删掉，DIV-0009 必须失败。
+# 不注入就只是在测「happy path 能过」，测不到安全网。
+GPL_COPY="governance/upstream-licenses/DSHBox/LICENSE"
+GPL_BAK="$SCRATCH/GPL.bak"
+cp "$GPL_COPY" "$GPL_BAK"
+rm "$GPL_COPY"
+out="$(bash tools/apply-divergences.sh --check 2>&1)" || true
+case "$out" in
+    *"DIV-0009"*"不存在"*) ok "注入：删掉 GPL 副本 → DIV-0009 失败并点名文件" ;;
+    *) fail "注入：删掉 GPL 副本后 DIV-0009 没有正确失败" ;;
+esac
+cp "$GPL_BAK" "$GPL_COPY"
+
+# 故障注入：改副本一个字节 → 哈希必须报错
+printf 'x' >> "$GPL_COPY"
+out="$(bash tools/apply-divergences.sh --check 2>&1)" || true
+case "$out" in
+    *"DIV-0009"*"哈希不符"*) ok "注入：改动 GPL 副本 → DIV-0009 报哈希不符" ;;
+    *) fail "注入：改动 GPL 副本后 DIV-0009 没有报哈希不符" ;;
+esac
+cp "$GPL_BAK" "$GPL_COPY"
+
+# 故障注入：把 GPL 全文塞回根目录（模拟上游合并把它带回来）
+LIC_BAK="$SCRATCH/LICENSE.bak"
+cp LICENSE "$LIC_BAK"
+cp "$GPL_BAK" LICENSE
+out="$(bash tools/apply-divergences.sh --check 2>&1)" || true
+case "$out" in
+    *"DIV-0009"*"GPL-3.0 全文"*) ok "注入：根 LICENSE 变回 GPL → DIV-0009 拦下" ;;
+    *) fail "注入：根 LICENSE 变回 GPL 后 DIV-0009 没有拦下" ;;
+esac
+# 非 --check 模式下必须能自动改回
+bash tools/apply-divergences.sh >/dev/null 2>&1 || true
+if grep -q '许可状态：私有自用' LICENSE && ! grep -q 'GNU GENERAL PUBLIC LICENSE' LICENSE; then
+    ok "注入后重放：根 LICENSE 被自动改回说明"
+else
+    fail "重放后根 LICENSE 没有自动改回说明"
+fi
+cp "$LIC_BAK" LICENSE
+cp "$GPL_BAK" "$GPL_COPY"
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do

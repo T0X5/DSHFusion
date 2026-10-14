@@ -19,7 +19,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
 （`README.md`、`.gitignore`）→ **实际导入 765 个文件、25.4 MB**。
-8 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
+9 处偏离已重放，见 [governance/divergences.json](governance/divergences.json)。
 
 **「原样导入」是可验证的，不是自我声称**：`tools/check-import-fidelity.py`
 逐 blob 对照上游审计副本的 git 索引 —— 765 个文件与上游**逐字节（含模式）一致**，
@@ -137,11 +137,23 @@ APK 身份核验通过 ✔
 
 ## 许可状态
 
-DSHFusion 当前**暂不设置许可证，私有自用**（见 [LICENSE-PENDING.md](LICENSE-PENDING.md)）。
+DSHFusion 当前**暂不设置许可证，私有自用**（见根目录 [LICENSE](LICENSE) 与
+[LICENSE-PENDING.md](LICENSE-PENDING.md)）。
 
 这不是"随便用"的意思 —— 而是说：本仓库**没有对外分发**，因此 GPL-3.0 的分发义务
 尚未触发；但**一旦决定公开或分发，必须重新评估**，因为骨干 DSHBox 是 GPL-3.0。
-相关上游版权与许可原文已按原样保存在 [governance/upstream-licenses/](governance/upstream-licenses/)。
+
+**根 `LICENSE` 放的是状态说明，不是 GPL-3.0 全文**（DIV-0009）。
+原因：上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，
+而本仓库并未做出那个承诺 —— 矛盾的是 GitHub 那一侧。
+
+> ⚠️ **GPL-3.0 原文没有被删除，只是换了位置**：它按原样保存在
+> [governance/upstream-licenses/DSHBox/LICENSE](governance/upstream-licenses/DSHBox/LICENSE)，
+> 受 `governance/upstream-license-hashes.json` 的 SHA-256 保护。
+> `handle_div_0009` 会**正向核验**这份副本仍然存在且哈希一致 ——
+> 只检查「根目录不再是 GPL」是不够的，那等于允许许可证在换位置时凭空消失。
+> 这条安全网做过三种故障注入（删副本 / 改副本一个字节 / 把 GPL 全文塞回根目录），
+> 全部正确拦截。
 
 ## 目录结构
 
@@ -185,7 +197,7 @@ dshfusion/
 │   ├── build-dsh-layer.sh       构建 DSH 运行环境层（版本取自 upstreams.json）
 │   ├── check-apk-identity.py    核验 APK 产物的应用标识/版本/应用名
 │   ├── make-apk-identity-fixture.py  合成 APK 夹具（测上面那个检查器）
-│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 90 项）
+│   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区 92 项）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）

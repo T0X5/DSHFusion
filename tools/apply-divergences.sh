@@ -508,6 +508,98 @@ def handle_div_0006(entry) -> tuple[str, str]:
     return OK, "已为 android.yml 补上顶层 permissions: contents: read"
 
 
+def handle_div_0009(entry) -> tuple[str, str]:
+    """根目录 LICENSE 改为许可状态说明，而不是上游的 GPL-3.0 全文。
+
+    上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，
+    而 LICENSE-PENDING.md 写的是「暂不设许可，私有自用」—— 矛盾的是 GitHub
+    那一侧：它对外声称了一个本仓库并未做出的许可承诺。
+
+    **这个 handler 的重点不是「根目录不再是 GPL」，而是「GPL 没丢」。**
+    只检查前者等于允许许可证在换位置的过程中凭空消失。所以这里做三件事：
+      1. 根 LICENSE 含 DSHFusion 自己的标记；
+      2. 根 LICENSE 不再是 GPL 全文；
+      3. 上游 GPL 副本仍存在于 governance/upstream-licenses/DSHBox/LICENSE
+         且 SHA-256 与受保护清单一致。
+    第 3 条是真正的安全网。
+    """
+    import hashlib
+
+    root_license = ROOT / "LICENSE"
+    if not root_license.exists():
+        return FAILED, "根目录 LICENSE 不存在（导入异常）"
+
+    text = read(root_license)
+    is_gpl = "GNU GENERAL PUBLIC LICENSE" in text[:2000]
+    has_marker = "许可状态：私有自用" in text
+
+    # 受保护的 GPL 副本：这是第 3 条，也是最重要的一条
+    protected = ROOT / "governance" / "upstream-licenses" / "DSHBox" / "LICENSE"
+    if not protected.exists():
+        return FAILED, (
+            "受保护的上游 GPL 副本 governance/upstream-licenses/DSHBox/LICENSE 不存在 —— "
+            "根 LICENSE 已被替换，此时上游许可原文就是唯一的留存，绝不能缺"
+        )
+    hashes_path = ROOT / "governance" / "upstream-license-hashes.json"
+    try:
+        declared = json.loads(read(hashes_path))
+        declared = declared.get("files", declared)
+        want = declared["governance/upstream-licenses/DSHBox/LICENSE"]
+        want = want if isinstance(want, str) else want.get("sha256")
+    except (OSError, ValueError, KeyError) as exc:
+        return FAILED, f"读不出受保护 GPL 副本的声明哈希：{exc}"
+
+    got = hashlib.sha256(protected.read_bytes()).hexdigest()
+    if got != want:
+        return FAILED, (
+            f"受保护的上游 GPL 副本哈希不符（{got[:12]}… != {want[:12]}…）—— "
+            "上游许可原文被改动过"
+        )
+
+    if is_gpl and has_marker:
+        return FAILED, "根 LICENSE 同时含 GPL 全文与 DSHFusion 标记，文件状态不明"
+    if has_marker:
+        return OK, "根 LICENSE 已是许可状态说明，且上游 GPL 原文完整留存"
+
+    if CHECK_ONLY:
+        return FAILED, "根 LICENSE 仍是上游的 GPL-3.0 全文"
+
+    # 写入我方版本。内容与仓库中已提交的一致；这里重写是为了让
+    # 「合并上游后重放偏离」这条流程对 LICENSE 也成立 ——
+    # 上游一旦更新 LICENSE，合并会把 GPL 全文带回来，必须能自动改回。
+    body = """DSHFusion — 许可状态：私有自用，未授予许可
+================================================
+
+版权所有 (C) 2026 DSHFusion 作者。保留所有权利。
+
+本仓库当前是**私有仓库**，仅用于作者本人使用、开发与测试，**不对外分发**。
+
+本文件不是一份开源许可证，也不授予任何人对本仓库代码或产物的任何权利。
+本文件的作用是**准确描述现状**，而不是声称一个与事实不符的许可。
+
+GPL-3.0 全文并未从本仓库移除，只是不再放在根目录。它按原样保存在：
+
+    governance/upstream-licenses/DSHBox/LICENSE
+
+该文件的 SHA-256 记录在 governance/upstream-license-hashes.json 中，
+并由 tools/check-license-hashes.py 在每次 CI 中核验。
+
+完整说明见仓库根目录的 LICENSE 提交版本，以及 LICENSE-PENDING.md。
+"""
+    original = text
+    write(root_license, body)
+    files_changed.append(str(root_license))
+
+    after = read(root_license)
+    if "GNU GENERAL PUBLIC LICENSE" in after[:2000]:
+        revert(root_license, original)
+        return FAILED, "写入后根 LICENSE 仍像 GPL 全文（已还原）"
+    if "许可状态：私有自用" not in after:
+        revert(root_license, original)
+        return FAILED, "写入后根 LICENSE 未出现 DSHFusion 标记（已还原）"
+    return OK, "根 LICENSE 已改为许可状态说明（上游 GPL 原文仍受哈希保护）"
+
+
 def handle_div_0008(entry) -> tuple[str, str]:
     """android.yml 增加 APK 产物身份核验步骤。
 
@@ -660,6 +752,7 @@ HANDLERS = {
     "DIV-0006": handle_div_0006,
     "DIV-0007": handle_div_0007,
     "DIV-0008": handle_div_0008,
+    "DIV-0009": handle_div_0009,
 }
 
 

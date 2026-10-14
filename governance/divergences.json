@@ -137,6 +137,21 @@
       "rationale": "上游只构建、不核验产物身份。DSHFusion 承诺了独立 applicationId、独立版本线与独立应用名，而这些都编译进二进制 —— 光看构建配置无法确认。阶段 1 实测证明这不是多虑：versionCode/versionName 当时是上游的 8 / 1.4.0，配置与产物一致但两者都错；android:label 是资源引用，必须解 resources.arsc 才能知道各语言下解析成什么。",
       "reapply": "由 tools/apply-divergences.sh 的 handle_div_0008 校验该步骤存在且指向脚本。",
       "conflict_risk": "low"
+    },
+    {
+      "id": "DIV-0009",
+      "title": "根目录 LICENSE 不再放 GPL-3.0 全文，改为许可状态说明",
+      "upstream": "dshbox",
+      "type": "removal",
+      "phase": 1,
+      "target_files": [
+        "LICENSE"
+      ],
+      "change": "根目录 LICENSE 由上游的 GPL-3.0 全文替换为 DSHFusion 的许可状态说明（私有自用、未授予许可），并指向 governance/upstream-licenses/DSHBox/LICENSE。",
+      "rationale": "上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，而 LICENSE-PENDING.md 写的是「暂不设许可，私有自用」—— 两者矛盾，且矛盾的是 GitHub 那一侧：它对外声称了一个本仓库并未做出的许可承诺。现在改成明确的状态说明，名实相符。",
+      "safety": "**GPL-3.0 全文没有被删除，只是换了位置。** 它按原样保存在 governance/upstream-licenses/DSHBox/LICENSE，SHA-256 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986，由 governance/upstream-license-hashes.json 记录并在 CI 中核验。handle_div_0009 会**正向核验**该副本仍然存在且哈希一致 —— 只检查「根目录不再是 GPL」是不够的，那等于允许许可证被换掉后凭空消失。",
+      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0009 校验：根 LICENSE 含 DSHFusion 标记且不再是 GPL 全文，同时上游 GPL 副本存在且哈希正确。",
+      "conflict_risk": "low"
     }
   ]
 }
