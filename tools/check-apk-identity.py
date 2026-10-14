@@ -476,7 +476,7 @@ def main() -> int:
                     f"{args.expect_label!r}：{detail}"
                 )
 
-    # --- 断言 6：APK 必须含运行环境层 ---
+    # --- 断言 6：APK 必须含**真正可用的**运行环境层 ---
     #
     # 这条原先只是「备注」，于是它如实备注了「不含任何运行环境层」，
     # 然后 CI 照样全绿。检查发现了问题却没把它变成失败 —— 缺层能一路
@@ -490,36 +490,101 @@ def main() -> int:
     #   所以没有这两层时，用户先等几百 MB 下载完，然后看到失败 ——
     #   「在线获取运行环境」这条本来用于补救的路，本身也走不通。
     #   2026-10-14 真机安装成功后才发现。
-    aside = sorted(n for n in names if n.startswith("assets/runtime/android-side.tar."))
-    dsh = sorted(
-        n for n in names
-        if n.startswith("assets/dsh/") and n.endswith((".tar.zst", ".tar.gz"))
-    )
+    #
+    # ⚠️ 第一版这条断言**被侧车文件骗过去了**，必须记下来。
+    # 它当时写的是 `n.startswith("assets/runtime/android-side.tar.")` ——
+    # `android-side.tar.gz.sha256` 也满足这个前缀。于是 CI 全绿，
+    # 而 APK 里**根本没有层本体**，只有一个 64 字节的哈希侧车。
+    # 教训：断言必须钉住「应用侧会去用的那个东西」，而不是「名字长得像的东西」。
+    #
+    # 同时，第一版还漏掉了一个更隐蔽的失败：**AGP 会解压 `.gz` 资源并去掉
+    # `.gz` 扩展名**。实测（run 38513950774 的产物）：
+    #     runtime/android-side.tar.gz （125930 B, gzip）→
+    #     assets/runtime/android-side.tar （337920 B, 裸 tar）
+    # 而应用侧的查找条件是 `it.startsWith("android-side.tar.")`（带那个点），
+    # `android-side.tar` 匹配不上 —— 层进了 APK，但应用永远看不见它。
+    # 所以这里既要查名字的**形状**，也要查内容的**魔数**。
+    import re as _re
+
+    # 名字必须精确匹配应用侧的查找模式：`<层名>.tar.<单一扩展名>`。
+    # 用 `[A-Za-z0-9]+` 而不是 `\w+`：扩展名里不允许再有别的点，
+    # 这样 `android-side.tar.gz.sha256` 自然被排除，不需要额外写排除规则。
+    aside_pat = _re.compile(r"^assets/runtime/android-side\.tar\.[A-Za-z0-9]+$")
+    dsh_pat = _re.compile(r"^assets/dsh/[^/]+\.tar\.[A-Za-z0-9]+$")
+    aside = sorted(n for n in names if aside_pat.match(n))
+    dsh = sorted(n for n in names if dsh_pat.match(n))
+
     missing = []
     if not aside:
-        missing.append("assets/runtime/android-side.tar.{gz,zst}")
+        # 分别诊断「完全没有」与「只有侧车 / 扩展名被剥掉」，
+        # 因为这两种情况的修法完全不同，笼统报「缺层」会让人查错方向。
+        sidecars = [n for n in names if n.startswith("assets/runtime/android-side.tar")]
+        if sidecars:
+            missing.append(
+                "assets/runtime/android-side.tar.<ext>（目录里有 "
+                + "、".join(sidecars)
+                + "，但没有应用侧会查找的层本体 —— 注意 AGP 会把 `.gz` 解压并"
+                "去掉扩展名，`.tar.gz` 会变成应用匹配不上的 `.tar`）"
+            )
+        else:
+            missing.append("assets/runtime/android-side.tar.<ext>")
     if not dsh:
-        missing.append("assets/dsh/<version>.tar.{gz,zst}")
+        sidecars = [n for n in names if n.startswith("assets/dsh/") and ".tar" in n]
+        if sidecars:
+            missing.append(
+                "assets/dsh/<version>.tar.<ext>（目录里有 " + "、".join(sidecars) + "）"
+            )
+        else:
+            missing.append("assets/dsh/<version>.tar.<ext>")
+
+    # 魔数：`BundleManager.extractTarGz()` 按魔数分派容器格式，不看扩展名。
+    # 名字对了但内容不是它认识的格式，解包一样会失败 —— 而且失败发生在设备上。
+    # 这里复刻它的判定顺序：zstd / bzip2 / xz / plain-tar，gzip 兜底。
+    def _container_kind(blob: bytes) -> str:
+        if blob[:4] == b"\x28\xb5\x2f\xfd":
+            return "zstd"
+        if blob[:3] == b"BZh":
+            return "bzip2"
+        if blob[:6] == b"\xfd7zXZ\x00":
+            return "xz"
+        if blob[257:262] == b"ustar":
+            return "plain-tar"
+        if blob[:2] == b"\x1f\x8b":
+            return "gzip"
+        return ""
+
+    with zipfile.ZipFile(path) as _z:
+        for label, group in (("android-side", aside), ("dsh", dsh)):
+            if not group:
+                continue
+            name = group[0]
+            kind = _container_kind(_z.read(name)[:512])
+            if not kind:
+                problems.append(
+                    f"运行环境层 {label}（{name}）不是 BundleManager 认识的容器格式 —— "
+                    "魔数既不是 zstd / bzip2 / xz，也不是 tar 或 gzip。"
+                    "层进得了 APK，但在设备上解不开。"
+                )
+            else:
+                notes.append(f"运行环境层 {label}：{name}（容器 {kind}）")
 
     if missing:
         hint = (
             "先跑 tools/build-runtime-assets.sh，再用 DSHFUSION_RUNTIME_ASSETS "
-            "指向它的输出目录重新构建"
+            "指向它的输出目录重新构建。注意该脚本要求 zstd —— gzip 产物会被 AGP "
+            "解压并去掉扩展名，等于没建。"
         )
         if args.allow_missing_runtime_layers:
             notes.append(
                 "缺运行环境层（已按 --allow-missing-runtime-layers 放行）："
-                + "、".join(missing)
+                + "；".join(missing)
             )
         else:
             problems.append(
-                "缺运行环境层：" + "、".join(missing)
+                "缺可用的运行环境层：" + "；".join(missing)
                 + "。这种 APK 装得上，但起不了 DSH，而且「在线获取运行环境」"
                 "也会在下载完成后失败（prepareAndroidSide 硬失败）。" + hint
             )
-    else:
-        notes.append(f"运行环境层 android-side：{aside[0]}")
-        notes.append(f"运行环境层 dsh：{dsh[0]}")
 
     for n in notes:
         print(f"备注：{n}")

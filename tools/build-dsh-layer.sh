@@ -155,17 +155,45 @@ fi
 mkdir -p "$OUT_DIR/dsh"
 TARBALL="$OUT_DIR/dsh/$VERSION.tar.zst"
 
-# 压缩器：优先 zstd（与 bundle.yaml 的约定一致），否则退回 gzip 并明确告知。
-# 不静默降级 —— 文件名后缀与实际格式必须相符，否则解包方会失败。
-if command -v zstd >/dev/null 2>&1; then
-    info "打包（zstd -19）：$TARBALL"
-    tar -C "$LAYER_ROOT" --use-compress-program='zstd -19 -T0' -cf "$TARBALL" .
-else
-    TARBALL="$OUT_DIR/dsh/$VERSION.tar.gz"
-    printf '注意：找不到 zstd，改用 gzip 打包。\n' >&2
-    printf '      bundle.yaml 声明的是 zstd；若应用侧只认 .tar.zst，请先安装 zstd 重跑。\n' >&2
-    info "打包（gzip）：$TARBALL"
-    tar -C "$LAYER_ROOT" -czf "$TARBALL" .
+# 压缩器：**必须** zstd。
+#
+# 这里曾经在找不到 zstd 时退回 gzip 并只打印一条提示。那个兜底是错的，
+# 而且错得不容易发现：AGP 会把 `.gz` 资源解压并**去掉 `.gz` 扩展名**，
+# 于是 dsh 层在 APK 里变成 `assets/dsh/<version>.tar`（裸 tar），
+# 而应用侧的查找条件是 `it.startsWith("$layer.tar.")` —— 匹配不上，
+# 层对应用不可见。产物看着「建好了」，实际上等于没建。
+#
+# 上游实际发布的就是 zstd（从真机装的官方 DSHBox 包读出：
+# `assets/dsh/0.2.0-rc.2.tar.zst`）。上游 `tools/pack_runtime.sh` 里那句
+# 「默认 gzip，因为 zstd-jni 解析不到」是过时注释 —— 官方包里带着
+# `lib/arm64-v8a/libzstd-jni-1.5.7-15.so`，DSHFusion 也把
+# `libs/zstd-jni-1.5.7-15-classes.jar` 接进了 app 与 sandbox-manager。
+# **以发布产物为准，不以脚本默认值为准。**
+if ! command -v zstd >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+
+错误：找不到 zstd，拒绝继续。
+
+  不是「压缩率更好」的问题，而是**没有别的可行格式**：
+  AGP 会把 `.gz` 资源解压并去掉扩展名，于是
+      dsh/<version>.tar.gz  →  assets/dsh/<version>.tar
+  而应用侧要求名字以 `<layer>.tar.` 开头（带那个点），匹配不上 ——
+  层对应用完全不可见。gzip 产物在这个仓库里没有可用场景。
+
+  安装：Debian/Ubuntu  apt-get install -y zstd
+        macOS          brew install zstd
+  CI（ubuntu-latest runner）自带 zstd。
+
+EOF
+    exit 2
+fi
+info "打包（zstd -19）：$TARBALL"
+tar -C "$LAYER_ROOT" -I 'zstd -19 -T0' -cf "$TARBALL" .
+
+# 魔数自检：写出来的必须是 zstd 帧头，而不是别的什么。
+MAGIC="$(head -c 4 "$TARBALL" | od -An -tx1 | tr -d ' \n')"
+if [ "$MAGIC" != "28b52ffd" ]; then
+    die "dsh 层魔数不是 zstd 帧头（实测 $MAGIC）" 1
 fi
 
 # ---------- 9. 校验和 ----------

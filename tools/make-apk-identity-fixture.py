@@ -40,6 +40,11 @@ from pathlib import Path
 # 所以内容不必是真 gzip —— 但开头写成 gzip 魔数，免得将来有人
 # 看到一段随机字节就以为是坏的。
 _FAKE_GZIP = b"\x1f\x8b\x08\x00" + b"\x00" * 32
+# zstd 帧头（28 B5 2F FD）。断言 6 会按魔数判容器格式，所以夹具必须给出
+# 真实格式的头 —— 用 gzip 头假装 zstd 的话，测的就不是真东西了。
+_FAKE_ZSTD = b"\x28\xb5\x2f\xfd" + b"\x00" * 32
+# 裸 tar：magic 在偏移 257（`BundleManager` 就是这么判的）。
+_FAKE_TAR = b"\x00" * 257 + b"ustar" + b"\x00" * 32
 
 # ---- AXML 常量 ----
 RES_XML_TYPE = 0x0003
@@ -248,7 +253,8 @@ def main() -> int:
     scenario = sys.argv[2] if len(sys.argv) > 2 else "good"
 
     known = {"good", "upstream-id", "upstream-ver", "wrong-ns", "wrong-label",
-             "bad-authority", "no-layers", "no-manifest"}
+             "bad-authority", "no-layers", "sidecar-only", "gz-stripped",
+             "no-manifest"}
     if scenario not in known:
         print(f"未知场景 {scenario!r}；可用：{sorted(known)}", file=sys.stderr)
         return 2
@@ -260,17 +266,39 @@ def main() -> int:
         # 塞一个无关文件，让 zip 结构更像真 APK（且 no-manifest 场景下非空）
         z.writestr("classes.dex", b"dex\n035\x00" + b"\x00" * 64)
 
-        # 运行环境层：除 no-layers 外**每个场景都带上**。
+        # 运行环境层：除三个「层有问题」的场景外，**每个场景都带上正确的层**。
         #
         # 理由不是「像真 APK」，而是隔离：套件用 check_scenario 断言失败**消息内容**，
-        # 而断言 6（必须含层）对所有夹具都会失败。若不给夹具塞层，
+        # 而断言 6（必须含可用层）对所有夹具都会失败。若不给夹具塞层，
         # 每个场景都会同时因为自己的原因和缺层而失败，消息里混着两条 ——
         # 那样「夹具测的是不是它声称的那件事」就说不清了。
         #
-        # no-layers 是专门测断言 6 本身的场景：身份全对，只有层缺失。
-        if scenario != "no-layers":
-            z.writestr("assets/runtime/android-side.tar.gz", _FAKE_GZIP)
-            z.writestr("assets/dsh/0.2.0-rc.2.tar.gz", _FAKE_GZIP)
+        # 三个专门测断言 6 的场景，各自对应一种**真实发生过**的失败：
+        #   no-layers    —— 完全没有层（我抄 android.yml 漏掉建层步骤的那次）
+        #   sidecar-only —— 只有 .sha256 侧车，没有层本体。
+        #                   第一版断言 6 写的是 `startswith("android-side.tar.")`，
+        #                   `android-side.tar.gz.sha256` 满足这个前缀 ——
+        #                   于是 CI 全绿，而 APK 里根本没有层。
+        #   gz-stripped  —— 模拟 AGP 的真实行为：`.tar.gz` 被解压并去掉扩展名，
+        #                   在 APK 里变成 `android-side.tar`（裸 tar）。
+        #                   应用侧要求名字以 `android-side.tar.` 开头（带那个点），
+        #                   匹配不上 —— 层进了 APK 但永远看不见。
+        #                   这是 run 38513950774 的真实产物形态。
+        if scenario == "no-layers":
+            pass
+        elif scenario == "sidecar-only":
+            z.writestr("assets/runtime/android-side.tar.gz.sha256", b"0" * 64)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.gz.sha256", b"0" * 64)
+        elif scenario == "gz-stripped":
+            z.writestr("assets/runtime/android-side.tar.gz.sha256", b"0" * 64)
+            z.writestr("assets/runtime/android-side.tar", _FAKE_TAR)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst.sha256", b"0" * 64)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar", _FAKE_TAR)
+        else:
+            z.writestr("assets/runtime/android-side.tar.zst", _FAKE_ZSTD)
+            z.writestr("assets/runtime/android-side.tar.zst.sha256", b"0" * 64)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst", _FAKE_ZSTD)
+            z.writestr("assets/dsh/0.2.0-rc.2.tar.zst.sha256", b"0" * 64)
 
     print(f"已生成 {out_path}（场景 {scenario}）")
     return 0

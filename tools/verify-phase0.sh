@@ -70,6 +70,17 @@ fail() {
     RESULTS+=("FAIL|$1|fail")
 }
 
+# skip：条件不满足、无法构造该场景时用。
+#
+# **「跳过」不等于「通过」** —— 它单独计数，汇总里会如实报出跳过多少项。
+# 这条规则来自本仓库的硬约束「未运行的检查写『未运行』，不写『通过』」：
+# 把跳过混进通过数，等于让一个从没跑过的断言看起来是绿的。
+skip() {
+    printf '  [SKIP] %s\n' "$1"
+    SKIP=$((SKIP + 1))
+    RESULTS+=("SKIP|$1|skip")
+}
+
 # 按解释器显式调用工具，不依赖可执行位。
 # 理由：ZIP 归档不保留 Unix 权限位，解压后脚本会变成 644，
 # 直接执行会得到 exit=126（权限不足）。这是归档格式的限制，不是脚本的问题，
@@ -767,6 +778,74 @@ d = json.load(open(\"governance/upstreams.json\", encoding=\"utf-8\"))
 assert any(e.get(\"id\") == \"deepseek-harness\" for e in d[\"transitive_upstreams\"])
 "'
 
+section "5c-2. 运行环境资产构建脚本 build-runtime-assets.sh"
+
+expect 0 "语法检查" bash -n tools/build-runtime-assets.sh
+
+# 核心断言：**缺 zstd 必须失败退出，不能降级到 gzip**。
+#
+# 这不是风格偏好。AGP 会把 `.gz` 资源解压并去掉扩展名，于是
+#     runtime/android-side.tar.gz  →  assets/runtime/android-side.tar
+# 而应用侧要求名字以 `android-side.tar.` 开头（带那个点），匹配不上 ——
+# 层进了 APK，但应用永远看不见它，等于没建。
+# 一个必然被剥坏的产物，比一个明确的报错危险得多。
+#
+# 本机没有 zstd，所以下面这条在本地跑的是**真实的失败路径**，
+# 不是用假的 PATH 模拟出来的。
+if command -v zstd >/dev/null 2>&1; then
+    skip "缺 zstd 的失败路径（本机有 zstd，无法构造）"
+else
+    ASIDE_OUT="$(bash tools/build-runtime-assets.sh "$SCRATCH/nozstd" 2>&1)" || ASIDE_RC=$?
+    ASIDE_RC="${ASIDE_RC:-0}"
+    if [ "$ASIDE_RC" -ne 2 ]; then
+        fail "缺 zstd 时应退出 2，实际 $ASIDE_RC"
+    else
+        ok "缺 zstd 时退出 2（拒绝产出必然被 AGP 剥坏的 gzip 层）"
+    fi
+    # 断言失败消息**解释了原因**，而不是只说「找不到 zstd」。
+    # 差别是实质性的：只说「找不到 zstd」会让人以为是可选依赖、装不装都行；
+    # 说清「gzip 产物必然被 AGP 剥坏」才会让人去装它而不是绕开。
+    case "$ASIDE_OUT" in
+        *"没有别的可行格式"*)
+            ok "失败信息解释了为什么 gzip 不可用（不是只说「找不到 zstd」）" ;;
+        *) fail "失败信息没有解释 gzip 为何不可用，用户会以为是可选依赖" ;;
+    esac
+fi
+
+# 脚本正文不得再出现 gzip 打包路径。这条是防回归：
+# 换回 `tar -czf` 会让上面那条断言之外的所有检查都通过，而产物是坏的。
+if grep -qE 'tar .*-czf|tar .*-zcf' tools/build-runtime-assets.sh; then
+    fail "build-runtime-assets.sh 里仍有 gzip 打包路径（-czf）"
+else
+    ok "build-runtime-assets.sh 不含 gzip 打包路径"
+fi
+if grep -qE 'tar .*-czf|tar .*-zcf' tools/build-dsh-layer.sh; then
+    fail "build-dsh-layer.sh 里仍有 gzip 打包路径（-czf）"
+else
+    ok "build-dsh-layer.sh 不含 gzip 打包路径"
+fi
+
+# 两层产物的**文件名赋值**必须是 `.tar.zst` —— 后缀决定应用侧能不能找到它。
+#
+# 只看赋值行（`ASIDE_TAR=` / `TARBALL=`），不看整个文件：脚本的注释里
+# **必须**能提到 `.tar.gz`，那正是「为什么不能用 gzip」的解释所在。
+# 第一版这里 grep 了整个文件，于是把解释性注释也判成了违规 ——
+# 一个过宽的检查会逼着人删掉注释，而不是修掉问题。
+if grep -nE '^[[:space:]]*(ASIDE_TAR|TARBALL|OUT_FILE)=.*\.tar\.gz' \
+        tools/build-runtime-assets.sh tools/build-dsh-layer.sh; then
+    fail "上面这些赋值行仍产出 .tar.gz"
+else
+    ok "两个脚本的层文件赋值都只产出 .tar.zst"
+fi
+
+# 收尾断言必须钉住**精确文件名**。用 glob（`android-side.tar.*`）会让
+# `.sha256` 侧车也满足它 —— check-apk-identity.py 的断言 6 第一版就是这么被骗的。
+if grep -q 'runtime/android-side\.tar\.zst' tools/build-runtime-assets.sh; then
+    ok "收尾断言使用精确文件名（不会被 .sha256 侧车满足）"
+else
+    fail "收尾断言没有钉住精确文件名"
+fi
+
 section "5d. APK 产物身份核验 check-apk-identity.py"
 
 # 这个工具的价值全在断言上，所以不能只测「文件不存在时退出 2」——
@@ -785,7 +864,8 @@ expect 0 "合成 APK：身份正确时应通过" \
     bash -c "python3 tools/make-apk-identity-fixture.py '$SCRATCH/good.apk' good >/dev/null && \
              python3 tools/check-apk-identity.py '$SCRATCH/good.apk'"
 
-for scen in upstream-id upstream-ver wrong-ns wrong-label bad-authority no-layers; do
+for scen in upstream-id upstream-ver wrong-ns wrong-label bad-authority \
+            no-layers sidecar-only gz-stripped; do
     python3 tools/make-apk-identity-fixture.py "$SCRATCH/$scen.apk" "$scen" >/dev/null
 done
 
@@ -815,7 +895,20 @@ check_scenario bad-authority "不是从 applicationId 派生的"
 # 缺运行环境层：这条以前只是「备注」，所以它如实备注了「不含任何层」
 # 然后 CI 照样全绿 —— 缺层的 APK 一路走到了真机。现在它是硬断言。
 # no-layers 场景的身份全部正确，只有层缺失，确保它只因为这一条失败。
-check_scenario no-layers     "缺运行环境层"
+check_scenario no-layers     "缺可用的运行环境层"
+
+# 下面两条是断言 6 自己出过的错，各对应一种「看着有层、实际不能用」的形态。
+# 它们必须独立断言：光有 no-layers 只能证明「完全没层」会被拦住，
+# 证明不了「层在但用不了」也会被拦住 —— 而后者才是真正骗过 CI 的那种。
+#
+# sidecar-only：目录里只有 .sha256 侧车。第一版断言 6 写的是
+# `startswith("android-side.tar.")`，`android-side.tar.gz.sha256` 满足这个前缀，
+# 于是 CI 全绿而 APK 里根本没有层本体。
+check_scenario sidecar-only  "但没有应用侧会查找的层本体"
+# gz-stripped：模拟 AGP 的真实行为 —— `.tar.gz` 被解压并去掉扩展名，
+# 在 APK 里变成 `android-side.tar`（裸 tar）。名字少了那个点，应用匹配不上。
+# 这是 run 38513950774 产物的真实形态。
+check_scenario gz-stripped   "但没有应用侧会查找的层本体"
 
 # 源码层的同一条检查（构建前就报，不用等 APK）
 python3 tools/check-android-identity.py >/dev/null 2>&1 \
