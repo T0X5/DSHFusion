@@ -51,8 +51,9 @@
     {
       "path": "app/src/main/res/**",
       "divergence": "DIV-0002",
-      "reason": "app_name 与 8 个受保护品牌图形必须替换为 DSHFusion 自有资产。app_name 可由脚本重放，图形必须人工自绘 —— 脚本会核验哈希并拒绝通过。",
-      "action": "导入后运行 apply-divergences.sh；品牌图形需人工绘制"
+      "reason": "app_name 与 8 个受保护品牌图形必须替换为 DSHFusion 自有资产。app_name 可由脚本重放，图形必须自绘 —— 脚本会核验哈希并拒绝通过。",
+      "action": "导入后运行 apply-divergences.sh；品牌图形由 tools/make-brand-assets.py 生成。",
+      "brand_assets_note": "8 个图形全部由 tools/make-brand-assets.py 以确定性方式生成（应用图标 1 个密度 + 助手标识 5 个密度 + 启动标记 2 个密度），`--check` 可逐字节复核。\n\n为什么这条要写进治理文件：这 8 个文件**在上游仓库里有同名同路径的对应文件**，所以在 check-import-fidelity.py 眼里它们属于「已登记的偏离」，不是「新增文件」。如果只把生成结果提交进去、不留下生成方式，那么下次上游同步时这 8 个文件既无法自动重放（handle_div_0002 只能**核验哈希**，不能重建像素），也无法解释它们为什么与上游不同 —— 而 DIV-0002 又禁止复用上游图形的**设计构造方法**，所以连「照着重画一遍」都不是选项。生成脚本是这条偏离可复现的唯一依据，不是可选工具。"
     },
     {
       "path": "README.upstream.md（归档的上游 README）",

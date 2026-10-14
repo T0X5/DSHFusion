@@ -63,7 +63,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 | APK **产物**身份核验（DIV-0008） | ✅ **已通过**（run 38483533327 第 15 步）—— 对 CI 真实产物解二进制清单核验 |
 | 单元测试 / lint / `assembleDebug` | ✅ 通过（10 个模块全部成功，`terminal-view` 无测试源） |
 | 生成的 APK 装到真机上验证 | ✅ **已通过**（2026-10-14，修复后第二次尝试）—— 见下方专节；**但启动与运行尚未验证** |
-| APK 内含运行环境层（能真正跑起 DSH） | ⚠️ **两次「修好了」都是假的，尚未在真机验证** —— `e676e38` 补上了建层步骤但格式是 `.tar.gz`（被 AGP 剥成应用找不到的 `.tar`），`bc4bdb0` 才改成 `.tar.zst`；见下方两节 |
+| APK 内含运行环境层（能真正跑起 DSH） | ✅ **已通过产物核验**（2026-10-14，run 38516880572）—— 见下方「修好了？没有」一节的结论 |
 | `upstream-watch.yml` 真实运行 | ✅ **已跑通**（run 38483621472，手动触发）—— 检出 DSHA 有新提交并建了 Issue #2 |
 
 ### 首次真实 CI 运行（2026-10-13）暴露的问题
@@ -324,8 +324,39 @@ lib/arm64-v8a/libzstd-jni-1.5.7-15.so
 - 夹具新增 `sidecar-only` 与 `gz-stripped` 两个场景，各对应一种真实形态。
 - 套件新增 5c-2 节，并补上 `skip()` 助手（「跳过」单独计数，不混进通过数）。
 
-**仍未验证的**：新 APK 在真机上是否真能装层、DSH 是否真能起来。
-层进了 APK 只是必要条件，不是充分条件。
+#### 结论：产物已核验通过（2026-10-14，run 38516880572，提交 `bc4bdb0`）
+
+CI 全绿之后我又**独立下载产物核对了一遍** —— 因为「步骤通过」和「产物对」
+这次刚刚才被证明是两件事。结果：
+
+```
+assets/runtime/android-side.tar.zst   113187 B   magic=28b52ffd（zstd 帧头）
+assets/dsh/0.2.0-rc.2.tar.zst       85661153 B   magic=28b52ffd
+两份 .sha256 侧车都在
+```
+
+`assets/` 顶层：`dsh` / `dshbox` / `plugins` / `relay` / `runtime` / `runtime-online` /
+`terminal-packages` —— `runtime` 与 `dsh` 都在了。
+
+**并且模拟了应用侧那段查找逻辑**（不是「看起来对」，是照抄那行代码跑一遍）：
+
+```
+assets.list("runtime") 会看到: ['android-side.tar.zst', 'android-side.tar.zst.sha256']
+firstOrNull { it.startsWith("android-side.tar.") } → android-side.tar.zst   ✅ 命中
+```
+
+与上游官方包对照，尺寸几乎一致：
+
+| 层 | DSHFusion | DSHBox 官方 | 差 |
+|---|---:|---:|---:|
+| `android-side.tar.zst` | 113187 B | 113245 B | −58 B |
+| `dsh/0.2.0-rc.2.tar.zst` | 85661153 B | 85893395 B | −232242 B |
+
+（差异来自 tar 元数据与 npm 安装顺序，不影响内容正确性。）
+
+**仍未验证的**：真机上是否真能装层、base/node 能否在线获取、DSH 是否真能起来。
+层进了 APK 只是**必要**条件，不是充分条件 —— 这一步已经卡了两次，
+所以在真机跑通之前，这一行仍然只能记成「产物已核验，运行未验证」。
 
 ## 决策依据（不要重新推翻）
 
