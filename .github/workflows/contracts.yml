@@ -125,6 +125,16 @@ jobs:
           # 并反向检查导入目录里没有未登记的文件。
           python3 tools/check-dsha-imports.py
 
+      - name: Backup module contract (magic / no hand-copied constants / error codes)
+        run: |
+          set -euo pipefail
+          # 阶段 2.1 的第一次真实编译就红在这里：测试把容器的 8 字符魔数
+          # `DSHADATA` 手抄成了 7 字符的 `DSHDATA`，5 条用例同时红。
+          # 本机所有检查（套件、导入核验、偏离重放、隐私审计）**没有一条**能发现它 ——
+          # 它们查的是「文件在不在、字节变没变、字符串在不在」，
+          # 没有一条把**测试夹具**和**容器源码**对起来。这一步就是那一条。
+          python3 tools/check-backup-contract.py
+
       - name: Verify upstream mirrors are NOT tracked
         run: |
           set -euo pipefail

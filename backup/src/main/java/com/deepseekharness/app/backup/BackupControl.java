@@ -1,6 +1,6 @@
 // 来源：DSHA (https://github.com/DSH-APP/DSHA) — MIT
 // Copyright (c) 2026 qiannianhuanxiang
-// 原样复制进 DSHFusion（阶段 2.1），正文未做任何修改。见 governance/dsha-imports.json。
+// 原样复制进 DSHFusion，正文未做任何修改。见 governance/dsha-imports.json。
 package com.deepseekharness.app.backup;
 
 import java.io.IOException;

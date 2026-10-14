@@ -44,6 +44,33 @@ sha256 必须与登记的 `upstream_sha256` 一致。两个断言互相独立，
       `python3 tools/check-dsha-imports.py --update`（仅复核过上游改动后使用；会警告正文已不再一致）
 退出码：0 一致；1 有差异。
 
+### `check-backup-contract.py` — 备份模块「测试与容器不能各说各话」
+
+阶段 2.1 第一次真实编译时红得最惨的一次：`V5ArchiveTest` 把容器的魔数**手抄**成
+`"DSHDATA"`，而 `BackupArchive.MAGIC` 是 8 个字符的 `DSHADATA`。差一个字节，
+5 条用例同时红 —— `hasMagic` 直接失败，4 条 `forge` 负面用例则因为**夹具本身不合规**
+而抛 IOException，断言到的错误码根本不是要测的那个。
+
+本机当时跑的所有检查都没发现它。于是这里做三件正交的核对：
+
+1. **`V5Archive.MAGIC_SIZE` 必须等于 `BackupArchive.MAGIC` 的真实长度** ——
+   从 Java 源码的字符字面量还原，不重抄。
+2. **测试代码里不得手抄魔数** —— 字面量形式与 `byteArrayOf(0x44, …)` 形式都挡；
+   应当从真实写入器取（`V5ArchiveTest` 的 `magic` 属性就是这么做的）。注释里允许提。
+3. **测试断言的每个错误码，必须是导入的容器/数据源源码里真的会抛的码** ——
+   防住 `PAYLOAD_CHECKSUM` 拼成 `PAYLOAD_CHECKSUMS` 那种「永远失败」的错。
+
+> 这条检查器**自己也被故障注入抓过一次**：第一版正则写成 `DSH[A-Z]{2,5}ATA`
+> （要求 `ATA` 前至少 2 个字符），恰好匹配不了 7 字符的 `DSHDATA`；把真实缺陷注入
+> 回去，它照样报通过。修好正则后没过文字，又漏在 KDoc 的 `*` 续行上 ——
+> 两次都是「注入必须先自证」这条规则救的。见 [../docs/INCIDENTS.md](../docs/INCIDENTS.md) 第 17–18 条。
+
+`verify-phase0.sh` 的 5k 节除了跑它，还会**真做一遍注入**（把手抄魔数写回测试、
+断言哈希确实变了、断言检查器确实变红、再复原）—— 没生效的注入会给出完全虚假的安全感。
+
+用法：`python3 tools/check-backup-contract.py`
+退出码：0 通过；1 有问题。
+
 ### `check-exec-bits.py` — 脚本可执行位
 
 读 git 索引里的模式，对照 `governance/inherited-lint-baseline.json` 双向检查：

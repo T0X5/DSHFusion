@@ -1536,6 +1536,46 @@ fi
 
 [ "$BK_BAD" = "0" ] && ok "v5 归档模块接入与预检断言齐备"
 
+section "5k. 备份模块契约：测试与容器不能各说各话（阶段 2.1）"
+BC_BAD=0
+# 这一节的存在理由是一个真实事故：测试里把魔数手抄成 7 字符的 "DSHDATA"，
+# 而容器是 8 字符的 "DSHADATA"，5 条用例同时红。本机其他检查一条都发现不了。
+if python3 tools/check-backup-contract.py >/dev/null 2>&1; then
+    ok "契约核验通过：魔数三处一致、测试未手抄魔数、断言的错误码均有效"
+else
+    fail "备份模块契约核验失败 —— 跑 python3 tools/check-backup-contract.py 看明细"
+    BC_BAD=1
+fi
+# 注入自证：把检查器最该抓的那件事真的做一遍，它必须红。
+# （第 16 条事故教过：没生效的注入会给出完全虚假的安全感。）
+if [ -f "$V5_TEST" ]; then
+    probe=$(mktemp)
+    cp "$V5_TEST" "$probe"
+    before=$(sha256sum "$V5_TEST" | cut -c1-16)
+    # 无反引用写法：`\1` 在生成这个脚本的 Python 里会被吃成控制字符
+    sed -i 's/out\.write(magic)/out.write("DSHDATA".toByteArray(Charsets.US_ASCII))/' "$V5_TEST"
+    after=$(sha256sum "$V5_TEST" | cut -c1-16)
+    if [ "$before" = "$after" ]; then
+        fail "契约检查的注入自证没生效（文件根本没变）—— 这条检查本身不可信"
+        BC_BAD=1
+    elif python3 tools/check-backup-contract.py >/dev/null 2>&1; then
+        fail "注入手抄魔数后契约核验仍然通过 —— 这条检查抓不到它该抓的缺陷"
+        BC_BAD=1
+    else
+        ok "注入手抄魔数后契约核验确实变红（注入已自证生效并复原）"
+    fi
+    cp "$probe" "$V5_TEST"
+    rm -f "$probe"
+    after2=$(sha256sum "$V5_TEST" | cut -c1-16)
+    [ "$before" = "$after2" ] || { fail "注入后未能复原 V5ArchiveTest.kt"; BC_BAD=1; }
+else
+    fail "缺少 V5ArchiveTest.kt，无法做注入自证"
+    BC_BAD=1
+fi
+
+[ "$BC_BAD" = "0" ] && ok "备份模块契约与注入自证齐备"
+
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do

@@ -963,3 +963,69 @@ e: V5ArchiveTest.kt:253:17 （同一处，另一条用例）
 那条是「检查跑了但没真查」，这条是「检查真查了但查不到这个维度」。
 **本机检查的覆盖面必须如实声明**：阶段 2.1 的「本机 155 项通过」只覆盖
 脚本与字节层面，**编译层面的结论只能由 CI 给出**。
+
+### 魔数被手抄错一个字节，5 条用例同时红（2026-10-14，CI run 38625190214）
+
+**现象**：类型错误修掉后重新跑 Android CI，`:backup:testDebugUnitTest`
+`23 tests completed, 5 failed`：
+
+```
+V5ArchiveTest > hasMagicAcceptsOnlyTheV5Header FAILED          java.lang.AssertionError  (:190)
+V5ArchiveTest > forgeProducesAContainerTheReaderAccepts FAILED java.io.IOException        (:140)
+V5ArchiveTest > archiveClaimingFullWhileCarryingMissingMembersIsRejected FAILED  ComparisonFailure (:261)
+V5ArchiveTest > rootDeclaringOneScopeCannotCarryAnother FAILED                   ComparisonFailure (:276)
+V5ArchiveTest > manifestThatUnderReportsItsOwnEntriesIsRejected FAILED          ComparisonFailure (:286)
+```
+
+**根因**：容器魔数是 `BackupArchive.MAGIC = {'D','S','H','A','D','A','T','A'}`
+—— 8 个字符的 **`DSHADATA`**。我在三处把它写成了 7 个字符的 `DSHDATA`：
+测试夹具 `forge` 的 `out.write("DSHDATA"…)`、`hasMagic` 用例的字面量，
+以及 `V5Archive.kt` 的 KDoc 与 `backup/README.md` 的格式图。
+
+一处错，五种红，而且**红的理由各不相同**：
+
+| 用例 | 为什么红 |
+|---|---|
+| `hasMagicAcceptsOnlyTheV5Header` | 直接读了那个错字面量，`hasMagic` 当然 false |
+| `forgeProducesAContainerTheReaderAccepts` | 夹具的前 8 字节不是魔数，读取侧判 `ARCHIVE_VERSION` |
+| 三条 forge 负面用例 | **夹具本身坏了**，抛的不是要测的那个错误码 |
+
+最后一行是这次最值得记住的地方：**负面用例红了，但它证明的是「夹具坏了」而不是
+「读取侧挡住了攻击」**。如果我只看到「红了」就去把断言改松，这五条就会变成
+永远通过、但什么都不验证的装饰。
+
+**为什么本机没发现**：与上一条同源，但更具体 —— 本机跑的所有检查
+（套件 155 项、导入核验、偏离重放、隐私审计、工作流检查）查的都是
+「文件在不在、字节变没变、字符串在不在」，**没有一条把测试夹具和容器源码对起来**。
+
+**修正**：
+
+1. 测试**不再手抄魔数**，改成从真实写入器取：`private val magic by lazy {
+   twoScopeArchive().copyOf(V5Archive.MAGIC_SIZE) }` —— 测试与容器从此不可能各说各话。
+2. `hasMagic` 用例顺带加强：首字节**与末字节**都翻转各测一次
+   （原来那个错字面量恰好差在末字节，加强后同类错误会被直接钉住）。
+3. 文档与 KDoc 的 `DSHDATA` 全部改成 `DSHADATA`。
+4. 新增 `tools/check-backup-contract.py`，接进 `contracts.yml` 与
+   `verify-phase0.sh` 的 5k 节。
+
+### 新写的检查器**自己**漏抓它该抓的缺陷（2026-10-14，同批）
+
+**现象**：`check-backup-contract.py` 写完后，把上面那个真实缺陷注入回去
+（`out.write("DSHDATA".toByteArray())`），**它报通过**。
+
+**根因**：防手抄的正则写成 `DSH[A-Z]{2,5}ATA` —— 要求 `ATA` 之前至少 2 个字符，
+于是 7 字符的 `DSHDATA`（`ATA` 前只有 `D` 一个字符）**恰好落在外面**。
+
+**修好之后又漏第二次**：这次能匹配了，但匹配到的是 KDoc 里的
+`` `"DSHDATA"` ``（`*` 续行注释），于是它把**注释**当代码报了错。
+
+**结论与教训**：
+
+- 一条检查器「写完了、跑通了、报通过」**不等于**它能抓住它存在的那件事。
+  这是硬约束里「每个新断言都要用一个真实注入的故障证明它真的会红」的又一次兑现：
+  **本轮 4 条注入（字面量 / `MAGIC_SIZE` / 错误码拼错 / `byteArrayOf` 摊开）
+  全部先自证「文件确实变了」，再看检查器是否变红。**
+- 第 16 条事故说的是「注入没生效会给出虚假安全感」；这一条是它的下一环：
+  **注入生效了，但检查器还是没红** —— 同样给出虚假安全感，而且更难察觉，
+  因为它留下了「已做过注入」的记录。所以 5k 节把注入**固化进套件**，
+  每次跑都现场证明一次，而不是只留一句「我做过了」。

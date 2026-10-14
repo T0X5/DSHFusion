@@ -53,7 +53,7 @@ data class V5ArchiveManifest(
 }
 
 /**
- * v5 归档（`DSHDATA` 容器）在 DSHFusion 侧的入口。
+ * v5 归档（`DSHADATA` 容器）在 DSHFusion 侧的入口。
  *
  * 容器格式本身是 DSHA 的成熟实现，逐字节原样放在
  * `com.deepseekharness.app.backup`（MIT，见本模块 README 与
@@ -65,13 +65,13 @@ data class V5ArchiveManifest(
  */
 object V5Archive {
 
-    /** `DSHDATA` 魔数的长度；判断文件头是否为未加密的 v5 归档时用。 */
+    /** `DSHADATA` 魔数的长度；判断文件头是否为未加密的 v5 归档时用。 */
     const val MAGIC_SIZE = 8
 
     /** 无进度的默认控制器：容器把 null Progress 当作 no-op。 */
     private val QUIET = BackupControl(null)
 
-    /** 只认 `DSHDATA`；长度不足或首字节被改都返回 false。 */
+    /** 只认 `DSHADATA`；长度不足或首字节被改都返回 false。 */
     fun hasMagic(header: ByteArray): Boolean = BackupArchive.hasMagic(header)
 
     /**

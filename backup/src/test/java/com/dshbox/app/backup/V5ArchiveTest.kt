@@ -67,6 +67,15 @@ class V5ArchiveTest {
     private fun unreadable(root: String, path: String, scope: String) =
         BackupArchive.Record.of(root, path, "UNREADABLE", scope, 0, "")
 
+    /**
+     * 容器魔数：**取自真实写入器**，而不是在测试里重抄一遍字面量。
+     *
+     * 第一版手抄成 `"DSHDATA"`（7 字节，实际是 8 字符的 `DSHADATA`），
+     * CI 立刻报 `hasMagic` 失败，连带 5 条 forge 用例全部因为夹具坏掉而红。
+     * 这里改成从 [twoScopeArchive] 的前 8 字节取 —— 测试与容器对魔数不可能再各说各话。
+     */
+    private val magic: ByteArray by lazy { twoScopeArchive().copyOf(V5Archive.MAGIC_SIZE) }
+
     /** 走真实写入器：证明 DSHFusion 这边写得出来一份容器。 */
     private fun archive(
         entries: List<Pair<BackupArchive.Record, ByteArray?>>,
@@ -85,7 +94,7 @@ class V5ArchiveTest {
     /**
      * 手写组装容器，模拟一个**绕过写入器校验**的生产者。
      *
-     * 布局与 `BackupArchive.Writer` 完全一致（`DSHDATA` + int 5 + 逐条
+     * 布局与 `BackupArchive.Writer` 完全一致（8 字节魔数 + int 5 + 逐条
      * 「元数据长度/元数据/载荷长度/载荷」 + int -1 + 清单长度/清单 + 全文摘要），
      * 但不做任何一致性自查；manifest 里的 `entries` / `bytes` 仍如实填写，
      * 以便把「假完整」与「范围夹带」隔离成唯一变量。
@@ -98,7 +107,7 @@ class V5ArchiveTest {
     ): ByteArray {
         val body = ByteArrayOutputStream()
         val out = DataOutputStream(body)
-        out.write("DSHDATA".toByteArray(Charsets.US_ASCII))
+        out.write(magic)
         out.writeInt(5)
         var count = 0L
         var bytes = 0L
@@ -187,9 +196,17 @@ class V5ArchiveTest {
 
     @Test
     fun hasMagicAcceptsOnlyTheV5Header() {
-        assertTrue(V5Archive.hasMagic("DSHDATA".toByteArray(Charsets.US_ASCII)))
-        assertFalse(V5Archive.hasMagic("DSHDATX".toByteArray(Charsets.US_ASCII)))
-        assertFalse(V5Archive.hasMagic("DSH".toByteArray(Charsets.US_ASCII)))
+        val real = twoScopeArchive()
+        assertTrue(V5Archive.hasMagic(real.copyOf(V5Archive.MAGIC_SIZE)))
+
+        // 首字节与**末字节**被改都必须 false —— 只比前缀会漏掉末字节。
+        // 第一版把魔数抄成 7 字节的 "DSHDATA"，正是这条（差在第 8 字节）该抓到它。
+        fun flipped(at: Int) =
+            real.copyOf(V5Archive.MAGIC_SIZE).also { it[at] = (it[at].toInt() xor 1).toByte() }
+
+        assertFalse(V5Archive.hasMagic(flipped(0)))
+        assertFalse(V5Archive.hasMagic(flipped(V5Archive.MAGIC_SIZE - 1)))
+        assertFalse(V5Archive.hasMagic(real.copyOf(V5Archive.MAGIC_SIZE - 1)))
         assertFalse(V5Archive.hasMagic(ByteArray(0)))
     }
 

@@ -5,7 +5,7 @@
   "provenance_header": [
     "// 来源：DSHA (https://github.com/DSH-APP/DSHA) — MIT",
     "// Copyright (c) 2026 qiannianhuanxiang",
-    "// 原样复制进 DSHFusion（阶段 2.1），正文未做任何修改。见 governance/dsha-imports.json。"
+    "// 原样复制进 DSHFusion，正文未做任何修改。见 governance/dsha-imports.json。"
   ],
   "upstream": {
     "id": "dsha",
@@ -21,7 +21,9 @@
   "why_verbatim": "这 5 个类合计 658 行、零 Android 依赖，是一套自洽且带完整负面用例的容器实现；按硬约束 2「能直接保留的成熟实现就保留，不要重写」，保持逐字节一致而不是重写为 Kotlin。包名保留 DSHA 原名（com.deepseekharness.app.*）是**有意的**：它让「这段代码不是我们写的」在源码层面自带标识，也让将来比对 DSHA 上游改动时可以直接逐 blob 比。",
   "divergences": {
     "note": "导入本身不是对骨干的偏离，未登记进 divergences.json。唯一与骨架相关的偏离是新增 :backup 模块与 Gson 依赖，登记为 DIV-0019。",
-    "registered_as": ["DIV-0019"]
+    "registered_as": [
+      "DIV-0019"
+    ]
   },
   "files": [
     {
