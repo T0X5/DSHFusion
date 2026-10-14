@@ -10,7 +10,7 @@
 
 | 包 | 来源 | 性质 |
 |---|---|---|
-| `com.deepseekharness.app.backup`（11 个类）<br>`com.deepseekharness.app.util`（`BackupScopes`、`FileKind`） | DSHA `467c7eb0` | **逐字节原样副本**（MIT） |
+| `com.deepseekharness.app.backup`（11 个类）<br>`com.deepseekharness.app.util`（`BackupScopes`、`FileKind`） | DSHA `467c7eb0` | **逐字节原样副本**（MIT，15 个文件）<br>**另有 3 份测试是「适配副本」** |
 | `com.dshbox.app.backup`（`V5Archive.kt`、`DshBackupScope.kt`、`DshBackupExclusions.kt`） | DSHFusion | 本仓库自己写的 Kotlin |
 
 阶段 2.1 引入的是容器与预检（`BackupArchive`/`BackupLimits`/`BackupJson`/`BackupControl`、
@@ -18,9 +18,29 @@
 （`BackupFileSystem`/`BackupSource`/`FileBackupSource`/`HostSnapshot`/`GuestDataResolver`、
 `FileKind` 与四份原始测试）。
 
-> `.java` 一律是 DSHA 的逐字节副本，`.kt` 一律是本仓库自己写的 ——
+> 主源码里 `.java` 一律是 DSHA 的逐字节副本，`.kt` 一律是本仓库自己写的 ——
 > 这个命名约定让「哪段不是我们写的」在文件名层面就能看出来，
 > 也正好是 `check-dsha-imports.py` 反向检查那条「导入目录里没有未登记 `.java`」的边界。
+
+**3 份测试文件是「适配副本」**（`GuestDataResolverTest` / `BackupFileSystemAtomicTest` /
+`HostSnapshotTest`），登记为 `derived` 的 `kind: adapted`。原因**不是测试写错**，
+而是两个上游的工具链不同：
+
+| | AGP | 单元测试编译时 `java.nio.file.Files` 来自 | Java 11 的 `readString`/`writeString` |
+|---|---|---|---|
+| DSHA | 9.1.1 | JDK | ✅ 有 |
+| 本仓库（DSHBox 工具链） | 8.9.2 | `android.jar`（API 36） | ❌ 没有 |
+
+所以 16 处 `Files.writeString(p, s)` / `Files.readString(p)` 改成机械等价的
+`Files.write(p, s.getBytes(StandardCharsets.UTF_8))` /
+`new String(Files.readAllBytes(p), StandardCharsets.UTF_8)`。
+**为什么不把整块 `:backup` 改成纯 JVM 模块**（那样能逐字节保留）：阶段 2.4 要搬的
+`BackupTree` / `AndroidBackupFileSystem` / `AndroidTreeFileSystem` 必须要 Android，
+改过去早晚要改回来。
+
+两类文件的**来源头不同**（逐字节副本 vs 适配副本），`check-dsha-imports.py`
+**强制**各自出现在对应 `kind` 上 —— 否则文件可以自己声称是逐字节副本，
+而没有任何东西会不同意。完整过程见 [../docs/INCIDENTS.md](../docs/INCIDENTS.md) 第 20 条。
 
 包名保留 DSHA 原名不是疏忽。它让两件事变简单：
 

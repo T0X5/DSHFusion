@@ -1,6 +1,6 @@
 // 来源：DSHA (https://github.com/DSH-APP/DSHA) — MIT
 // Copyright (c) 2026 qiannianhuanxiang
-// 原样复制进 DSHFusion，正文未做任何修改。见 governance/dsha-imports.json。
+// **适配后**移植（正文与上游不同）。逐条改动见 governance/dsha-imports.json 的 derived 段。
 package com.deepseekharness.app.backup;
 
 import org.junit.*;
@@ -93,7 +93,7 @@ public class GuestDataResolverTest {
     File root = temporary.newFolder();
     Files.createDirectories(new File(root, "root").toPath());
     Files.createDirectories(new File(root, ".l2s").toPath());
-    Files.writeString(new File(root, ".l2s/owned").toPath(), "user bytes");
+    Files.write(new File(root, ".l2s/owned").toPath(), "user bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     LinkFs fs = new LinkFs();
     File source = new File(root, "root/a");
     fs.links.put(source.getPath(), "/data/user/10/com.dsh.client/files/linux/ubuntu/.l2s/owned");

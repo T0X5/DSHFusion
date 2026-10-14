@@ -1,6 +1,6 @@
 // 来源：DSHA (https://github.com/DSH-APP/DSHA) — MIT
 // Copyright (c) 2026 qiannianhuanxiang
-// 原样复制进 DSHFusion，正文未做任何修改。见 governance/dsha-imports.json。
+// **适配后**移植（正文与上游不同）。逐条改动见 governance/dsha-imports.json 的 derived 段。
 package com.deepseekharness.app.backup;
 
 import org.junit.*;
@@ -20,8 +20,8 @@ public class HostSnapshotTest {
         task = temporary.newFolder(),
         archive = new File(task, "archive");
     Files.createDirectories(new File(source, "node_modules/custom").toPath());
-    Files.writeString(new File(source, "node_modules/custom/source.js").toPath(), "user modified");
-    Files.writeString(new File(source, ".env").toPath(), "owned secret");
+    Files.write(new File(source, "node_modules/custom/source.js").toPath(), "user modified".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    Files.write(new File(source, ".env").toPath(), "owned secret".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     var root = new FileBackupSource(fs, "project", "projects", source, false, null);
     Map<String, Object> result =
         HostSnapshot.create(
@@ -81,14 +81,14 @@ public class HostSnapshotTest {
   @Test
   public void sameSizeAndMtimeChangesAreCaughtBySecondRead() throws Exception {
     File source = temporary.newFolder(), task = temporary.newFolder(), file = new File(source, "a");
-    Files.writeString(file.toPath(), "old");
+    Files.write(file.toPath(), "old".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     BackupSource root =
         new FileBackupSource(fs, "dsh", "application", source, true, null) {
           @Override
           public void verify(Item item, String hash, BackupControl control) throws IOException {
             if (item.kind.equals("FILE")) {
               var time = Files.getLastModifiedTime(file.toPath());
-              Files.writeString(file.toPath(), "new");
+              Files.write(file.toPath(), "new".getBytes(java.nio.charset.StandardCharsets.UTF_8));
               Files.setLastModifiedTime(file.toPath(), time);
             }
             super.verify(item, hash, control);
@@ -112,7 +112,7 @@ public class HostSnapshotTest {
     File source = temporary.newFolder(),
         task = temporary.newFolder(),
         latest = new File(task, "latest");
-    Files.writeString(latest.toPath(), "previous validated backup");
+    Files.write(latest.toPath(), "previous validated backup".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     Files.write(new File(source, "large").toPath(), new byte[100000]);
     BackupControl control = new BackupControl(null);
     control.cancel();
@@ -127,13 +127,13 @@ public class HostSnapshotTest {
                 BackupArchiveTest.summary(),
                 false,
                 control));
-    assertEquals("previous validated backup", Files.readString(latest.toPath()));
+    assertEquals("previous validated backup", new String(Files.readAllBytes(latest.toPath()), java.nio.charset.StandardCharsets.UTF_8));
   }
 
   @Test
   public void captureHasOneArchiveReadAndItsBytesStillMustMatchTheStreamingHash() throws Exception {
     File source = temporary.newFolder(), task = temporary.newFolder();
-    Files.writeString(new File(source, "a").toPath(), "original bytes");
+    Files.write(new File(source, "a").toPath(), "original bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     int[] reads = {0};
     boolean[] corrupt = {false};
     BackupFileSystem counting =
@@ -142,7 +142,7 @@ public class HostSnapshotTest {
           public InputStream read(File path, Node expected) throws IOException {
             if (path.getName().equals("capture")) {
               reads[0]++;
-              if (corrupt[0]) Files.writeString(path.toPath(), "modified bytes");
+              if (corrupt[0]) Files.write(path.toPath(), "modified bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
             }
             return super.read(path, expected);
           }
@@ -169,7 +169,7 @@ public class HostSnapshotTest {
                 BackupArchiveTest.summary(),
                 false,
                 new BackupControl(null)));
-    assertEquals("original bytes", Files.readString(new File(source, "a").toPath()));
+    assertEquals("original bytes", new String(Files.readAllBytes(new File(source, "a").toPath()), java.nio.charset.StandardCharsets.UTF_8));
   }
 
   @Test
@@ -178,7 +178,7 @@ public class HostSnapshotTest {
     for (String phase : List.of("open", "close", "verify")) {
       File source = temporary.newFolder(), task = temporary.newFolder();
       File original = new File(source, "a");
-      Files.writeString(original.toPath(), "original bytes");
+      Files.write(original.toPath(), "original bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
       BackupSource root =
           new FileBackupSource(fs, "project", "projects", source, false, null) {
             @Override
@@ -214,7 +214,7 @@ public class HostSnapshotTest {
                       true,
                       new BackupControl(null)));
       assertEquals(phase, "CANCELLED", cancelled.getMessage());
-      assertEquals(phase, "original bytes", Files.readString(original.toPath()));
+      assertEquals(phase, "original bytes", new String(Files.readAllBytes(original.toPath()), java.nio.charset.StandardCharsets.UTF_8));
       assertFalse(phase, new File(task, "capture").exists());
     }
   }
@@ -223,7 +223,7 @@ public class HostSnapshotTest {
   public void rescueNeverTurnsAdditionalSourceVerificationCancellationIntoPartialSuccess()
       throws Exception {
     File source = temporary.newFolder(), task = temporary.newFolder();
-    Files.writeString(new File(source, "a").toPath(), "original bytes");
+    Files.write(new File(source, "a").toPath(), "original bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     var root = new FileBackupSource(fs, "project", "projects", source, false, null);
     assertThrows(
         InterruptedIOException.class,
@@ -239,6 +239,6 @@ public class HostSnapshotTest {
                 control -> {
                   throw new InterruptedIOException("CANCELLED");
                 }));
-    assertEquals("original bytes", Files.readString(new File(source, "a").toPath()));
+    assertEquals("original bytes", new String(Files.readAllBytes(new File(source, "a").toPath()), java.nio.charset.StandardCharsets.UTF_8));
   }
 }

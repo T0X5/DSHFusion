@@ -1,6 +1,6 @@
 // 来源：DSHA (https://github.com/DSH-APP/DSHA) — MIT
 // Copyright (c) 2026 qiannianhuanxiang
-// 原样复制进 DSHFusion，正文未做任何修改。见 governance/dsha-imports.json。
+// **适配后**移植（正文与上游不同）。逐条改动见 governance/dsha-imports.json 的 derived 段。
 package com.deepseekharness.app.backup;
 
 import org.junit.Rule;
@@ -151,14 +151,14 @@ public class BackupFileSystemAtomicTest {
         new JvmBackupFileSystem() {
           @Override
           public OutputStream create(File file) throws IOException {
-            java.nio.file.Files.writeString(file.toPath(), "unknown original");
+            java.nio.file.Files.write(file.toPath(), "unknown original".getBytes(java.nio.charset.StandardCharsets.UTF_8));
             unowned[0] = file;
             return super.create(file);
           }
         };
     assertThrows(IOException.class, () -> collision.atomic(directory, "record", "new".getBytes()));
     assertNotNull(unowned[0]);
-    assertEquals("unknown original", java.nio.file.Files.readString(unowned[0].toPath()));
+    assertEquals("unknown original", java.nio.file.new String(Files.readAllBytes(unowned[0].toPath()), java.nio.charset.StandardCharsets.UTF_8));
     assertFalse(new File(directory, "record").exists());
   }
 }

@@ -144,11 +144,44 @@ def check_asserted_codes(known: set[str]) -> None:
         fail("没有任何「断言具体错误码」的用例 —— 备份验收要求明确分类，这不该为空")
 
 
+# Android 的 `java.nio.file.Files` **没有** Java 11 加的 `readString` / `writeString`。
+#
+# 这不是猜的：第一次真实编译 `:backup:compileDebugUnitTestJavaWithJavac` 报了 16 处
+# `cannot find symbol: method writeString(Path,String)`，因为 AGP 8.9.2 的单元测试
+# 编译按 `android.jar`（API 36）解析 `java.nio.file`，而 DSHA 用的 AGP 9.1.1 按 JDK 解析。
+#
+# 为什么值得在**本机**查：本机没有 JDK/SDK/Gradle，Kotlin 与 Java 都编不了，
+# 所以这类错平时只能等 CI 告诉 —— 而 CI 一轮十几分钟。把它变成静态检查之后，
+# 上游同步若把这几份测试文件还原成逐字节副本，本机立刻就能发现。
+#
+# 诚实的边界：**只覆盖已知会犯的这一类**，不是「所有 android.jar 缺失 API」的通用检查。
+# 通用检查需要 android.jar 的 API 清单，本机没有。
+JAVA11_ONLY_FILES_APIS = ("Files.readString(", "Files.writeString(")
+
+
+def check_no_jdk_only_apis() -> int:
+    hits: list[str] = []
+    count = 0
+    for path in sorted((ROOT / "backup" / "src").rglob("*.java")):
+        for number, line in enumerate(read(path).splitlines(), 1):
+            for api in JAVA11_ONLY_FILES_APIS:
+                if api in line and not line.lstrip().startswith(("*", "//")):
+                    hits.append(f"{path.relative_to(ROOT)}:{number} 用了 {api}…")
+                    count += 1
+    for item in hits:
+        fail(item + " —— Android 的 java.nio.file.Files 没有这个方法，CI 会红")
+    if count:
+        fail("请改用 Files.write(p, s.getBytes(StandardCharsets.UTF_8)) / "
+             "new String(Files.readAllBytes(p), StandardCharsets.UTF_8)")
+    return count
+
+
 def main() -> int:
     real = check_magic_size()
     check_no_hardcoded_magic(real)
     known = codes_the_source_can_throw()
     check_asserted_codes(known)
+    check_no_jdk_only_apis()
 
     if FAILURES:
         print("备份模块契约核验失败：", file=sys.stderr)
@@ -158,7 +191,8 @@ def main() -> int:
     print(
         f"备份模块契约核验通过：魔数 {real.decode('utf-8', 'replace')!r}"
         f"（{len(real)} 字节）三处一致；测试未手抄魔数；"
-        f"断言的错误码均在容器可抛出的 {len(known)} 个码之内。"
+        f"断言的错误码均在容器可抛出的 {len(known)} 个码之内；"
+        f"未使用 android.jar 缺失的 {len(JAVA11_ONLY_FILES_APIS)} 个 Files API。"
     )
     return 0
 

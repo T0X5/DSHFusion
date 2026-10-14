@@ -19,7 +19,7 @@
   },
   "phase": "阶段 2.1–2.2 —— 备份归档 v5 的格式、预检、范围枚举与写入",
   "derived": {
-    "note": "**改写后移植**的 DSHA 代码。与 files[] 不同：正文不是逐字节副本，所以不能靠 sha256 证明\"没改\"，只能如实列清\"保留了哪条不变式、改掉了什么、为什么\"。凡是正文可逐字节保留的，一律走 files[] 而不是这里。",
+    "note": "**改写/适配后移植**的 DSHA 代码。与 files[] 不同：正文不是逐字节副本，所以不能靠 sha256 证明「没改」，只能如实列清「保留了哪条不变式、改掉了什么、为什么」。凡是正文可逐字节保留的，一律走 files[] 而不是这里。`kind: adapted` 是「只做机械等效替换」，`kind: rewritten` 是「结构重写」。",
     "items": [
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/util/BackupScope.java",
@@ -43,10 +43,58 @@
         ],
         "why": "DSHA 的 BackupScope 深度绑定它自己的 i18n 子系统与自建插件管理目录，原样搬会连带引入一整条语言服务、并备份一堆本仓库不存在的路径。保留不变式、按本仓库实证布局重写，是这里唯一说得通的融合方式。",
         "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshBackupScopeTest.kt"
+      },
+      {
+        "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/GuestDataResolverTest.java",
+        "upstream_bytes": 4413,
+        "upstream_sha256": "483c978ace3f1753da28d8eabdcf236453435babf56e7b4f8a82c56430eb6009",
+        "local_path": "backup/src/test/java/com/deepseekharness/app/backup/GuestDataResolverTest.java",
+        "kind": "adapted",
+        "kept": [
+          "全部测试意图、夹具构造、断言与错误码期望一字未动（只换了 16 处读写文件的调用形式）",
+          "TemporaryFolder 夹具与逐条断言的顺序、措辞"
+        ],
+        "changed": [
+          "`Files.writeString(p, s)` → `Files.write(p, s.getBytes(StandardCharsets.UTF_8))`，`Files.readString(p)` → `new String(Files.readAllBytes(p), StandardCharsets.UTF_8)`，共 1 处；用限定名而非新增 import，好让 diff 精确到行"
+        ],
+        "why": "**不是测试写错，是两个上游的工具链不同。** DSHA 用 AGP 9.1.1，单元测试按 JDK 解析 `java.nio.file`，所以 `Files.readString/writeString`（Java 11+）编得过；DSHBox 用 AGP 8.9.2，`compileDebugUnitTestJavaWithJavac` 按 `android.jar`（API 36）解析，而 Android 的 `java.nio.file.Files` 没有这两个方法 —— 于是 `:backup:compileDebugUnitTestJavaWithJavac` 报 16 处 `cannot find symbol`。只能二选一：改这几行，或把整块 `:backup` 改成纯 JVM 模块。**选前者**，因为阶段 2.4 要搬的 `BackupTree` / `AndroidBackupFileSystem` / `AndroidTreeFileSystem` 必须要 Android，改模块类型早晚要改回来。",
+        "verified_by": "tools/check-dsha-imports.py"
+      },
+      {
+        "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/BackupFileSystemAtomicTest.java",
+        "upstream_bytes": 5955,
+        "upstream_sha256": "c9b055941668fa758921d607d57f4038b39bc7bc04f65b96d60378c0d025757f",
+        "local_path": "backup/src/test/java/com/deepseekharness/app/backup/BackupFileSystemAtomicTest.java",
+        "kind": "adapted",
+        "kept": [
+          "全部测试意图、夹具构造、断言与错误码期望一字未动（只换了 16 处读写文件的调用形式）",
+          "TemporaryFolder 夹具与逐条断言的顺序、措辞"
+        ],
+        "changed": [
+          "`Files.writeString(p, s)` → `Files.write(p, s.getBytes(StandardCharsets.UTF_8))`，`Files.readString(p)` → `new String(Files.readAllBytes(p), StandardCharsets.UTF_8)`，共 2 处；用限定名而非新增 import，好让 diff 精确到行"
+        ],
+        "why": "**不是测试写错，是两个上游的工具链不同。** DSHA 用 AGP 9.1.1，单元测试按 JDK 解析 `java.nio.file`，所以 `Files.readString/writeString`（Java 11+）编得过；DSHBox 用 AGP 8.9.2，`compileDebugUnitTestJavaWithJavac` 按 `android.jar`（API 36）解析，而 Android 的 `java.nio.file.Files` 没有这两个方法 —— 于是 `:backup:compileDebugUnitTestJavaWithJavac` 报 16 处 `cannot find symbol`。只能二选一：改这几行，或把整块 `:backup` 改成纯 JVM 模块。**选前者**，因为阶段 2.4 要搬的 `BackupTree` / `AndroidBackupFileSystem` / `AndroidTreeFileSystem` 必须要 Android，改模块类型早晚要改回来。",
+        "verified_by": "tools/check-dsha-imports.py"
+      },
+      {
+        "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/HostSnapshotTest.java",
+        "upstream_bytes": 9128,
+        "upstream_sha256": "be83d2772c09f0a5a766d0fe3faa323762055473f9d2bfe64581b6792fb84014",
+        "local_path": "backup/src/test/java/com/deepseekharness/app/backup/HostSnapshotTest.java",
+        "kind": "adapted",
+        "kept": [
+          "全部测试意图、夹具构造、断言与错误码期望一字未动（只换了 16 处读写文件的调用形式）",
+          "TemporaryFolder 夹具与逐条断言的顺序、措辞"
+        ],
+        "changed": [
+          "`Files.writeString(p, s)` → `Files.write(p, s.getBytes(StandardCharsets.UTF_8))`，`Files.readString(p)` → `new String(Files.readAllBytes(p), StandardCharsets.UTF_8)`，共 13 处；用限定名而非新增 import，好让 diff 精确到行"
+        ],
+        "why": "**不是测试写错，是两个上游的工具链不同。** DSHA 用 AGP 9.1.1，单元测试按 JDK 解析 `java.nio.file`，所以 `Files.readString/writeString`（Java 11+）编得过；DSHBox 用 AGP 8.9.2，`compileDebugUnitTestJavaWithJavac` 按 `android.jar`（API 36）解析，而 Android 的 `java.nio.file.Files` 没有这两个方法 —— 于是 `:backup:compileDebugUnitTestJavaWithJavac` 报 16 处 `cannot find symbol`。只能二选一：改这几行，或把整块 `:backup` 改成纯 JVM 模块。**选前者**，因为阶段 2.4 要搬的 `BackupTree` / `AndroidBackupFileSystem` / `AndroidTreeFileSystem` 必须要 Android，改模块类型早晚要改回来。",
+        "verified_by": "tools/check-dsha-imports.py"
       }
     ]
   },
-  "why_verbatim": "这 5 个类合计 658 行、零 Android 依赖，是一套自洽且带完整负面用例的容器实现；按硬约束 2「能直接保留的成熟实现就保留，不要重写」，保持逐字节一致而不是重写为 Kotlin。包名保留 DSHA 原名（com.deepseekharness.app.*）是**有意的**：它让「这段代码不是我们写的」在源码层面自带标识，也让将来比对 DSHA 上游改动时可以直接逐 blob 比。",
+  "why_verbatim": "能逐字节保留的一律逐字节保留：主源码（容器、预检、枚举与写入）共 15 个文件、零 Android 依赖，是一套自洽且带完整负面用例的实现；按硬约束 2「能直接保留的成熟实现就保留，不要重写」，保持逐字节一致而不是重写为 Kotlin。包名保留 DSHA 原名（com.deepseekharness.app.*）是**有意的**：它让「这段代码不是我们写的」在源码层面自带标识，也让将来比对 DSHA 上游改动时可以直接逐 blob 比。\n\n**两类例外，都进 derived 段**：`kind: adapted` 是只做机械等效替换的适配副本（`:backup` 的 3 份测试文件，因为 DSHFusion 的工具链是 DSHBox 的 AGP 8.9.2，单元测试按 android.jar 解析 `java.nio.file`，没有 Java 11 的 `readString`/`writeString`；DSHA 用的 AGP 9.1.1 按 JDK 解析，所以它编得过）；`kind: rewritten` 是本仓库按真实布局重写的（`DshBackupScope.kt`）。两者的来源头与逐字节副本**不同**，由 check-dsha-imports.py 强制。",
   "divergences": {
     "note": "导入本身不是对骨干的偏离，未登记进 divergences.json。唯一与骨架相关的偏离是新增 :backup 模块与 Gson 依赖，登记为 DIV-0019。",
     "registered_as": [
@@ -160,27 +208,6 @@
       "role": "测试用 JVM 实现，让纯 JVM 单测能对真实临时文件下断言"
     },
     {
-      "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/BackupFileSystemAtomicTest.java",
-      "local_path": "backup/src/test/java/com/deepseekharness/app/backup/BackupFileSystemAtomicTest.java",
-      "upstream_bytes": 5955,
-      "upstream_sha256": "c9b055941668fa758921d607d57f4038b39bc7bc04f65b96d60378c0d025757f",
-      "role": "原子性与故障注入（移动/删除/创建的中途失败）"
-    },
-    {
-      "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/HostSnapshotTest.java",
-      "local_path": "backup/src/test/java/com/deepseekharness/app/backup/HostSnapshotTest.java",
-      "upstream_bytes": 9128,
-      "upstream_sha256": "be83d2772c09f0a5a766d0fe3faa323762055473f9d2bfe64581b6792fb84014",
-      "role": "写入编排的行为：缺失项、取消、范围、最终核验"
-    },
-    {
-      "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/GuestDataResolverTest.java",
-      "local_path": "backup/src/test/java/com/deepseekharness/app/backup/GuestDataResolverTest.java",
-      "upstream_bytes": 4413,
-      "upstream_sha256": "483c978ace3f1753da28d8eabdcf236453435babf56e7b4f8a82c56430eb6009",
-      "role": "`.l2s` 占位解析与越界/循环拒绝"
-    },
-    {
       "upstream_path": "app/src/test/java/com/deepseekharness/app/util/FileKindTest.java",
       "local_path": "backup/src/test/java/com/deepseekharness/app/util/FileKindTest.java",
       "upstream_bytes": 1178,
@@ -256,5 +283,11 @@
         "reason": "与 NativeRestorePlan 同属 DSHA 的原生恢复模型。"
       }
     ]
-  }
+  },
+  "adapted_header": [
+    "// 来源：DSHA (https://github.com/DSH-APP/DSHA) — MIT",
+    "// Copyright (c) 2026 qiannianhuanxiang",
+    "// **适配后**移植（正文与上游不同）。逐条改动见 governance/dsha-imports.json 的 derived 段。"
+  ],
+  "provenance_note": "两种来源头，对应两种身份：`provenance_header` = 逐字节副本（files[]），`adapted_header` = 只做机械等效替换的适配副本（derived 里 kind=adapted）。本检查器**强制**两者各自出现在对的文件上 —— 否则「原样复制」这句话可以由文件自己随便写，而没有任何东西会不同意。"
 }

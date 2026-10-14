@@ -1076,3 +1076,59 @@ V5ArchiveTest > manifestThatUnderReportsItsOwnEntriesIsRejected FAILED          
 这一条是「先审计再动笔」直接避免的，正好是「不盲目覆盖、先审计再决定融合方式」
 这条要求在阶段 2 的第一次兑现。**审计的价值不在于能列出多少功能，
 而在于能在动手之前认出哪一个看起来最自然的设计是错的。**
+
+### 两个上游的工具链不同：`Files.writeString` 在 DSHBox 的 AGP 下编不过（2026-10-14，阶段 2.2）
+
+**现象**：CI `Run unit tests` 红，`:backup:compileDebugUnitTestJavaWithJavac FAILED`，
+16 处 `cannot find symbol: method writeString(Path,String) / readString(Path)`。
+
+**第一反应是「我把测试写坏了」。不是。** 这 3 份测试文件是从 DSHA 逐字节复制的，
+在 DSHA 里编得好好的。
+
+**根因**：两个上游的 AGP 版本不同，而它决定了单元测试按谁解析 `java.nio.file`：
+
+| | AGP | 单元测试编译时 `java.nio.file.Files` 来自 | Java 11 的 `readString`/`writeString` |
+|---|---|---|---|
+| DSHA | 9.1.1 | JDK | ✅ 有 |
+| DSHBox（本仓库骨干） | 8.9.2 | `android.jar`（API 36） | ❌ **没有** |
+
+**这不是配置疏漏，是 Android 的真实 API 面**：Android 的 `java.nio.file.Files` 来自
+OpenJDK 8，没有 Java 11 加的那几个方法。
+
+**两条路，选了小的那条**：
+
+1. **改这 16 行**（选中）—— 机械等效替换：
+   `Files.writeString(p, s)` → `Files.write(p, s.getBytes(StandardCharsets.UTF_8))`，
+   `Files.readString(p)` → `new String(Files.readAllBytes(p), StandardCharsets.UTF_8)`。
+   语义等价（`writeString` 默认就是 UTF-8；`readString` 对畸形字节严格抛错而
+   `new String` 会替换，但这几处夹具内容全是 ASCII，不触发差异 —— 这一点写进了登记）。
+2. 把整块 `:backup` 改成纯 JVM 模块（`java-library` + `kotlin("jvm")`）—— 那样
+   这 3 份文件能逐字节保留。**没选，因为阶段 2.4 要搬的 `BackupTree` /
+   `AndroidBackupFileSystem` / `AndroidTreeFileSystem` 必须要 Android**，
+   模块类型早晚要改回来，改了还得再改一次测试。
+
+代价是这 3 份文件从 `files[]`（逐字节副本）移到 `derived.items[]`（`kind: adapted`），
+与 `DshBackupScope.kt` 同一套登记机制。
+
+**顺带抓到两个「说法没人校验」的问题**：
+
+- **(a) 来源头在撒谎。** 改完正文后，这 3 个文件的头仍写着「原样复制进 DSHFusion，
+  **正文未做任何修改**」。而当时 `check-dsha-imports.py` **只对 `files[]` 查头**，
+  `derived` 段完全不查 —— 于是文件可以自己声称是逐字节副本，没有任何东西会不同意。
+  修正：登记拆成 `provenance_header`（逐字节副本）与 `adapted_header`（适配副本），
+  检查器**强制**两者各自出现在对应 `kind` 的文件上，并禁止重写文件带「原样复制」头。
+  做过注入（把适配副本的头改回「原样复制」），确实会红。
+- **(b) 反向检查漏了 derived。** 「导入目录里没有未登记 `.java`」这条只看 `files[]`，
+  把一份文件从 `files[]` 移到 `derived[]` 会被误判成「未登记」。已把 derived 的
+  `local_path` 也算作已登记。
+
+**新增的本机防线**：`check-backup-contract.py` 加了断言 4 —— `backup/src/**` 下的
+`.java` 不得出现 `Files.readString(` / `Files.writeString(`。理由是**本机没有
+JDK/SDK/Gradle，这类错平时只能等 CI 告**，而 CI 一轮十几分钟；变成静态检查后，
+上游同步若把这几份测试还原成逐字节副本，本机立刻发现。注入验证过会红。
+
+> 诚实边界：这**只覆盖已知会犯的这一类**，不是「所有 android.jar 缺失 API」的通用检查
+> —— 通用检查要 android.jar 的 API 清单，本机没有。断言 4 的注释里也这么写着。
+
+**教训**：**「我的代码写错了」和「两个上游的工具链不同」是两个完全不同的结论，
+而它们的报错长得一模一样。** 先说清是哪一种，再决定改什么 —— 否则会去改一份本来正确的代码。

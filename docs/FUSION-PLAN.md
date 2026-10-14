@@ -131,19 +131,39 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 | 运行时模型 | 三层（base/node/android-side）独立装配 | Ubuntu + dsh-runtime 两份分包 | **以 DSHBox 的分层为准**，把 DSHA 的"受管更新"改造成分层更新 |
 | 回切机制 | `runtime-current/` ↔ `runtime-new/` 双目录 | `ManagedRuntimeTransaction` + `RuntimeTrial` 隔离试运行 | **取 DSHA 的试运行思路**，落在 DSHBox 的双目录上 |
 | 数据契约 | `user-data/` 不被打扰 | 宿主归档 v5 + 范围/合并子目录 | 移植 v5 的**格式与预检**，宿主实现重写为 DSHBox 风格 |
+| **工具链** | AGP **8.9.2**（单元测试按 `android.jar` 解析 `java.nio.file`） | AGP **9.1.1**（按 JDK 解析） | 以 DSHBox 为准。后果具体而隐蔽：DSHA 的 `Files.readString`/`writeString`（Java 11+）在本仓库**编不过**。3 份测试因此做机械适配并登记为 `derived`/`adapted`。见 [INCIDENTS.md](INCIDENTS.md) 第 20 条 |
 
 **结论**：DSHA 的备份格式（v5）与"先预检、再试运行、后提交"的流程是可移植的；
 它的**实现代码**深度绑定 Ubuntu 分包模型，不能直接搬。
 
 ### 移植顺序（每项一个 PR）
 
-| 顺序 | 项目 | 来源 | 为什么这个顺序 |
-|---|---|---|---|
-| 2.1 | 备份归档 v5 格式与预检（不含自动计划） | DSHA `backup/` | 先有能读写的格式，才谈自动化 |
-| 2.2 | 范围备份（全量 / 只对话 / 只插件 / 只设置） | DSHA `BackupScope` | 依赖 2.1；`BackupScope` 是纯逻辑，好测 |
-| 2.3 | 凭据排除（桥 token 整文件、`.credentials.yaml` 字段级） | DSHA | 安全项，独立可测 |
-| 2.4 | 覆盖更新的隔离试运行 + 失败回切 | DSHA `RuntimeTrial` 思路 | 落在 DSHBox 双目录上 |
-| 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA `AutomaticBackups` | 最后做，依赖 2.1–2.3 |
+| 顺序 | 项目 | 来源 | 状态 | 为什么这个顺序 |
+|---|---|---|---|---|
+| 2.1 | 备份归档 v5 格式与预检（不含自动计划） | DSHA `backup/` | ✅ PR #4 | 先有能读写的格式，才谈自动化 |
+| 2.2 | 范围备份（全量 / 只对话 / 只插件 / 只设置） | DSHA `BackupScope`＋枚举/写入侧 | ✅ PR #6 | 依赖 2.1；范围是纯逻辑，好测 |
+| 2.3 | 凭据排除（桥 token 整文件、`.credentials.yaml` 字段级） | DSHA | 未开始 | 安全项，独立可测 |
+| 2.4 | 覆盖更新的隔离试运行 + 失败回切 | DSHA `RuntimeTrial` 思路 | 未开始 | 落在 DSHBox 双目录上 |
+| 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA `AutomaticBackups` | 未开始 | 最后做，依赖 2.1–2.3 |
+
+**2.2 落地时校正了本表的两处假设**（都是对照真实代码后改的，不是推测）：
+
+1. 「`BackupScope` 是纯逻辑」——对，但它的 `PLUGINS` 范围列的是 **DSHA 自建插件管理
+   的目录**（`plugin-src` / `plugin-sources.json` / `plugin-history` /
+   `plugin-safe-mode.json`），这四个在 DSHFusion 里**根本不存在**。照搬会备份一个
+   永远为空的目录。本仓库的插件实体与清单在 `.dsh/profiles/<profile>/`
+   （见 `PluginPaths`）。所以 2.2 是**改写后移植**，不是原样复制。
+2. DSHA 的 `dshPaths()` 本身描述的是 **DSH 自己的布局**（`.dsh/sessions`、
+   `.dsh/storages`、`.dsh/settings.yaml`），那部分是可按原样对照使用的 ——
+   已用本仓库的证据复核：`Constants.kt:148` 把 DSH 的数据列为
+   `profiles / sessions / settings.yaml / storages / credentials`，
+   `SandboxService.kt:557` 同样把 `profiles/sessions/storages` 称作「DSH 的数据」。
+
+**另一处只在动手前才发现、而且会造出真机故障的**：排除清单的第一直觉是
+「我方资产目录 `.dsh/dshbox` 整目录排掉」。**那是错的** —— 那目录里三份 overlay
+承载用户状态，其中「哪些插件被停用」是**安全机制**（丢了会把此前被隔离的坏插件
+重新加载，真机上出过「每次都起不来」的事故）。排除必须按子路径逐项。
+完整理由见 [INCIDENTS.md](INCIDENTS.md) 第 19 条。
 
 ### 阶段 2 验收
 
@@ -152,6 +172,11 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 - 故意投喂损坏备份 → **明确报错且不破坏现有数据**；
 - 覆盖更新失败 → 自动回切到前一版本，数据不丢；
 - 备份中**不含** API key 与桥 token。
+
+> 上面每一条都要**在真机上**确认过才算数（硬约束 4）。到目前为止 2.1 与 2.2 通过的是
+> **本机的脚本与字节层断言**加 **CI 的编译与单元测试**；「能装到手机上、能真正导出并
+> 恢复一份备份」这一层**一项都还没做**，因为它要等 2.4 的恢复编排。
+> 未运行的检查写「未运行」，不写「通过」。
 
 ---
 

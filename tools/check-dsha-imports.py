@@ -47,7 +47,7 @@ def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def check_derived(doc: dict) -> tuple[list[str], str]:
+def check_derived(doc: dict, adapted_prefix: bytes, copy_prefix: bytes) -> tuple[list[str], str]:
     """核验「改写后移植」的登记。
 
     与 files[] 不同，这里的正文**不是**逐字节副本，所以没法靠 sha256 证明「没改」。
@@ -89,6 +89,21 @@ def check_derived(doc: dict) -> tuple[list[str], str]:
                 problems.append(
                     f"{entry.get('local_path')} 的 {field} 必须是非空字符串列表"
                     f" —— 不写清保留/改掉了什么，「改写」就成了洗代码的通道")
+        # 来源头不能撒谎：适配副本必须带 adapted_header，而且**不能**带
+        # 「原样复制、正文未做任何修改」那一份。没有这条，文件可以自己声称是逐字节副本
+        # 而没有任何东西会不同意 —— 那正是「错误的前提被写进产物里」的老毛病。
+        kind = entry.get("kind")
+        if path.is_file():
+            head = path.read_bytes()[:max(len(adapted_prefix), len(copy_prefix))]
+            if kind == "adapted":
+                if not head.startswith(adapted_prefix):
+                    problems.append(
+                        f"{entry['local_path']} 是适配副本，却没有 adapted_header"
+                        f"（正文已与上游不同，头不能再声称「原样复制」）")
+            elif kind == "rewritten":
+                if head.startswith(copy_prefix):
+                    problems.append(
+                        f"{entry['local_path']} 是本仓库重写的，却带着「原样复制」的来源头")
         digest = str(entry.get("upstream_sha256", ""))
         if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
             problems.append(f"{entry.get('local_path')} 的 upstream_sha256 不是小写 sha256")
@@ -146,7 +161,20 @@ def main() -> int:
         return 1
     prefix = ("\n".join(header_lines) + "\n").encode("utf-8")
 
+    adapted_lines = doc.get("adapted_header")
+    if not isinstance(adapted_lines, list) or not adapted_lines:
+        print("ERROR: 清单缺少 adapted_header（适配副本的来源头与逐字节副本不同，必须分开声明）",
+              file=sys.stderr)
+        return 1
+    adapted_prefix = ("\n".join(adapted_lines) + "\n").encode("utf-8")
+
     registered = {entry["local_path"]: entry for entry in files}
+    # derived（改写/适配后移植）没有可比的正文哈希，但它们同样占用导入目录里的
+    # 文件路径，所以反向检查必须把它们算作「已登记」—— 否则把一份文件从
+    # files[] 移到 derived[] 会被误判成「导入目录里有未登记的文件」。
+    derived_paths = {
+        entry["local_path"] for entry in ((doc.get("derived") or {}).get("items") or [])
+    }
 
     if args.update:
         changed = []
@@ -202,11 +230,11 @@ def main() -> int:
         path.relative_to(ROOT).as_posix()
         for path in IMPORT_ROOT.rglob("*.java")
     }
-    unregistered = sorted(on_disk - set(registered))
+    unregistered = sorted(on_disk - set(registered) - derived_paths)
     # 登记了但不在导入目录里的（写错路径）也一并报出来
     stray = sorted(set(registered) - on_disk - set(missing))
 
-    derived_problems, derived_note = check_derived(doc)
+    derived_problems, derived_note = check_derived(doc, adapted_prefix, prefix)
 
     if missing or bad_header or mismatched or unregistered or stray or derived_problems:
         print("DSHA 导入副本核验失败：", file=sys.stderr)
@@ -225,10 +253,18 @@ def main() -> int:
             print(f"  ✗ 登记了但不在导入目录里: {item}", file=sys.stderr)
         for item in derived_problems:
             print(f"  ✗ 改写移植登记有问题: {item}", file=sys.stderr)
-        print(
-            "\n这些文件的**正文**按设计是 DSHA 的逐字节副本（只有来源头是本项目加的）。"
-            "若确实需要改动，请先说明理由 —— 改动会同时失去「可原样比对上游」这个性质。",
-            file=sys.stderr)
+        # 提示只在真的与逐字节副本有关时出现 —— 错在 derived 段时还讲「正文按设计是
+        # 逐字节副本」会把人引到错的地方。
+        if missing or bad_header or mismatched or unregistered or stray:
+            print(
+                "\n这些文件的**正文**按设计是 DSHA 的逐字节副本（只有来源头是本项目加的）。"
+                "若确实需要改动，请先把该文件从 files[] 移到 derived.items[] 并写清改了什么。",
+                file=sys.stderr)
+        if derived_problems:
+            print(
+                "\nderived 段是「改写/适配后移植」的登记：正文本来就与上游不同，"
+                "所以这里查的不是哈希，而是**改写者有没有说清保留与改动**。",
+                file=sys.stderr)
         return 1
 
     total_bytes = sum((ROOT / r).stat().st_size for r in registered)
@@ -236,7 +272,7 @@ def main() -> int:
     print(
         f"DSHA 导入副本核验通过：{len(registered)} 个文件、{total_bytes} 字节（含来源头），"
         f"正文逐字节与 {upstream.get('id', '?')}@{str(upstream.get('locked_commit', '?'))[:12]} 一致；"
-        f"导入目录内无未登记文件；改写移植 {derived_note}。")
+        f"导入目录内无未登记文件；改写/适配移植 {derived_note}。")
     return 0
 
 
