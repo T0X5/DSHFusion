@@ -251,6 +251,26 @@ PyYAML 不校验"这个表达式引用的 context 是否存在"。
 > **YAML 1.1 陷阱**：PyYAML 把 `on:` 解析成布尔 `True`（`on`/`yes`/`true` 都是真值），
 > 所以按字符串取顶层键会误报"缺少顶层键 on"。本脚本对此做了兼容处理。
 
+### `check-workflow-python.py`
+
+工作流里**内联 Python 的语法检查**。把每个 `run:` 里的 heredoc 抽出来，用
+`compile()` 编译一遍 —— **不执行、不联网**。
+
+```bash
+python3 tools/check-workflow-python.py
+```
+
+存在的直接原因是一个真实事故：`check-workflows.py` 只证明「YAML 解析得开」，
+而那段 Python 对 YAML 来说只是一个**字符串**；`actionlint` 也不看内联脚本的
+宿主语言。于是 `.github/workflows/android.yml` 里几十行的脚本**从来没有被任何
+本地检查编译过** —— 它只在 CI 上跑，而跑到它要十几分钟。我因此把一个
+`SyntaxError` 带进了 CI（`docs/INCIDENTS.md` 第 36 条）。
+
+⚠️ **它证明的只有「语法对」。** 那些断言成不成立要真跑，不在这里，也不可能在这里。
+
+退出码：0 = 全部可解析；1 = 有语法错误（打印文件、step 路径、行号与消息）。
+
+
 ### `check-license-hashes.py`
 
 独立核验上游许可原件哈希。`check-upstreams.py` 也做这件事，
