@@ -78,22 +78,16 @@ enum class DshBackupScope(
         override val members: List<DshBackupMember>
             get() =
                 listOf(
+                    // **只有一个根。** 凭据文件**不**单独成根。
+                    //
+                    // 我第一版让它单独成根（好套上游那个只认单文件的投影装饰器），
+                    // 结果恢复时报 `OVERLAPPING_TARGETS`：`.dsh/.credentials.yaml`
+                    // 落在 `.dsh` 之内，而上游用**路径前缀**判目标重叠。
+                    // 那个拒绝是对的 —— 嵌套目标没法保证「要么都换成、要么都不换」。
+                    //
+                    // 现在投影由 `DshCredentialsSource` 在**树内部**按路径施加，
+                    // 根仍然只有一个。
                     DshBackupMember("dsh", ".dsh", "", "application"),
-                    // 凭据文件**单独成一个成员**，而不是让它跟着 `.dsh` 那棵树走。
-                    //
-                    // 为什么必须分开：`CredentialFileBackupSource` 会对**它拿到的每一个
-                    // item** 做投影，所以它只能套在「根就是凭据文件」的源上。
-                    // 套在 `.dsh` 整棵树上会把投影施加到所有文件 —— 那是错的。
-                    //
-                    // 而 `.dsh` 那棵树里的原样副本由 `DshBackupExclusions.CREDENTIALS`
-                    // 排除掉。**两者缺一不可**：少了这个成员 → 归档里没有 provider 凭据；
-                    // 少了那条排除 → 原样泄漏（就是真机上发生的事）。
-                    DshBackupMember(
-                        "credentials",
-                        ".dsh/" + CredentialProjection.FILE,
-                        CredentialProjection.FILE,
-                        "settings",
-                    ),
                 )
     },
 

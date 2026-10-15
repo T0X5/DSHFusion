@@ -3166,7 +3166,7 @@ PYI
     fi
 fi
 
-section "5v. 凭据不进归档（真机泄漏过 API Key，这一节是那次事故的守卫）"
+section "5v. 凭据被就地投影（真机泄漏过 API Key，这一节是那次事故的守卫）"
 
 # 🔴 这一节存在的理由：**真机上导出的归档里，用户的 API Key 与浏览器会话授权是明文。**
 #
@@ -3177,106 +3177,87 @@ section "5v. 凭据不进归档（真机泄漏过 API Key，这一节是那次�
 #      `.credentials.yaml`（我照着 `Constants.kt` 里的**逻辑名**猜的）—— 那条排除
 #      匹配不到任何东西。
 #
-# 而本机测试为什么抓不到：
-#   - 投影的单测**直接 new** 那个装饰器 → 证明「投影能工作」，证明不了「它被用了」；
-#   - Java 测试**看不到 Kotlin**（本机只编译 .java），所以清单里那个错路径
-#     **从来没有被任何本机测试覆盖过** —— 我用参数把路径显式传进测试，
-#     于是测的是「我传的那个字符串」，而不是「清单里那个字符串」。
+# 修的过程里我又错了一次：让凭据文件**单独成根**好套上游那个装饰器，
+# 结果恢复时 `OVERLAPPING_TARGETS`（目标嵌套）。所以现在**一个根 + 内部投影**。
 
 EXCL="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExclusions.kt"
 SCOPE="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupScope.kt"
 EXPORT="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExporter.java"
+CREDSRC="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshCredentialsSource.java"
 
-# ① 清单必须引用那个**逐字节导入的副本里定义的文件名**，不许自己另写一份。
-# ⚠️ **剥注释再查。** 这是同一族问题的第 **6** 次发作（第 35 条 + 两次补记 + §39 补记 + §18）：
-# 我在清单的 KDoc 里写了「现在改成引用 `CredentialProjection.FILE`」，
-# 于是注入（把代码里的引用改回手抄路径）之后这条 grep **仍然命中注释里的那句话**，
-# 检查没红。**规律还是那条：把「为什么」写得越清楚，越容易命中读同一棵树的检查。**
+# ① 投影类必须在场，而且**导出编排无条件包它**（不按标志位判断 —— 「忘了包」正是事故形态）。
+if [ -f "$CREDSRC" ]; then
+    ok "选择性投影类 DshCredentialsSource 在场"
+else
+    fail "找不到 DshCredentialsSource —— 凭据投影会再次变成没人用的死代码"
+    CR_BAD=1
+fi
+if grep -q 'sources.add(new DshCredentialsSource(source))' "$EXPORT"; then
+    ok "导出编排**无条件**包上投影（不可能忘）"
+else
+    fail "导出编排没有无条件包 DshCredentialsSource —— 真机上就是这样泄漏的"
+    CR_BAD=1
+fi
+
+# ② 排除清单里**不该**再有凭据那条 —— 排除 = 不备份，而用户要的是「投影后备份」。
 if python3 - "$EXCL" <<'PYV'
 import pathlib, re, sys
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
 code = re.sub(r"(?m)^\s*//.*$", "", code)
-sys.exit(0 if "CredentialProjection.FILE" in code else 1)
+sys.exit(1 if "CredentialProjection.FILE" in code else 0)
 PYV
 then
-    ok "排除清单的**代码**引用 CredentialProjection.FILE（注释里的提及不算）"
+    ok "排除清单里没有凭据条目（它该被投影后**包含**，不是排除）"
 else
-    fail "排除清单的代码里没有引用 CredentialProjection.FILE —— 它又写了一个手抄的文件名（真机上就是这样漏的）"
+    fail "排除清单里又出现了凭据 —— 排除 = 不备份，与「投影后保留 provider 凭据」矛盾"
     CR_BAD=1
 fi
-# 反向：不许再出现手抄的字面量。
-if python3 - "$EXCL" <<'PYV'
+
+# ③ FULL 必须**只有一个根** —— 多一个就可能在恢复时撞 OVERLAPPING_TARGETS。
+if python3 - "$SCOPE" <<'PYV'
 import pathlib, re, sys
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-code = re.sub(r"(?m)^\s*//.*$", "", code)
-# 手抄的凭据文件名（`.credentials.yaml`）不该出现在代码里 —— 只该经由常量引用。
-sys.exit(1 if re.search(r'"\.credentials\.yaml"', code) else 0)
+# 取 FULL 的 members 块
+m = re.search(r"FULL\((.*?)\n    \},", text, re.S)
+if not m: sys.exit(2)
+block = m.group(1)
+sys.exit(1 if block.count("DshBackupMember(") != 1 else 0)
 PYV
 then
-    ok "清单里没有手抄的凭据文件名（只经常量引用）"
+    ok "FULL 范围只有一个成员（根不嵌套）"
 else
-    fail "清单里出现了手抄的 \".credentials.yaml\" —— 应当只引用 CredentialProjection.FILE"
+    fail "FULL 范围的成员不是恰好一个 —— 多出来的那个可能与 .dsh 嵌套，恢复时 OVERLAPPING_TARGETS"
     CR_BAD=1
 fi
 
-# ② FULL 范围必须有一个**单独的**凭据成员（投影只能套在「根就是那个文件」的源上）。
-if grep -q '"credentials"' "$SCOPE"; then
-    ok "FULL 范围里有单独的 credentials 成员"
+# ④ 导出时必须有「成员不许互为前缀」的守卫（真机上那次是在**用户点过确认之后**才红的）。
+if grep -q 'OVERLAPPING_MEMBERS' "$EXPORT"; then
+    ok "导出时拒绝互为前缀的成员（同名规则提前到写归档之前）"
 else
-    fail "FULL 范围里没有 credentials 成员 —— 归档里不会带 provider 凭据（换设备要重填 API Key）"
+    fail "导出时没有成员重叠守卫 —— 嵌套的成员会一路走到真机恢复才报 OVERLAPPING_TARGETS"
     CR_BAD=1
 fi
 
-# ③ 导出编排必须**按路径**自动套投影 —— 不许靠调用方传标志位（那正是漏掉的那个形态）。
-if grep -q 'new CredentialFileBackupSource(source)' "$EXPORT" && grep -q 'isCredentialFile(member.path)' "$EXPORT"; then
-    ok "导出编排按路径自动套投影（不可能忘）"
-else
-    fail "导出编排没有按路径自动套投影 —— 投影会再次变成「只被单测引用」的死代码"
-    CR_BAD=1
-fi
-# ④ 凭据源必须**豁免**排除清单（否则它把自己的根排掉，归档里一个字都不剩）。
-if grep -q 'credentials ? null : policyFor(member, excluded)' "$EXPORT"; then
-    ok "凭据源豁免排除清单（否则它会把自身的根排掉）"
-else
-    fail "凭据源没有豁免排除清单 —— 归档里凭据记录的内容会是空的"
-    CR_BAD=1
-fi
-
-# ⑤ 注入：把清单里的路径改回那个**错的**，上面 ① 必须变红。
+# ⑤ 注入：把无条件包改回「按标志位判断」—— ① 必须变红。
 VX_BAK="$(mktemp)"
-cp "$EXCL" "$VX_BAK"
-VX_BEFORE="$(sha256sum "$EXCL" | cut -d' ' -f1)"
-sed -i 's|listOf(".dsh/" + CredentialProjection.FILE)|listOf(".dsh/credentials")|' "$EXCL"
-VX_AFTER="$(sha256sum "$EXCL" | cut -d' ' -f1)"
+cp "$EXPORT" "$VX_BAK"
+VX_BEFORE="$(sha256sum "$EXPORT" | cut -d' ' -f1)"
+sed -i 's|      sources.add(new DshCredentialsSource(source));|      // 注入：撤掉投影|' "$EXPORT"
+VX_AFTER="$(sha256sum "$EXPORT" | cut -d' ' -f1)"
 if [ "$VX_BEFORE" = "$VX_AFTER" ]; then
     fail "注入**没有生效**（锚点没匹配上）—— 这条注入需要修，不是检查需要修"
     CR_BAD=1
-elif python3 - "$EXCL" <<'PYV'
-import pathlib, re, sys
-text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-code = re.sub(r"(?m)^\s*//.*$", "", code)
-sys.exit(0 if "CredentialProjection.FILE" in code else 1)
-PYV
-then
-    fail "把清单路径改回手抄的 \".dsh/credentials\" 之后，① 没有变红"
+elif grep -q 'DshCredentialsSource(source)' "$EXPORT"; then
+    fail "撤掉投影之后，① 没有变红"
     CR_BAD=1
 else
-    ok "注入：清单改回手抄路径 → ① 会红（抓得住真机那次泄漏的成因之一）"
+    ok "注入：撤掉投影 → ① 会红（抓得住真机那次泄漏）"
 fi
-cp "$VX_BAK" "$EXCL"
+cp "$VX_BAK" "$EXPORT"
 rm -f "$VX_BAK"
-if python3 - "$EXCL" <<'PYV'
-import pathlib, re, sys
-text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-code = re.sub(r"(?m)^\s*//.*$", "", code)
-sys.exit(0 if "CredentialProjection.FILE" in code else 1)
-PYV
-then
-    ok "复原后清单重新引用常量"
+if grep -q 'sources.add(new DshCredentialsSource(source))' "$EXPORT"; then
+    ok "复原后导出编排重新包上投影"
 else
     fail "复原失败 —— 注入没被还原干净"
     CR_BAD=1

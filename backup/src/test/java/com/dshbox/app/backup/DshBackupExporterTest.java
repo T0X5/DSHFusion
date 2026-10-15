@@ -351,10 +351,14 @@ public class DshBackupExporterTest {
   }
 
   /**
-   * 端到端：**归档里必须只有投影之后的那一份凭据，而且不许有原样那一份。**
+   * 端到端：**凭据被就地投影** —— 机器本地记录没了、provider 的 ref 还在、只出现一次。
    *
-   * <p>三条断言缺一不可 —— 前两条证明投影生效，第三条证明**没有第二份原样的**。
-   * 少了第三条，「投影生效」与「原样那份也在」可以同时为真（真机就是那样）。
+   * <p>三条断言缺一不可。真机上泄漏的形态是「投影那份在、原样那份也在」，
+   * 那时前两条**全都成立**，只有第三条会红。
+   *
+   * <p>⚠️ 这里**只有一个根**（`.dsh`），凭据文件**不**单独成根 ——
+   * 单独成根会让恢复目标嵌套，上游以 `OVERLAPPING_TARGETS` 拒绝。
+   * 见下面 `overlappingMembersAreRejectedAtExportTime`。
    */
   @Test
   public void credentialsAreProjectedAndNeverIncludedVerbatim() throws Exception {
@@ -362,33 +366,24 @@ public class DshBackupExporterTest {
     write(new File(home, ".dsh/" + CredentialProjection.FILE), CREDENTIALS);
     write(new File(home, ".dsh/sessions/a.json"), "{\"a\":1}");
 
-    // 与 `DshBackupScope.FULL` 的成员一致：`.dsh` 整棵树 + **单独的**凭据成员。
+    // 与 `DshBackupScope.FULL` 的成员一致：**一个根**。
     List<DshBackupExporter.Member> members =
-        List.of(
-            new DshBackupExporter.Member("dsh", ".dsh", "application", false),
-            new DshBackupExporter.Member(
-                "credentials", ".dsh/" + CredentialProjection.FILE, "settings", false));
+        List.of(new DshBackupExporter.Member("dsh", ".dsh", "application", false));
 
     File archive = new File(temporary.newFolder("dl-cred"), "a.dshbak");
-    // 排除谓词收的是 **user-data 相对**路径 —— 与真实链路一致。
-    export(home, members, archive, ".dsh/" + CredentialProjection.FILE);
+    // **不排除任何东西** —— 凭据文件该被包含（只是被投影）。
+    export(home, members, archive);
 
     Map<String, String> contents = payloads(archive);
     String all = String.join("\n", contents.values());
 
-    // ① 机器本地记录**必须不在**。
     assertFalse(
         "机器本地记录（浏览器会话授权）绝不能进归档：「" + all + "」",
         all.contains("MACHINE-LOCAL-SECRET"));
     assertFalse("连它的键名也不该留下", all.contains("client-connection/browser-session"));
-
-    // ② provider 的 ref **必须在** —— 否则换设备后要重填 API Key（B 方案的全部意义）。
     assertTrue(
         "provider 的 ref 必须保留，否则换设备后要重填 API Key：「" + all + "」",
         all.contains("sk-PROVIDER-KEY-VALUE"));
-
-    // ③ **只有一份**凭据文件。这一条挡的是「投影那份在、原样那份也在」——
-    //    真机上的泄漏正是这个形态，而前两条断言在那种情况下**全都成立**。
     long count =
         contents.keySet().stream()
             .filter(path -> path.endsWith(CredentialProjection.FILE))
@@ -399,6 +394,51 @@ public class DshBackupExporterTest {
             + "」",
         1L,
         count);
+  }
+
+  /**
+   * 🔴 **成员路径互为前缀必须在导出时就被拒绝。**
+   *
+   * <p>真机上撞过：凭据文件被做成独立成员，恢复目标落在 `.dsh` 之内，
+   * 上游以 `OVERLAPPING_TARGETS` 拒绝 —— 而那是**在用户点过「确认恢复」之后**。
+   * 归档已经产出、预检已经显示「将恢复 2 个根」，然后才红。
+   *
+   * <p>同样的规则，提前到**写出归档之前**，而且本机就能测。
+   */
+  @Test
+  public void overlappingMembersAreRejectedAtExportTime() throws Exception {
+    File home = temporary.newFolder("overlap-home");
+    write(new File(home, ".dsh/sessions/a.json"), "{\"a\":1}");
+    write(new File(home, ".dsh/" + CredentialProjection.FILE), CREDENTIALS);
+
+    // 就是真机上那个形状：一个根是 `.dsh`，另一个在它**里面**。
+    List<DshBackupExporter.Member> overlapping =
+        List.of(
+            new DshBackupExporter.Member("dsh", ".dsh", "application", false),
+            new DshBackupExporter.Member(
+                "credentials", ".dsh/" + CredentialProjection.FILE, "settings", false));
+    File archive = new File(temporary.newFolder("dl-overlap"), "a.dshbak");
+
+    IOException error =
+        assertThrows(
+            IOException.class,
+            () -> export(home, overlapping, archive));
+    assertEquals(
+        "嵌套的成员必须在导出时就拒绝 —— 别等用户点过「确认恢复」才在真机上红",
+        "OVERLAPPING_MEMBERS",
+        error.getMessage());
+    assertFalse("拒绝之后不该留下半份归档", archive.exists());
+
+    // 反向：**不**嵌套的成员必须照常通过（否则这条守卫就是「什么都拦」）。
+    File ok = new File(temporary.newFolder("dl-ok"), "b.dshbak");
+    export(
+        home,
+        List.of(
+            new DshBackupExporter.Member("dsh", ".dsh/sessions", "sessions", false),
+            new DshBackupExporter.Member(
+                "credentials", ".dsh/" + CredentialProjection.FILE, "settings", false)),
+        ok);
+    assertTrue("不嵌套的成员必须照常导出", ok.isFile());
   }
 
   // ─────────────────────────── 负路径 ───────────────────────────

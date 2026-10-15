@@ -179,7 +179,7 @@ jobs:
               ("com.dshbox.app.backup.DshRestoreOrchestratorTest", 14,
                "恢复编排是本模块**会毁数据**的那条路径；「预检不碰数据」由摘要证明，"
                "且**三种坏归档都必须有具名错误码**（验收标准写的是「明确报错」）"),
-              ("com.dshbox.app.backup.DshBackupExporterTest", 16,
+              ("com.dshbox.app.backup.DshBackupExporterTest", 17,
                "导出编排是本模块第三段会泄数据的路径；且「排除谓词的坐标系要拼前缀」"
                "少一步就**静默带走机器本地凭据**"),
               ("com.deepseekharness.app.util.AutomaticBackupPolicyTest", 4,

@@ -74,34 +74,21 @@ object DshBackupExclusions {
             ".dsh/dshbox/plugin-guard.json",
         )
 
-    /**
-     * **凭据，整份不进归档**。
-     *
-     * `Constants.kt` 第 148 行把 DSH 的数据列为
-     * `profiles / sessions / settings.yaml / storages / credentials` ——
-     * `credentials` 就是 API Key 那一份。
-     *
-     * 🔴 **这条清单曾经是错的，而且错得很贵。**
-     *
-     * 原来写的是 `.dsh/credentials` —— 我照着 `Constants.kt` 里那个**逻辑名**
-     * （`profiles / sessions / settings.yaml / storages / credentials`）猜的路径。
-     * 而真机上 DSH 0.2.0-rc.2 的实际文件名是 **`.credentials.yaml`**。
-     * 于是这条排除**匹配不到任何东西**，用户的 API Key 与浏览器会话授权
-     * **原样进了归档**，而 127 条本机测试 + 308 项套件 + CI 全绿。
-     *
-     * 现在改成引用 `CredentialProjection.FILE`（那个逐字节导入的副本里定义的常量），
-     * **两处不可能再各写一份**。
-     *
-     * ⚠️ 这一条只负责「让 `.dsh` 那棵树**不要**把凭据文件原样带走」。
-     * 归档里仍然**会有**凭据 —— 但是**投影之后**的那一份（见
-     * `DshBackupExporter` 里的 `CredentialFileBackupSource` 与 `DshBackupScope.FULL`
-     * 里那个 `credentials` 成员）。两者必须同时成立：少了投影 → 没有 provider 凭据；
-     * 少了排除 → 原样泄漏。
-     */
-    val CREDENTIALS: List<String> = listOf(".dsh/" + CredentialProjection.FILE)
+    // 🔴 **这里原先有一条「凭据整份不进归档」，已删除。**
+    //
+    // 它曾经是错的两次：
+    //   ① 路径写成 `.dsh/credentials`（我照着 `Constants.kt` 里的**逻辑名**猜的），
+    //      而真机上的文件名是 `.credentials.yaml` —— 那条排除**匹配不到任何东西**，
+    //      于是用户的 API Key 明文进了归档；
+    //   ② 修好路径之后它又和「凭据投影」互相矛盾：一边说整份排除、
+    //      一边说投影后保留。两者不可能同时成立。
+    //
+    // **现在的语义是明确的**：凭据文件**进归档，但是投影之后的**
+    // （`DshCredentialsSource` 按路径施加，见那个类的注释）。
+    // 所以它**不该**出现在排除清单里 —— 排除 = 不备份，而用户要的是「投影后备份」。
 
     /** [isExcluded] 用的全集。 */
-    private val all: List<String> = REGENERATED + CREDENTIALS
+    private val all: List<String> = REGENERATED
 
     /**
      * 这个路径是否不进归档。命中规则：**等于**清单项，或是清单项的**子孙**。

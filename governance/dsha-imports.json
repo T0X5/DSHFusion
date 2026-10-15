@@ -820,6 +820,11 @@
         "local_path": "backup/src/test/java/com/dshbox/app/backup/DshHostPathsTest.java",
         "why": "上面那个的 5 条测试，**用真符号链接**（`Files.createSymbolicLink`）造夹具 ——本机的 `/tmp` 上任何一级都不是链接，所以不造夹具就复现不了这个 bug 的成因。\n\n每条都**先自证前提**：两条路径字符串不同、且确实指同一处。少了这一步，在一台「建不出符号链接」的机器上整套会**静默通过**。\n\n⚠️ 我在这份测试里**连续写错三次断言**，三次都是同一个病：\n① 断言「产物路径含 `/real/`」—— 而产物在**任务目录**下，不在源下面；\n② 断言「产物在任务目录下」—— 而 `Exported.archive` 是**移出去之后的目标文件**；\n③ 才改成让**目标本身**经符号链接表示（那才是可观测的）。\n**我在断言一个我没有先确认「它到底在哪」的路径。**",
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真编译真运行，5 条）"
+      },
+      {
+        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshCredentialsSource.java",
+        "why": "把**凭据投影**施加到一棵树里的**那一个文件**上。\n\n为什么不能直接用上游的 `CredentialFileBackupSource`：它对**拿到的每一个 item** 做投影，并硬性要求「源里只有一个文件、路径为空」。所以它只能套在「**根就是凭据文件**」的源上 ——\n而那样凭据文件就成了**独立的根**，恢复目标（`.dsh/.credentials.yaml`）落在另一个根（`.dsh`）的目标**之内**。上游 `HostDataTransaction` 用**路径前缀**判目标重叠，直接抛 `OVERLAPPING_TARGETS` —— **真机上就是这么红的**（在用户点过「确认恢复」之后）。\n\n所以改成：一个根，投影在**树内部按路径**施加。这个类包在整棵 `.dsh` 树外面，只对路径等于 `CredentialProjection.FILE` 的 item 动手，其余**原样透传**。\n\n与上游那层共享两条语义：**token 里同时绑原始与投影后的哈希**（读取时先验原始没变、再验投影一致），**大小记投影后的长度**。少了任何一半，「读的时候文件已经变了」都会静默产出一份不一致的归档。",
+        "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshBackupExporterTest.java 的 credentialsAreProjectedAndNeverIncludedVerbatim（三条断言，第三条「只出现一次」是关键）"
       }
     ]
   }
