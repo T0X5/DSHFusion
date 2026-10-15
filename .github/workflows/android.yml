@@ -133,15 +133,16 @@ jobs:
           # 推导过程（不是数出来的）：2.5 那轮的 CI 实测是 **124**（Java 81 + Kotlin 43），
           # 已被逐类打印证实（18 个类）。
           # 本轮（2.6，导出路径）新增：
-          #      + 14（我们的 DshBackupExporterTest —— 导出编排的本机测试，
-          #            含「被排除项的内容一个字节都不进归档」、六条负路径，
-          #            以及两条钉「排除谓词的坐标系必须拼上成员前缀」的用例）
-          #   = 95；Kotlin 侧未动仍是 43 ⇒ 95 + 43 = 138。
-          # 95 是本机实测（tools/run-backup-jvm-tests.sh，15 个类），43 是 CI 实测。
-          # 拼出来的 138 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
-          # 若 CI 报的不是 138，先信 CI（docs/INCIDENTS.md 第 27 条）。
-          if total < 138:
-              problems.append(f":backup 只有 {total} 条测试，低于本轮预期总数 138")
+          #      + 14（我们的 DshBackupExporterTest —— 导出编排的本机测试）
+          #      + 13（我们的 DshRestoreOrchestratorTest —— **恢复编排**的本机测试：
+          #            端到端恢复、预检不碰数据（逐文件摘要）、TARGET_CHANGED 接线、
+          #            状态机拒绝乱序、以及五条负路径）
+          #   = 108；Kotlin 侧未动仍是 43 ⇒ 108 + 43 = 151。
+          # 108 是本机实测（tools/run-backup-jvm-tests.sh，16 个类），43 是 CI 实测。
+          # 拼出来的 151 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
+          # 若 CI 报的不是 151，先信 CI（docs/INCIDENTS.md 第 27 条）。
+          if total < 151:
+              problems.append(f":backup 只有 {total} 条测试，低于本轮预期总数 151")
           # 2.4 的恢复核心是**会毁数据**的那条路径，所以单独钉住它的类。
           # 「总数够了」不代表「新那 8 条在里面」（第 26 条的同族）。
           restore = "com.deepseekharness.app.backup.NativeRestorePlanTest"
@@ -168,6 +169,9 @@ jobs:
                "上游的事务测试没跑 = 提交/回切的严密性没有证据"),
               ("com.dshbox.app.backup.HostRestoreTransactionTest", 7,
                "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
+              ("com.dshbox.app.backup.DshRestoreOrchestratorTest", 13,
+               "恢复编排是本模块**会毁数据**的那条路径；「预检不碰数据」必须由摘要证明，"
+               "不能只写在注释里"),
               ("com.dshbox.app.backup.DshBackupExporterTest", 14,
                "导出编排是本模块第三段会泄数据的路径；且「排除谓词的坐标系要拼前缀」"
                "少一步就**静默带走机器本地凭据**"),
