@@ -2040,109 +2040,188 @@ section "5p. 提交与回切：候选树换进活动目录（阶段 2.4b-②）"
 # 为什么这一节必须存在：
 # 这是本模块**唯一真的会动活动目录**的代码。2.4a 的 buildCandidates 只写
 # task/candidate/，一次都不碰活动目录 —— 安全，但也因此没有提交。
-# 这一段补上它，于是「会不会毁数据」第一次变成一个真问题。
+#
+# ⚠️ 本轮把这一段**从手写换成了移植**。我原先手写了 350 行 HostRestoreCommit，
+# 理由是「上游那个类依赖它自己的 ConfigStore/KeyVault」—— **那个理由是错的**，
+# 我写下它的时候没有读那个文件。实测它只有 java.io/java.util 两个 import，
+# 就在可达范围内，而且更严密。已删除手写的那一份，不保留两套。
+# 见 docs/INCIDENTS.md 第 33 条。
 
-COMMIT="backup/src/main/java/com/dshbox/app/backup/HostRestoreCommit.java"
-COMMIT_TEST="backup/src/test/java/com/dshbox/app/backup/HostRestoreCommitTest.java"
+TXN="backup/src/main/java/com/deepseekharness/app/backup/HostDataTransaction.java"
+TXN_TEST="backup/src/test/java/com/deepseekharness/app/backup/HostDataTransactionTest.java"
+ADAPTER="backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java"
+ADAPTER_TEST="backup/src/test/java/com/dshbox/app/backup/HostRestoreTransactionTest.java"
+CRASH="backup/src/test/java/com/deepseekharness/app/backup/HostTransactionCrashProcess.java"
 
-if [ -f "$COMMIT" ] && grep -q 'public List<String> commit(' "$COMMIT" \
-   && grep -q 'public List<String> recover(' "$COMMIT"; then
-    ok "提交与崩溃恢复都在场"
+# ① **只有一套实现。** 手写的那份必须不存在 —— 保留两套正是硬约束 2 要避免的。
+if [ -e "backup/src/main/java/com/dshbox/app/backup/HostRestoreCommit.java" ] \
+   || [ -e "backup/src/test/java/com/dshbox/app/backup/HostRestoreCommitTest.java" ]; then
+    fail "手写的 HostRestoreCommit 又出现了 —— 两套提交实现（硬约束 2）"
+    CR_BAD=1
 else
-    fail "缺少 $COMMIT，或它没有 commit()/recover()"
+    ok "只有一套提交实现（手写的那份已删除，不保留两套）"
+fi
+
+# ② 上游那个类必须逐字节在场，并且它自己带 commit/recover。
+if [ -f "$TXN" ] && grep -q 'public void commit(BackupControl control' "$TXN" \
+   && grep -q 'public void recover()' "$TXN"; then
+    ok "上游 HostDataTransaction 逐字节在场（自带 commit/recover）"
+else
+    fail "缺少 $TXN，或它没有 commit()/recover()"
     CR_BAD=1
 fi
 
-# 原子性的**前提**必须被断言，而不是被假设：跨设备时 move 退化成拷贝，
-# 原子性会静默消失，而没有任何报错。
-if grep -q 'CROSS_DEVICE' "$COMMIT" && grep -q 'device != taskDevice' "$COMMIT"; then
-    ok "跨文件系统的 move 在动手之前就被拒（原子性前提被断言，不是被假设）"
+# ③ 上游那套比手写的严密在哪 —— 逐条钉住，否则「换了实现」可能换成了更弱的。
+#    重验 before **和** after：手写那版只重验 before。
+if grep -q 'CANDIDATE_CHANGED' "$TXN" && grep -q 'TARGET_CHANGED' "$TXN"; then
+    ok "提交前重验 before **和** after（手写那版只验了 before）"
+else
+    fail "缺少 CANDIDATE_CHANGED/TARGET_CHANGED —— 候选在等待期间被改过也不会发现"
+    CR_BAD=1
+fi
+#    嵌套目标：父目录与子目录互为目标时，两次 move 会互相踩。
+if grep -q 'OVERLAPPING_TARGETS' "$TXN"; then
+    ok "检测嵌套目标（父目录与子目录互为目标）"
+else
+    fail "缺少 OVERLAPPING_TARGETS —— 嵌套目标会让换入互相踩"
+    CR_BAD=1
+fi
+#    五相位持久标记：崩溃恢复靠它 + 摘要双判，而不是只看摘要。
+if grep -q 'mark("switching")' "$TXN" && grep -q 'mark("finalized")' "$TXN" \
+   && grep -q 'has("rolling-back")' "$TXN"; then
+    ok "五相位持久标记在场（verified/switching/finalized/rolling-back…）"
+else
+    fail "相位标记缺失 —— 崩溃恢复会失去一半判据"
+    CR_BAD=1
+fi
+#    标记的写入方必须逐字节在场，而且它的内容要**自描述**。
+if [ -f "backup/src/main/java/com/deepseekharness/app/backup/TransactionMarkers.java" ] \
+   && grep -q 'directory.getName() + "\\n" + name' \
+        backup/src/main/java/com/deepseekharness/app/backup/TransactionMarkers.java; then
+    ok "相位标记的内容自描述（目录名+标记名，标记无法被悄悄挪用）"
+else
+    fail "TransactionMarkers 不在场，或它的内容不再自描述"
+    CR_BAD=1
+fi
+
+# ④ **适配层自己加的那条检查：CROSS_DEVICE。** 上游没有它 ——
+#    跨文件系统时 move 不报错、只是退化成拷贝，原子性**静默消失**。
+if grep -q 'CROSS_DEVICE' "$ADAPTER" && grep -q 'device != taskDevice' "$ADAPTER"; then
+    ok "跨文件系统的 move 在动手之前就被拒（上游没有这条，补在适配层）"
 else
     fail "缺少 CROSS_DEVICE 前提检查 —— 跨设备时原子性会静默消失"
     CR_BAD=1
 fi
-
-# 提交前必须**重新**核验 before，而不是只信 buildCandidates 当时算的那一次。
-# 少了它，提交会静默覆盖用户在等待期间写进去的东西。
-if grep -q 'TARGET_CHANGED' "$COMMIT"; then
-    ok "提交前重新核验活动目录摘要（不静默覆盖等待期间写入的数据）"
+#    而它必须在**动任何东西之前**跑：prepare 之前。
+if grep -q 'public void checkSameFileSystem' "$ADAPTER" \
+   && grep -q 'tx.checkSameFileSystem\|checkSameFileSystem(staged.groups)' "$ADAPTER_TEST"; then
+    ok "CROSS_DEVICE 在 prepare 之前被调用（不是事后才发现）"
 else
-    fail "提交前没有重新核验 before —— 会静默覆盖"
+    fail "CROSS_DEVICE 没有在 prepare 之前被调用"
     CR_BAD=1
 fi
 
-# 恢复判定必须看摘要。只认相位（PREPARED/COMMITTED）是不够的：相位本身可能过期。
-if grep -q 'RECOVERY_AMBIGUOUS' "$COMMIT"; then
-    ok "摘要既非原件也非候选时拒绝恢复（不猜、不覆盖）"
+# ⑤ **设置轴：非空必须被拒绝，不能静默空转。**
+#    上游会在提交时一并切 settings.json 并有三处断言；恒空表的实现会让它们**永远通过** ——
+#    那就是「没有输入空间的断言」（第 30 条）。
+if grep -q 'SETTINGS_NOT_SUPPORTED' "$ADAPTER"; then
+    ok "设置轴非空即拒（不让上游那三处设置断言变成恒真）"
 else
-    fail "缺少 RECOVERY_AMBIGUOUS —— 恢复会在信息不足时猜一个动作"
+    fail "设置轴静默空转 —— 上游的设置断言会永远通过（第 30 条）"
     CR_BAD=1
 fi
 
-# 回切必须知道每一步做没做。只靠「aside 在不在」推不出来，
-# 分不清的后果很具体：把原件挪进 failed/，用户看到的是数据没了。
-if grep -q 'asidePlaced' "$COMMIT" && grep -q 'installed' "$COMMIT"; then
-    ok "回切按「每一步做没做」的标记精确回退（不会把原件挪进 failed/）"
+# ⑥ 事务目录名必须是 UUID 形状（上游用它给事务命名，名字写进 plan.json 与每个标记）。
+if grep -q 'TASK_NAME_NOT_UUID' "$ADAPTER" && grep -q 'Ids.uuid' "$ADAPTER"; then
+    ok "事务目录名不是 UUID 形状时提前拦下（不靠上游抛 TRANSACTION_ID）"
 else
-    fail "回切没有逐步标记 —— 可能在什么都没做的情况下把原件挪走"
+    fail "没有提前校验事务目录名"
     CR_BAD=1
 fi
 
-# 目录**缺了才建**：fs.directory() 在已存在时抛（后端是 Files.createDirectory）。
-# 直接用会把「提交」变成「建目录失败」，而这个错在真机上才第一次出现。
-if grep -q 'ensureDirectory' "$COMMIT"; then
-    ok "目录缺了才建（fs.directory 对已存在的目录会抛）"
+# ⑦ **故障注入按命名边界，不按计数。**
+#    手写那版数「第 N 次 move」，而 fs.atomic() 内部也在 move，于是注入打偏、
+#    三个用例全绿却什么都没测到（第 31 条）。上游的 Fault.boundary(name) 由
+#    被测代码自己给出边界名 —— 从根上不会有那个病。
+if grep -q 'HostDataTransaction.Fault' "$ADAPTER" \
+   && grep -q 'name.equals("new-dsh-sessions")' "$ADAPTER_TEST" \
+   && grep -q 'name.startsWith("rollback-")' "$ADAPTER_TEST"; then
+    ok "故障注入按上游的命名边界（不数第几次 move，第 31 条不会复发）"
 else
-    fail "直接用了 fs.directory —— 已存在的目录会让提交失败"
+    fail "故障注入退回了按位置计数 —— 注入会打偏而用例照绿"
+    CR_BAD=1
+fi
+#    计数那套的痕迹必须一点都不剩。
+if grep -q 'fault.swaps\|isSwap\|crashedMidSwap' "$ADAPTER_TEST"; then
+    fail "测试里还留着按计数注入的痕迹 —— 两套注入混在一起会互相掩盖"
+    CR_BAD=1
+else
+    ok "按计数注入的痕迹已清干净（只剩命名边界那套）"
+fi
+
+# ⑧ 崩溃现场必须由**真实代码路径**产生，不是测试里手搭。
+#    上游那份测试用的是真杀子进程，比注入更强 —— 钉住它真的在。
+if grep -q 'realProcessKillThenRecoveryAndKillDuringRollback' "$TXN_TEST" \
+   && grep -q 'destroyForcibly' "$TXN_TEST" && [ -f "$CRASH" ]; then
+    ok "崩溃测试真的杀子进程（destroyForcibly + 崩溃子进程辅助类在场）"
+else
+    fail "真杀进程那条用例或其辅助类不在了 —— 崩溃恢复失去最强的证据"
     CR_BAD=1
 fi
 
-# 删树要递归：fs.delete() 只删空目录，而 aside/candidate 都有内容。
-if grep -q 'removeOwned' "$COMMIT"; then
-    ok "删树走 removeOwned（fs.delete 只删空目录）"
+# ⑨ 两个类各自的条数。只钉总数的话，一个可以静默消失而总数仍然够。
+TXN_N=$(grep -c '@Test' "$TXN_TEST" 2>/dev/null || echo 0)
+ADP_N=$(grep -c '@Test' "$ADAPTER_TEST" 2>/dev/null || echo 0)
+if [ "$TXN_N" = "5" ]; then
+    ok "上游事务测试 5 条 @Test 全在（一条都没删）"
 else
-    fail "用 fs.delete 删有内容的目录会抛 DirectoryNotEmptyException"
+    fail "HostDataTransactionTest 有 $TXN_N 条 @Test，期望 5"
+    CR_BAD=1
+fi
+if [ "$ADP_N" = "7" ]; then
+    ok "适配层集成测试 7 条 @Test"
+else
+    fail "HostRestoreTransactionTest 有 $ADP_N 条 @Test，期望 7"
     CR_BAD=1
 fi
 
-# 反面：它必须是「我们自己的」，不是 DSHA 那套的改写。只看代码，不看注释 ——
-# 这个文件的 javadoc 里必须能写「上游把这一步放在 HostDataTransaction 里」。
-if grep -vE '^[[:space:]]*(\*|//|/\*)' "$COMMIT" \
-     | grep -qE 'ConfigStore|KeyVault|CredentialRead|logicalKind|dsh-child'; then
-    fail "提交/回切的**代码**里出现了 DSHA 自己的子系统（ConfigStore/KeyVault/…）—— 方向错了"
+# ⑩ **新加的检查器必须自证会红。**
+#    我给 check-dsha-imports.py 加了一条：同一路径不许同时出现在「已导入」与
+#    not_imported 里。加之前实测有三条这样的自相矛盾记录（BackupTree /
+#    NativeRestorePlan / HostDataTransaction），而**没有任何检查会红** ——
+#    登记文件同时在说「拿了」和「没拿」，下一个读它的人会相信错的那一半（第 33 条）。
+REG=governance/dsha-imports.json
+REG_BAK="$(mktemp)"
+cp "$REG" "$REG_BAK"
+python3 - <<'PYREG'
+import json
+p = "governance/dsha-imports.json"
+d = json.load(open(p, encoding="utf-8"))
+d["not_imported"]["items"].append({
+    "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/HostDataTransaction.java",
+    "reason": "注入：把一条已在 files[] 里的路径塞进 not_imported",
+})
+json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+PYREG
+if python3 tools/check-dsha-imports.py >/dev/null 2>&1; then
+    fail "not_imported 与 files/derived 重叠时检查器没有变红 —— 新检查是瞎的"
     CR_BAD=1
 else
-    ok "提交/回切的代码用的是本仓库的词汇（注释里的对比说明不算）"
+    ok "not_imported 与「已导入」重叠时确实变红（新检查有界）"
+fi
+cp "$REG_BAK" "$REG"
+rm -f "$REG_BAK"
+if python3 tools/check-dsha-imports.py >/dev/null 2>&1; then
+    ok "复原后导入核验重新通过"
+else
+    fail "复原后导入核验仍未通过 —— 注入没被还原干净"
+    CR_BAD=1
 fi
 
-# **注入必须自证。** 第一版数的是「第 N 次 move」，而 fs.atomic() 内部也在 move，
-# 于是 failAt=2 实际打在了别的地方 —— 三个用例当时都绿，却一个都没测到它名字说的事。
-# 现在每条注入都断言 fault.swaps 的期望值；这三条断言就是「注入真的注进去了」的证据。
-if grep -q 'fault.swaps' "$COMMIT_TEST" && [ "$(grep -c 'fault.swaps' "$COMMIT_TEST")" -ge 3 ]; then
-    ok "三条故障注入各自自证（断言 fault.swaps 的期望值）"
-else
-    fail "故障注入没有自证 —— 注入没生效时用例照样会绿（事故表第 16 条）"
-    CR_BAD=1
-fi
-# 而语义识别换入/换出动作，正是让上面那个自证有意义的前提。
-if grep -q 'isSwap' "$COMMIT_TEST"; then
-    ok "注入按语义识别换入/换出动作（不数第几次 move）"
-else
-    fail "注入按位置计数 —— fs.atomic() 内部的 move 会让计数偏掉"
-    CR_BAD=1
-fi
-# 崩溃现场必须由真实代码路径产生，不能在测试里手搭（手搭的会和源码各说各话）。
-if grep -q 'crashedMidSwap' "$COMMIT_TEST"; then
-    ok "崩溃现场由真实代码路径产生（回切也失败 → 日志留下）"
-else
-    fail "崩溃现场是手搭的 —— 会与源码各说各话（事故表第 17 条）"
-    CR_BAD=1
-fi
-
-# **改了检查器，就必须证明它仍然有界。**
+# ⑪ **改了检查器，就必须证明它仍然有界**（第 32 条）。
 # 我把 check-backup-contract.py 的「悬空限定名」规则从 `[A-Za-z0-9_.]\s*new` 改成
 # `[A-Za-z0-9_]\s*\.\s*new`（旧的那个字符类会匹配 `return` 的最后一个字母，于是把
-# **规则自己推荐的写法**判红）。改完必须两个方向都验：
+# **规则自己推荐的写法**判红）。改完两个方向都要验：
 # ① 真的悬空限定名仍须变红；② 推荐写法必须不再变红。
 DANGLE_PROBE="backup/src/main/java/com/dshbox/app/backup/DanglingProbe.java"
 printf 'package com.dshbox.app.backup;\n\nimport java.io.*;\n\nfinal class DanglingProbe {\n  static String p(File f) throws IOException {\n    return java.nio.file.new String(Files.readAllBytes(f.toPath()));\n  }\n}\n' > "$DANGLE_PROBE"
@@ -2154,20 +2233,12 @@ else
 fi
 rm -f "$DANGLE_PROBE"
 # ② 推荐写法（`return new String(Files.readAllBytes(…)`）必须通过 ——
-#    这正是旧规则误伤的那一行，而它就在 HostRestoreCommitTest 里。
-if grep -q 'return new String(Files.readAllBytes(' "$COMMIT_TEST" \
+#    这正是旧规则误伤的那一行，而它就在适配层的测试里。
+if grep -q 'return new String(Files.readAllBytes(' "$ADAPTER_TEST" \
    && python3 tools/check-backup-contract.py >/dev/null 2>&1; then
     ok "推荐写法（new String(Files.readAllBytes(…))）不再被判失败（误伤已修）"
 else
     fail "推荐写法被判失败，或契约核验未通过 —— 规则仍在误伤正确实现"
-    CR_BAD=1
-fi
-
-COMMIT_COUNT=$(grep -c '@Test' "$COMMIT_TEST" 2>/dev/null || echo 0)
-if [ "$COMMIT_COUNT" = "9" ]; then
-    ok "HostRestoreCommitTest 有 9 条 @Test"
-else
-    fail "HostRestoreCommitTest 有 $COMMIT_COUNT 条 @Test，期望 9"
     CR_BAD=1
 fi
 

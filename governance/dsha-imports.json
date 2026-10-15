@@ -142,6 +142,24 @@
         ],
         "why": "2.4 的全部安全性都压在「预检 / 候选 / 提交」三步的次序上，这些测试是**唯一**能证明「校验失败时一个字节都没写进活动目录」的东西。",
         "verified_by": "tools/check-dsha-imports.py"
+      },
+      {
+        "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/HostDataTransactionTest.java",
+        "upstream_bytes": 7387,
+        "upstream_sha256": "ef4246ec220919a1bbfad527f4167a3b7d0aeb6b96cd50f1647679dc3746eb66",
+        "local_path": "backup/src/test/java/com/deepseekharness/app/backup/HostDataTransactionTest.java",
+        "kind": "adapted",
+        "kept": [
+          "5 条用例全部保留，一条都没删、一条都没改名",
+          "fixture() 的完整前置（两个根 + 候选树 + settings.json + prepare 的 before 摘要）",
+          "真杀进程那条：子进程到边界后自报到达并无限等待，父进程 destroyForcibly 后等它真的退出",
+          "corruptPlanOrMarkerRetainsAllFiles 的两段（坏 finalized 标记、坏 plan.json）都保留"
+        ],
+        "changed": [
+          "11 处 Files.readString/writeString → Files.readAllBytes + new String(…, UTF_8) / Files.write(p, s.getBytes(UTF_8))，并补 import java.nio.charset.StandardCharsets —— 与阶段 2.2 那三份测试同一个原因（AGP 8.9.2 按 android.jar 解析 java.nio.file，没有 Java 11 的 readString/writeString），见 docs/INCIDENTS.md 第 20 条"
+        ],
+        "why": "上游这份测试是这条链上唯一的真崩溃证据，而且它证明的性质（杀在 4 个不同持久化边界后仍能恢复）正是我们最需要的那一条。正文只能机械等效替换，所以走 adapted 而不是逐字节。",
+        "verified_by": "tools/check-dsha-imports.py"
       }
     ]
   },
@@ -162,12 +180,19 @@
       "role": "v5 容器读写与完整性/manifest 一致性校验"
     },
     {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupLimits.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupLimits.java",
-      "upstream_bytes": 2473,
-      "upstream_sha256": "20ea4d678002c82fd6d1b815383a0d242fd66abcfd25688bda3aeb4d9cb2c1d9",
-      "blob": "f8efe962a34bb218964c2dd5bd5ce7bd812aea61",
-      "role": "各项上限、逻辑根名与路径校验、Unicode 归一化碰撞键"
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupControl.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupControl.java",
+      "upstream_bytes": 1902,
+      "upstream_sha256": "4ead9fa1e423963c9d4bba7165f9035453cb979369de6743a39fd6a3dc105cf7",
+      "blob": "d78420edfc01b38b53925eaa360854206755811d",
+      "role": "进度回调与取消检查抽象（核心不持有界面）"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupFileSystem.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupFileSystem.java",
+      "upstream_bytes": 9495,
+      "upstream_sha256": "451905c981710e610d61716e77736feca39bb14c576def2ed07aca9688a5f350",
+      "role": "窄文件系统边界（stat/read/list/create/move/delete/mode/symlink）；生产实现用 Android lstat/NOFOLLOW，JVM 用真实临时文件验证"
     },
     {
       "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupJson.java",
@@ -178,12 +203,96 @@
       "role": "有界 JSON 读写（拒绝重复键、深层嵌套、超长数字、超 RECORD 字符串）；依赖 Gson 的 Strictness"
     },
     {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupControl.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupControl.java",
-      "upstream_bytes": 1902,
-      "upstream_sha256": "4ead9fa1e423963c9d4bba7165f9035453cb979369de6743a39fd6a3dc105cf7",
-      "blob": "d78420edfc01b38b53925eaa360854206755811d",
-      "role": "进度回调与取消检查抽象（核心不持有界面）"
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupLimits.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupLimits.java",
+      "upstream_bytes": 2473,
+      "upstream_sha256": "20ea4d678002c82fd6d1b815383a0d242fd66abcfd25688bda3aeb4d9cb2c1d9",
+      "blob": "f8efe962a34bb218964c2dd5bd5ce7bd812aea61",
+      "role": "各项上限、逻辑根名与路径校验、Unicode 归一化碰撞键"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupSource.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupSource.java",
+      "upstream_bytes": 1772,
+      "upstream_sha256": "5dd846282c0ab73e48d2c10f0ecf5afdfaf2cf45906122f2d42675f60af98775",
+      "role": "文件系统与 SAF 共用的数据源接口；归档只记逻辑根与相对路径，物理位置留在宿主"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/CredentialFileBackupSource.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/CredentialFileBackupSource.java",
+      "upstream_bytes": 3636,
+      "upstream_sha256": "15dc65263dfd57d72ec3eca0900e79cc952c0fa9cafccca27492781b063e6298",
+      "blob": "2b26a94a205ac6beac9166f935c0117d5cdcdbf6",
+      "role": "把投影包在一个 BackupSource 外面：条目 token 同时绑定**原始字节**与**投影后字节**的摘要，因此「源在读取过程中变了」会被 CREDENTIAL_PROJECTION_SOURCE_CHANGED 挡住"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/CredentialProjection.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/CredentialProjection.java",
+      "upstream_bytes": 13563,
+      "upstream_sha256": "2875499dc695307e09e9aab462489344ecb7f7a68895065f3fc0b228fe884333",
+      "blob": "784699e3bd3e0a906f81249705853bf6c850d2a9",
+      "role": "按 DSH 自己的 `.credentials.yaml` 布局做凭据投影：删掉机器本地记录（`client-connection/`），保留 provider 凭据；解析失败一律 fail-closed 且不把含密文的 YAML 诊断带出来"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/DataFormatEvidence.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/DataFormatEvidence.java",
+      "upstream_bytes": 2472,
+      "upstream_sha256": "30a950443b25001b4c0c0d2355cf37c3be028cd908ebe1acd9156087222debce",
+      "blob": "",
+      "role": "阶段 2.4：NativeRestorePlan 的依赖（数据格式证据/诊断），纯 JVM"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/FileBackupSource.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/FileBackupSource.java",
+      "upstream_bytes": 7328,
+      "upstream_sha256": "2a87195209cc5b2ff253333c4cf6266c9478221086f458d5d87ddfd890a75ebf",
+      "role": "以物理根为起点的枚举实现。它的 `Policy` 接口（`before`/`exclusion`）正是阶段 2.2 范围过滤与 2.3 凭据排除的切口"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/GuestDataResolver.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/GuestDataResolver.java",
+      "upstream_bytes": 7931,
+      "upstream_sha256": "3137b9a7453d795149ec9e93068c3611157ede895f0ff19842ead58c5a5527e4",
+      "role": "proot `--link2symlink` 的 `.l2s` 占位解析。**DSHBox 也用 link2symlink**（见上游 trap 一节），所以这不是 DSHA 专有需求"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/HostDataTransaction.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/HostDataTransaction.java",
+      "upstream_bytes": 12736,
+      "upstream_sha256": "1b4f450ca822d3d2dc812edb9072d5941bd4ee9858ffe676cb9aac5d24afbef6",
+      "blob": "4c8eab541d8e7c40b299f1c2b0fe85ad494daaec",
+      "role": "多根事务的预检/提交/回切/崩溃恢复 —— 阶段 2.4b-② 的提交步骤"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/HostSnapshot.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/HostSnapshot.java",
+      "upstream_bytes": 9603,
+      "upstream_sha256": "215648fe469c374e963aa4f1df1a15133b386b3d202ab2ea5c149eb7d8e321f5",
+      "role": "逐文件暂存并写 v5 归档的编排；写入前后做有界变化检测，任何非源读取错误都中止产物"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeRestorePlan.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/NativeRestorePlan.java",
+      "upstream_bytes": 17107,
+      "upstream_sha256": "ac07b6a6753bcbe9f6d6c5d9ca5f6dfdf3ac2fb5707361d5fdd13a6a53218412",
+      "blob": "",
+      "role": "阶段 2.4：恢复计划（预检 + 候选构建 + 校验），纯 JVM"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/RuntimeDescriptor.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/RuntimeDescriptor.java",
+      "upstream_bytes": 6258,
+      "upstream_sha256": "51f48f136efe18c86c60f288f8fe1b9669d9e3fc199202316b125dae92f991a8",
+      "blob": "",
+      "role": "阶段 2.4：DataFormatEvidence 的依赖（运行环境描述），纯 JVM"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/TransactionMarkers.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/TransactionMarkers.java",
+      "upstream_bytes": 1214,
+      "upstream_sha256": "77faa38beb72857f034021c145529d2c809f1a5884e848916634851ee06fab94",
+      "blob": "4dc61712d68bf2c2cf9685d86059b71b495df7f7",
+      "role": "事务相位标记的读写（内容自描述：目录名+换行+标记名+换行，标记无法被悄悄挪用）"
     },
     {
       "upstream_path": "app/src/main/java/com/deepseekharness/app/util/BackupScopes.java",
@@ -192,6 +301,21 @@
       "upstream_sha256": "dcd531a939489a5c90abd5e764a455b9dc441a5decf5c697be4af8811373dcf6",
       "blob": "c210d9c9d035691f71fe1a0c4812714366d47e8b",
       "role": "五个范围常量；BackupArchive 以全限定名引用它，故必须同路径搬"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/util/FileKind.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/util/FileKind.java",
+      "upstream_bytes": 595,
+      "upstream_sha256": "0f7907e28441e753e8e400aa9ca56b6c5cf3062e28eed9dbab05b9748d3b407c",
+      "role": "文件种类枚举；容器与数据源共用的线格式名，未知名必须显式失败"
+    },
+    {
+      "upstream_path": "app/src/main/java/com/deepseekharness/app/util/Ids.java",
+      "local_path": "backup/src/main/java/com/deepseekharness/app/util/Ids.java",
+      "upstream_bytes": 388,
+      "upstream_sha256": "81feaf48fdbdfbcfcbced11108e04418c597bf4c0192d5779b3dca39c685cc68",
+      "blob": "dacfe0bfc78f0c96d8555f5d082e70028e089de4",
+      "role": "持久事务 ID 的 UUID 线格式（HostDataTransaction 用它校验事务目录名）"
     },
     {
       "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/BackupArchiveTest.java",
@@ -210,46 +334,12 @@
       "role": "按 UTF-8 实际字节计界、往返、无限集合必须有界报错"
     },
     {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/util/FileKind.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/util/FileKind.java",
-      "upstream_bytes": 595,
-      "upstream_sha256": "0f7907e28441e753e8e400aa9ca56b6c5cf3062e28eed9dbab05b9748d3b407c",
-      "role": "文件种类枚举；容器与数据源共用的线格式名，未知名必须显式失败"
-    },
-    {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupFileSystem.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupFileSystem.java",
-      "upstream_bytes": 9495,
-      "upstream_sha256": "451905c981710e610d61716e77736feca39bb14c576def2ed07aca9688a5f350",
-      "role": "窄文件系统边界（stat/read/list/create/move/delete/mode/symlink）；生产实现用 Android lstat/NOFOLLOW，JVM 用真实临时文件验证"
-    },
-    {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupSource.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/BackupSource.java",
-      "upstream_bytes": 1772,
-      "upstream_sha256": "5dd846282c0ab73e48d2c10f0ecf5afdfaf2cf45906122f2d42675f60af98775",
-      "role": "文件系统与 SAF 共用的数据源接口；归档只记逻辑根与相对路径，物理位置留在宿主"
-    },
-    {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/GuestDataResolver.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/GuestDataResolver.java",
-      "upstream_bytes": 7931,
-      "upstream_sha256": "3137b9a7453d795149ec9e93068c3611157ede895f0ff19842ead58c5a5527e4",
-      "role": "proot `--link2symlink` 的 `.l2s` 占位解析。**DSHBox 也用 link2symlink**（见上游 trap 一节），所以这不是 DSHA 专有需求"
-    },
-    {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/FileBackupSource.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/FileBackupSource.java",
-      "upstream_bytes": 7328,
-      "upstream_sha256": "2a87195209cc5b2ff253333c4cf6266c9478221086f458d5d87ddfd890a75ebf",
-      "role": "以物理根为起点的枚举实现。它的 `Policy` 接口（`before`/`exclusion`）正是阶段 2.2 范围过滤与 2.3 凭据排除的切口"
-    },
-    {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/HostSnapshot.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/HostSnapshot.java",
-      "upstream_bytes": 9603,
-      "upstream_sha256": "215648fe469c374e963aa4f1df1a15133b386b3d202ab2ea5c149eb7d8e321f5",
-      "role": "逐文件暂存并写 v5 归档的编排；写入前后做有界变化检测，任何非源读取错误都中止产物"
+      "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/HostTransactionCrashProcess.java",
+      "local_path": "backup/src/test/java/com/deepseekharness/app/backup/HostTransactionCrashProcess.java",
+      "upstream_bytes": 1133,
+      "upstream_sha256": "7504f9b777c7d304b9548d57dc0f3745a4b0aa4cc1ad6fd3b710d6d8ecb74aaa",
+      "blob": "7c8d226b83a981f67da57e91375cba0bfe86f37a",
+      "role": "崩溃子进程：在指定持久化边界自报到达后无限等待，由父进程强杀（真进程死亡，不是抛异常模拟）"
     },
     {
       "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/JvmBackupFileSystem.java",
@@ -264,55 +354,11 @@
       "upstream_bytes": 1178,
       "upstream_sha256": "2839faf46ff9f1e41101d614c36530cdad63e738ee442a5eacfba5ee449103d8",
       "role": "未知线格式名必须抛错，不能默认成某个种类"
-    },
-    {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/CredentialProjection.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/CredentialProjection.java",
-      "upstream_bytes": 13563,
-      "upstream_sha256": "2875499dc695307e09e9aab462489344ecb7f7a68895065f3fc0b228fe884333",
-      "blob": "784699e3bd3e0a906f81249705853bf6c850d2a9",
-      "role": "按 DSH 自己的 `.credentials.yaml` 布局做凭据投影：删掉机器本地记录（`client-connection/`），保留 provider 凭据；解析失败一律 fail-closed 且不把含密文的 YAML 诊断带出来"
-    },
-    {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/CredentialFileBackupSource.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/CredentialFileBackupSource.java",
-      "upstream_bytes": 3636,
-      "upstream_sha256": "15dc65263dfd57d72ec3eca0900e79cc952c0fa9cafccca27492781b063e6298",
-      "blob": "2b26a94a205ac6beac9166f935c0117d5cdcdbf6",
-      "role": "把投影包在一个 BackupSource 外面：条目 token 同时绑定**原始字节**与**投影后字节**的摘要，因此「源在读取过程中变了」会被 CREDENTIAL_PROJECTION_SOURCE_CHANGED 挡住"
-    },
-    {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeRestorePlan.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/NativeRestorePlan.java",
-      "upstream_bytes": 17107,
-      "upstream_sha256": "ac07b6a6753bcbe9f6d6c5d9ca5f6dfdf3ac2fb5707361d5fdd13a6a53218412",
-      "blob": "",
-      "role": "阶段 2.4：恢复计划（预检 + 候选构建 + 校验），纯 JVM"
-    },
-    {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/DataFormatEvidence.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/DataFormatEvidence.java",
-      "upstream_bytes": 2472,
-      "upstream_sha256": "30a950443b25001b4c0c0d2355cf37c3be028cd908ebe1acd9156087222debce",
-      "blob": "",
-      "role": "阶段 2.4：NativeRestorePlan 的依赖（数据格式证据/诊断），纯 JVM"
-    },
-    {
-      "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/RuntimeDescriptor.java",
-      "local_path": "backup/src/main/java/com/deepseekharness/app/backup/RuntimeDescriptor.java",
-      "upstream_bytes": 6258,
-      "upstream_sha256": "51f48f136efe18c86c60f288f8fe1b9669d9e3fc199202316b125dae92f991a8",
-      "blob": "",
-      "role": "阶段 2.4：DataFormatEvidence 的依赖（运行环境描述），纯 JVM"
     }
   ],
   "not_imported": {
     "note": "同样属于备份能力、但按阶段**刻意不搬**的类及理由。阶段 2.1–2.2 搬的是「判断归档对不对」与「决定备份什么」；剩下这一批全部是**恢复编排**，归阶段 2.4。其中只有 BackupTree / AndroidBackupFileSystem / AndroidTreeFileSystem 是因为 Android 耦合（AndroidTreeFileSystem 的批量快速路径）而搬不进来，其余都是因为绑定 DSHA 自己的模型（rootfs 分包、user-data-v5、自建插件目录）。",
     "items": [
-      {
-        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeRestorePlan.java",
-        "reason": "零 Android 依赖，但其价值全部经由 NativeRestorePlan.Mapping 接口表达；没有 DSHFusion 自己的 Mapping 实现时搬过来就是死代码。Mapping 正是阶段 2.4（隔离试运行 + 失败回切）要实现的切口。"
-      },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeRestoreTargets.java",
         "reason": "**三条独立理由，最强的不是「依赖 android」。**\n① **逻辑根词汇根本不同（决定性）**：归档的根名 = `BackupSource.id()`（`HostSnapshot.java:43`/`:220`），而 `BackupSource.description()` 只给 `id`/`scope`/`external` 三个键（`BackupSource.java:62-68`）。本类的 `target()` 第一句就是 `BackupJson.string(root, \"logicalKind\")` —— **我们的根没有这个键，它会直接抛**。它认的根名是 `dsh-home`/`dsh-child`/`native-settings`/`plugin-store`/`plugin-package`/`project`，其中 `dsh-child` 是「`.dsh` 的子条目逐个成根」；我们是「一个 `DshBackupMember` 一个根」。**这是两套不同的归档词汇，不是同一套的两个实现。**\n② **目的地路径不同**：它写 `runtime-current/base`、`files/user-data-v5/dsh`、`files/plugin-imports/<task>`；我们的是 `user-data/.dsh`。\n③ **设置钩子不同**：它在 4 处调用 `new ConfigStore(context).hostSettingsState()/applyHostSettings()/prepareHostSettings()`，指向 DSHA 自己的设置与凭据子系统（`ConfigStore` 817 行 → `KeyVault` 145 → `CredentialRead` 73）—— 那是 SharedPreferences + Keystore；骨干是 Kotlin + DataStore。搬进这套等于在骨干旁边长期并行第二套设置模型，每次双上游同步都会冲突。\n⇒ 2.4b **另写一个 `Mapping`**（权威实现是我们自己的归档词汇），本类不导入。审计全文见 docs/FUSION-PLAN.md 的「2.4b 的只读审计结论」。",
@@ -331,10 +377,6 @@
         "reason": "它不是枚举，而是异常→错误码的归类器，且含两处 Android 类名判断。真正有用的东西是它透传的那套错误码表，而那张表已经通过容器的 IOException message 自然存在，本阶段不需要额外包装。"
       },
       {
-        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupTree.java",
-        "reason": "**唯一因为 Android 耦合被挡在门外的一个**。它引用 AndroidBackupFileSystem、AndroidTreeFileSystem.LeafBatch.PAYLOAD_BYTES 与 AndroidTreeFileSystem.DigestDirectory —— 都是 Android 专属快速路径，搬进来纯 JVM 单测就跑不了。而且它只被一批事务类使用（ColdInstallTransaction / ConfigurationSnapshots / EnvironmentRebuildTransaction / HostDataTransaction / ManagedRuntimeTransaction / NativeConfigurationReset / NativeRestorePlan / NativeRestoreTargets / ProfileSettingsTransaction / QuarantinedPluginReview），全属阶段 2.4 的恢复编排。现在搬进来只会是「有代码没调用方」。"
-      },
-      {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/AndroidBackupFileSystem.java",
         "reason": "BackupTree 的 Android 实现（lstat/NOFOLLOW、批量列举）。阶段 2.2 的 JVM 侧已有 JvmBackupFileSystem 供单测；Android 实现等 2.4 有真实调用方时再搬，那时才验证得了。"
       },
@@ -345,10 +387,6 @@
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ColdInstallTransaction.java",
         "reason": "恢复事务之一：依赖 DSHA 的冷装模型与 BackupTree。阶段 2.4 的范围。"
-      },
-      {
-        "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/HostDataTransaction.java",
-        "reason": "恢复事务之一：DSHA 的 user-data-v5 布局。阶段 2.4 的范围。"
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ManagedRuntimeTransaction.java",
@@ -406,14 +444,14 @@
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真跑）"
       },
       {
-        "local_path": "backup/src/main/java/com/dshbox/app/backup/HostRestoreCommit.java",
-        "why": "阶段 2.4b-② 的提交与回切。**不是移植** —— 上游把这一步放在 HostDataTransaction 里，而那个类依赖它自己的 ConfigStore/KeyVault，没搬。原子性靠同文件系统 rename：候选树在活动目录之外建好、逐文件校验过，再两次 move 换进去，所以活动树不会半新半旧。要处理的是「两次 rename 之间目标不存在」与「aside 残留」，靠 fs.atomic() 写的日志恢复；**恢复判定看摘要不看相位**。有一条必须先断言的前提：task 与活动目录必须同设备（CROSS_DEVICE），否则 move 退化成拷贝、原子性静默消失。",
-        "verified_by": "tools/run-backup-jvm-tests.sh（本机真跑，含故障注入）"
+        "local_path": "backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java",
+        "why": "阶段 2.4b-② 的**适配层**：把我们的 NativeRestorePlan（候选树 task/candidate/<group>、plan.before）接到上游的 HostDataTransaction（Targets/Settings/Fault）上。**不是移植，也不是重写** —— 上游那个类逐字节导入，这里只做词汇映射，并补上上游**没有**的 CROSS_DEVICE 检查（跨文件系统时 move 退化成拷贝、原子性静默消失）。设置轴故意做成「非空就抛 SETTINGS_NOT_SUPPORTED」：我们还没有设置轴，而恒空表的实现会让上游那三处设置断言永远通过（第 30 条）。⚠️ 这个文件的前身 HostRestoreCommit.java 是**手写的 350 行**，理由「上游那个类依赖 ConfigStore/KeyVault」是错的 —— 我没读那个文件就写下了它。已删除，不保留两套。见第 33 条。",
+        "verified_by": "backup/src/test/java/com/dshbox/app/backup/HostRestoreTransactionTest.java"
       },
       {
-        "local_path": "backup/src/test/java/com/dshbox/app/backup/HostRestoreCommitTest.java",
-        "why": "上面那个提交/回切的测试。关键是**故障注入真的注进去了**：第一版数的是「第 N 次 move」，而 fs.atomic() 内部也在 move，于是 failAt=2 实际打在 move(active, aside) 上 —— 三个用例当时都绿，却一个都没测到它名字说的事（事故表第 16 条的形态）。现在按语义识别换入/换出动作，并且每条注入都自证 fault.swaps 的期望值。崩溃现场由**真实代码路径**产生（从第 2 次换起全失败 → 回切也失败 → 日志留下），不是在测试里手搭一个现场。",
-        "verified_by": "tools/run-backup-jvm-tests.sh（本机真跑）"
+        "local_path": "backup/src/test/java/com/dshbox/app/backup/HostRestoreTransactionTest.java",
+        "why": "上面那个适配层的**集成**测试。上游的 HostDataTransactionTest 测的是它自己（自搭的 sessions/settings 两根 + DiskSettings），证明不了「我们接得上」：① 我们的候选树路径与上游 candidate(id) 同构吗；② plan.before 能直接当 expectedBefore 吗；③ 适配层自己加的 CROSS_DEVICE 真的会在动任何东西之前拦下吗（上游没有这条检查，永远测不到）。故障注入用上游的**命名边界** Fault.boundary(name)，不用计数 —— 计数那套我踩过（第 31 条）。另有一条专门测「非空设置必须被拒绝」，防止设置轴变成没有输入空间的断言。",
+        "verified_by": "tools/run-backup-jvm-tests.sh"
       }
     ]
   }

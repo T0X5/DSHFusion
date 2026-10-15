@@ -2024,3 +2024,160 @@ DANGLING_QUALIFIER = re.compile(r"[A-Za-z0-9_]\s*\.\s*new\s+String\(…")
 > `[A-Za-z0-9_.]` 看起来像「限定名的结尾」，实际是「任意标识符的结尾」。
 >
 > **改了检查器，两个方向都要注入** —— 漏抓和误抓都要有会红的输入。
+
+---
+
+## 33. 我把一个耦合结论**写进仓库**，却没读那个文件 —— 于是重写了一个上游本来就有、且更严密的实现
+
+> **第 28 条的原样复发。** 那一次的教训是「审计的结论也要能被证伪」，
+> 我把它写进了 AGENTS.md，然后**在下一个阶段又犯了**，而且这次写进了**受版本控制的登记文件**。
+
+### 我写了什么
+
+阶段 2.4b-② 的类注释与 `governance/dsha-imports.json` 里，我写的是：
+
+> 提交这一步**在上游和我们这里都不存在** —— 上游 DSHA 把它放在 `HostDataTransaction` 里，
+> **那个类依赖它自己的 `ConfigStore`/`KeyVault`**，我们没搬。这个类补的就是它。
+
+并据此**从零手写了 350 行** `HostRestoreCommit.java` + 9 条测试。
+
+### 实测是什么
+
+```console
+$ grep -n '^import' app/src/main/java/com/deepseekharness/app/backup/HostDataTransaction.java
+3:import java.io.*;
+4:import java.util.*;
+
+$ grep -n 'ConfigStore\|KeyVault\|CredentialRead' HostDataTransaction.java
+  （一次都没提到）
+```
+
+它引用的同包 DSHA 类是
+`BackupControl BackupFileSystem BackupJson BackupLimits BackupTree TransactionMarkers` ——
+**前五个我们已经有了**（`TransactionMarkers` 34 行，纯 JVM）。
+
+**它就在可达范围内。** 而且它比我写的那份**更严密**：
+
+| | 我写的 | `HostDataTransaction` |
+|---|---|---|
+| 提交前重验 | 只重验 `before` | 重验 `before` **和** `after`（`CANDIDATE_CHANGED`） |
+| 嵌套目标 | 没有 | `OVERLAPPING_TARGETS`（父目录与子目录互为目标） |
+| 持久标记 | 一个 `commit-journal.json` | `verified`→`switching`→`files-committed`→`settings-committed`→`finalized` 五相位标记 |
+| 恢复判定 | 只看摘要 | **相位 + 摘要**（`ORIGINAL_CHANGED` / `FAILED_RETAINED` / `ORIGINAL_MISSING`） |
+| 崩溃测试 | 注入（而且第一版注错了，见第 31 条） | `realProcessKillThenRecoveryAndKillDuringRollback` —— **真杀子进程** |
+
+它还有 `HostDataTransactionTest`（202 行、5 条测试）。
+
+### 根因
+
+**我把「依赖清单 + 行数」当成了可达性证据，而没有去读那几处引用本身。**
+`HostDataTransaction` 的 `import` 行里只有 `java.io`/`java.util` ——
+这恰恰是「没有外部耦合」的**正面**证据，而我把它读成了「反正它依赖别的没搬的东西」。
+
+更糟的是：**同包类不需要 import。** 我上一轮刚为 `HostOperationArchive` 用过这条规则
+（那次我确实去读了同包标识符），这一轮却没有对 `HostDataTransaction` 做同一件事。
+
+### 为什么这次特别贵
+
+前 32 条都是「检查没抓到」或「断言写错」。**这一条是方向性的错**：
+
+- 违反了硬约束 2（**能直接保留的成熟实现就保留，不要重写**）。
+- 350 行自写代码 + 9 条测试，本可以是一份 362 行的逐字节导入 + 一份适配层。
+- 而错误结论**写进了 `dsha-imports.json`** —— 那是「我们从上游拿了什么」的权威登记。
+  下一个接手的人会**读到那句话并相信它**，于是永远不去看那个文件。
+
+### 修法
+
+1. 修正 `dsha-imports.json` 与类注释里的那句话（保留原文并标明它错在哪 —— 删掉它等于
+   抹掉这次教训的现场）。
+2. 按审计结论**改为移植** `HostDataTransaction` + `TransactionMarkers` + `Ids`
+   + 上游那份测试（`Files.writeString` 需按第 20 条机械适配）。
+3. **删掉我手写的那一份**，不保留两套实现 —— 那正是硬约束 2 要避免的。
+4. `CROSS_DEVICE` 是上游**没有**的检查（跨设备时 `move` 退化成拷贝、原子性静默消失），
+   保留在适配层里，登记为对上游的**增强**而不是改写。
+
+### 教训
+
+> **「这个类依赖别的没搬的东西」是一个可以两秒验证的断言。**
+> 验证方法就是 `grep '^import'` 加上一次同包标识符扫描 —— 而后者我上一轮刚做过。
+>
+> **写进登记文件的话比写在脑子里的错更贵。** 登记文件是给下一个人的，
+> 它会终止对方的怀疑。所以：**登记里每一句「为什么没搬」，都必须附上它的验证命令。**
+
+---
+
+## 34. 权威登记文件**自相矛盾**，而没有任何检查会红 —— 然后我写的新检查**自己也是瞎的**
+
+第 33 条收尾时我去核对「`HostDataTransaction` 到底登记在哪」，顺手发现了一件更大的事。
+
+### 现象
+
+`governance/dsha-imports.json` 里，**同一个上游路径同时出现在「我们导入了它」与
+「我们没有导入它」两侧**，一共三条：
+
+| 上游路径 | 在「导入了」哪一侧 | 也在 `not_imported` |
+|---|---|---|
+| `backup/BackupTree.java` | `derived`（2.4a 适配导入） | ✅ 是 |
+| `backup/NativeRestorePlan.java` | `files`（2.4a 逐字节导入） | ✅ 是 |
+| `backup/HostDataTransaction.java` | `files`（本轮） | ✅ 是（第 33 条那句话说「没搬」） |
+
+**而 `tools/check-dsha-imports.py` 一条都不会报。** 它查来源头、查正文哈希、
+查「导入目录里有没有未登记的文件」、查「登记了但不在目录里」、查
+`files`/`derived`/`original` 三类身份互斥 —— **唯独不查 `not_imported`。**
+
+### 为什么这比「少登记一个文件」更危险
+
+登记文件是「我们从上游拿了什么」的**权威答案**。前两类错（漏登记）会让人
+**多找一遍**；这一类错会让人**读到「没拿」就停止查找** —— 而那个文件其实就在树里。
+
+第 33 条就是这么发生的：我写下「`HostDataTransaction` 没搬」，然后**自己相信了它**，
+于是重写了一个本来就在可达范围内的实现。
+
+### 修法一：补检查
+
+`check-dsha-imports.py` 新增 `check_not_imported_disjoint()`：同一 `upstream_path`
+不许既在 `files`/`derived` 里、又在 `not_imported` 里。5p 节带注入。
+
+### 现象二：**我写的新检查，第一版是瞎的**
+
+注入立刻抓到了它：
+
+```
+[FAIL] not_imported 与 files/derived 重叠时检查器没有变红 —— 新检查是瞎的
+```
+
+第一版我拿 `not_imported[].upstream_path` 去比一个**本机路径**（`local_path`）的集合：
+
+```python
+not_imported_problems = check_not_imported_disjoint(doc, taken | original_paths)
+#                                                       ^^^^^ 里面是 local_path
+```
+
+两边**永远不可能相等**，所以它是一条**不可能变红的检查** —— 第 30 条的原样复发，
+而且是在我**刚刚写完第 30 条之后**、**专门为了防第 33 条**而写的那条检查里。
+
+修法：改成比较**上游路径**集合。改完注入立刻变红，复原后重新通过。
+
+### 现象三：我重新引入了套件自己注释里刚警告过的缺陷
+
+5p 节里我写的是「把登记文件复制到一个**写死的临时路径**」—— 具体路径这里不照抄
+（照抄会被 `privacy_audit.py` 当成真缺陷，它分不清引用与实情）：
+
+而同一个文件上面几十行就是它自己的注释：
+
+> 2026-10-13 实测：它在 DSHFusion 里报出 34 处，其中 31 处是我们自己文件里
+> 写死的 `/tmp` 路径（真实工程缺陷，**已改用 mktemp**）
+
+`tools/privacy_audit.py` 当场报出 2 处。已改用 `mktemp`。
+
+### 教训
+
+> **「加了一条检查」与「这条检查会红」是两件事。** 而后者只有注入能证明 ——
+> 第 30 条写下的规矩，我在同一轮里又违了一次，违在一条**专门为它而写**的检查上。
+>
+> **注入不是「顺便加的安全网」，它是新检查的验收标准。** 没有注入的新检查，
+> 状态是「未知」，不是「通过」。
+>
+> **警告写在文件里 ≠ 读它的人会看见。** 那条 `/tmp` 的注释就在我要改的那几行上面
+> 几十行处，我读那个文件读了不止一遍 —— 而我仍然写下了硬编码的 `/tmp`。
+> 靠「记得」防不住；能防住的是**让机器每次现场判一次**（`privacy_audit.py` 做到了）。

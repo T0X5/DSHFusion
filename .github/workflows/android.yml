@@ -129,15 +129,19 @@ jobs:
               problems.append(f"{codes} 没有运行（本机无 kotlinc，它只可能在这里跑）")
           elif classes[codes] != 8:
               problems.append(f"{codes} 跑了 {classes[codes]} 条，期望 8 条")
-          # 下限 = 阶段 2.4b-② 的**预期**总数 105，即「不允许净减少」。
-          # 推导过程（不是数出来的）：阶段 2.4b-① CI 实测 96（Java 53 + Kotlin 43）。
-          # 2.4b-② 在**本机真跑**得到 Java 62 条（53 + HostRestoreCommitTest 的 9），
-          # Kotlin 侧未动仍是 43 ⇒ 62 + 43 = 105。
-          # 62 是本机实测（tools/run-backup-jvm-tests.sh），43 是上一阶段 CI 实测。
-          # 这两个数拼起来的 105 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
-          # 若 CI 报的不是 105，先信 CI（docs/INCIDENTS.md 第 27 条）。
-          if total < 105:
-              problems.append(f":backup 只有 {total} 条测试，低于阶段 2.4b-② 的预期总数 105")
+          # 下限 = **预期**总数 108，即「不允许净减少」。
+          # 推导过程（不是数出来的）：阶段 2.4b-② 的 CI 实测 105（Java 62 + Kotlin 43）。
+          # 本轮把 2.4b-② 从「手写的 350 行」换成「逐字节导入上游的 HostDataTransaction
+          # + 一层适配」，本机真跑从 62 变成 65：
+          #   62 − 9（删掉手写的 HostRestoreCommitTest）
+          #      + 5（上游 HostDataTransactionTest，适配后导入，含真杀子进程那条）
+          #      + 7（我们的 HostRestoreTransactionTest，集成 + CROSS_DEVICE + 设置轴）
+          #   = 65；Kotlin 侧未动仍是 43 ⇒ 65 + 43 = 108。
+          # 65 是本机实测（tools/run-backup-jvm-tests.sh），43 是 CI 实测。
+          # 拼出来的 108 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
+          # 若 CI 报的不是 108，先信 CI（docs/INCIDENTS.md 第 27 条）。
+          if total < 108:
+              problems.append(f":backup 只有 {total} 条测试，低于本轮预期总数 108")
           # 2.4 的恢复核心是**会毁数据**的那条路径，所以单独钉住它的类。
           # 「总数够了」不代表「新那 8 条在里面」（第 26 条的同族）。
           restore = "com.deepseekharness.app.backup.NativeRestorePlanTest"
@@ -152,12 +156,19 @@ jobs:
               problems.append(f"{mapping} 没有运行（落点映射没跑 = 2.4b 没有证据）")
           elif classes[mapping] != 11:
               problems.append(f"{mapping} 跑了 {classes[mapping]} 条，期望 11 条")
-          # 2.4b-② 的提交/回切是最危险的一段（它真的动活动目录），单独钉住。
-          commit = "com.dshbox.app.backup.HostRestoreCommitTest"
-          if commit not in classes:
-              problems.append(f"{commit} 没有运行（提交/回切没跑 = 2.4b-② 没有证据）")
-          elif classes[commit] != 9:
-              problems.append(f"{commit} 跑了 {classes[commit]} 条，期望 9 条")
+          # 2.4b-② 的提交/回切是最危险的一段（它真的动活动目录）。**两个类都要钉**：
+          # 上游那个证明事务本身严密（含真杀子进程），我们那个证明「接得上」——
+          # 只钉一个的话，另一个可以静默消失而总数仍然够。
+          for name, want, why in (
+              ("com.deepseekharness.app.backup.HostDataTransactionTest", 5,
+               "上游的事务测试没跑 = 提交/回切的严密性没有证据"),
+              ("com.dshbox.app.backup.HostRestoreTransactionTest", 7,
+               "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
+          ):
+              if name not in classes:
+                  problems.append(f"{name} 没有运行（{why}）")
+              elif classes[name] != want:
+                  problems.append(f"{name} 跑了 {classes[name]} 条，期望 {want} 条")
           if problems:
               sys.exit("::error::" + "；".join(problems))
           print(":backup 的测试确实跑了，且新测试在位。")

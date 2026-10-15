@@ -162,6 +162,52 @@ def check_original(doc: dict, taken: set) -> list:
     return problems
 
 
+def check_not_imported_disjoint(doc: dict, taken_upstream: set) -> list:
+    """`not_imported` 与「导入了」的两侧必须**不相交**。
+
+    ## 为什么需要这一条（它不是防呆，是防一份**自相矛盾的权威文件**）
+
+    实测过：这个登记文件里同时存在三条自相矛盾的记录 ——
+    `BackupTree.java` 既在 `derived`（2.4a 适配导入）又在 `not_imported`；
+    `NativeRestorePlan.java` 既在 `files`（2.4a 逐字节导入）又在 `not_imported`；
+    `HostDataTransaction.java` 也在两侧。**而在此之前没有任何检查会红。**
+
+    它比「少登记一个文件」更危险：`dsha-imports.json` 是「我们从上游拿了什么」的
+    权威答案，下一个接手的人会**读到 `not_imported` 那一句并相信它** ——
+    于是永远不去看那个其实已经在树里的文件。这正是第 33 条的成因
+    （我写下一句没验证的「没搬」，就重写了一个本来就在可达范围内的实现）。
+
+    只查「不相交」，不查「为什么没搬」写得好不好 —— 后者不可机械判定。
+    但 `not_imported` 的 `reason` 非空仍然要求，因为空理由等于没有理由。
+
+    ⚠️ **比的是 `upstream_path`，不是 `local_path`。** 第一版我拿
+    `not_imported[].upstream_path` 去比一个**本机路径**的集合，于是两边永远不可能相等 ——
+    **它是一条不可能变红的检查**（第 30 条）。是 5p 节的注入把它抓出来的：
+    我把一条已经在 `files[]` 里的路径塞进 `not_imported`，它照样报通过。
+    """
+    problems = []
+    # 上游路径 → 本机路径的两种身份都要比：逐字节副本与改写适配。
+    imported_upstream = set(taken_upstream)
+    section = doc.get("not_imported")
+    if not isinstance(section, dict):
+        return problems
+    items = section.get("items")
+    if not isinstance(items, list):
+        return ["not_imported.items 不是列表"]
+    for entry in items:
+        upstream_path = str(entry.get("upstream_path", ""))
+        if not upstream_path:
+            problems.append("not_imported 有一项没有 upstream_path")
+            continue
+        if upstream_path in imported_upstream:
+            problems.append(
+                f"{upstream_path} 同时在「已导入」（files/derived）与 not_imported 里 —— "
+                "登记文件在自相矛盾：它既说拿了、又说不拿")
+        if not str(entry.get("reason", "")).strip():
+            problems.append(f"{upstream_path} 的 reason 为空 —— 「没搬」也要说清为什么")
+    return problems
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="核验 DSHA 导入副本的来源头与正文一致性")
     parser.add_argument("--update", action="store_true",
@@ -277,9 +323,17 @@ def main() -> int:
     # 一处代码只能有一种身份：逐字节副本 / 改写适配 / 本仓库自写。
     taken = set(registered) | set(derived_paths)
     original_problems = check_original(doc, taken)
+    # `taken` 现在含 original；not_imported 必须与**全部**「已导入」不相交。
+    # ⚠️ 传的是**上游路径**集合。`taken` 里是 local_path，键空间不同，
+    # 拿它比会让这条检查永远为真（第一版就是这么错的）。
+    upstream_taken = (
+        {str(f.get("upstream_path", "")) for f in files}
+        | {str(i.get("upstream_path", "")) for i in ((doc.get("derived") or {}).get("items") or [])}
+    )
+    not_imported_problems = check_not_imported_disjoint(doc, upstream_taken)
 
     if (missing or bad_header or mismatched or unregistered or stray
-            or derived_problems or original_problems):
+            or derived_problems or original_problems or not_imported_problems):
         print("DSHA 导入副本核验失败：", file=sys.stderr)
         for item in missing:
             print(f"  ✗ 缺失: {item}", file=sys.stderr)
@@ -298,12 +352,20 @@ def main() -> int:
             print(f"  ✗ 改写移植登记有问题: {item}", file=sys.stderr)
         for item in original_problems:
             print(f"  ✗ 自写文件登记有问题: {item}", file=sys.stderr)
+        for item in not_imported_problems:
+            print(f"  ✗ not_imported 登记有问题: {item}", file=sys.stderr)
         # 提示只在真的与逐字节副本有关时出现 —— 错在 derived 段时还讲「正文按设计是
         # 逐字节副本」会把人引到错的地方。
         if missing or bad_header or mismatched or unregistered or stray:
             print(
                 "\n这些文件的**正文**按设计是 DSHA 的逐字节副本（只有来源头是本项目加的）。"
                 "若确实需要改动，请先把该文件从 files[] 移到 derived.items[] 并写清改了什么。",
+                file=sys.stderr)
+        if not_imported_problems:
+            print(
+                "\nnot_imported 是「我们**没有**从上游拿这个文件」的清单。"
+                "同一路径不能既在 files/derived/original 里、又在 not_imported 里 —— "
+                "那会让下一个读登记的人以为树里没有这个文件（见 docs/INCIDENTS.md 第 33 条）。",
                 file=sys.stderr)
         if derived_problems:
             print(

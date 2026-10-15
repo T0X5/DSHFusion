@@ -439,7 +439,39 @@ DSHA 用它把 `.dsh` 的子条目并进一个 group。**我们不这么做**：
 
 ## 阶段 2.4b-② 加了什么：提交与回切（唯一真的会动活动目录的代码）
 
-[`HostRestoreCommit.java`](src/main/java/com/dshbox/app/backup/HostRestoreCommit.java)（**自写**）。
+**这一段我写错过一次，而且错得最贵，所以先说它。**
+
+第一版我**从零手写了 350 行** `HostRestoreCommit.java`，并在类注释与
+`dsha-imports.json` 里写下理由：「上游把它放在 `HostDataTransaction` 里，
+**那个类依赖它自己的 `ConfigStore`/`KeyVault`**，没搬。」
+
+**那个理由是错的 —— 我写下它的时候没有读那个文件。** 实测：`HostDataTransaction`
+只有 `java.io`/`java.util` 两个 import，一次都没提到 `ConfigStore`/`KeyVault`/`CredentialRead`，
+同包依赖的前五个我们都已经有了。**它就在可达范围内**，而且比我写的那份**更严密**。
+手写的那一份已删除，不再保留两套。见 [`docs/INCIDENTS.md`](../docs/INCIDENTS.md) 第 33 条。
+
+### 现在的落点：上游逐字节导入 + 一层很薄的适配
+
+| 文件 | 身份 |
+|---|---|
+| [`HostDataTransaction.java`](src/main/java/com/deepseekharness/app/backup/HostDataTransaction.java)（315 行） | DSHA **逐字节**导入 |
+| `TransactionMarkers.java`（34 行）、`util/Ids.java`（13 行） | DSHA **逐字节**导入 |
+| `HostDataTransactionTest.java`（202 行 / 5 条，含一条**真杀子进程**的） | 适配后导入（11 处工具链替换） |
+| [`HostRestoreTransaction.java`](src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java) | **本仓库自写**：词汇映射 |
+| `HostRestoreTransactionTest.java`（7 条） | **本仓库自写**：集成 + `CROSS_DEVICE` + 设置轴 |
+
+**两边的词汇恰好同构**，所以适配层很薄：
+
+| 上游 | 我们 |
+|---|---|
+| `directory/candidate/<id>` | `NativeRestorePlan` 的 `task/candidate/<group>`（逐字同名） |
+| `Targets.resolve(rootId)` | `plan.targets.get(group).write` |
+| `prepare(roots, expectedBefore, …)` 的 `expectedBefore` | `plan.before` |
+| `Settings`（设置轴） | **我们没有这个轴**（见下） |
+
+> ⚠️ 事务目录名必须是 **UUID 形状** —— 上游用它给事务命名，而那个名字会被写进
+> `plan.json` 与每个相位标记。适配层提前用 `TASK_NAME_NOT_UUID` 拦下，
+> 而不是让上游抛 `TRANSACTION_ID`。
 
 ### 原子性靠什么 —— 先把话说明白
 
@@ -447,76 +479,83 @@ DSHA 用它把 `.dsh` 的子条目并进一个 group。**我们不这么做**：
 提交就是两次同文件系统内的 `move`（rename）：
 
 ```
-move(active, aside)      // 旧内容挪到 task/rollback/<group>
-move(candidate, active)  // 候选挪进来
+move(active, task/previous/<id>)   // 旧内容挪到一边
+move(candidate, active)            // 候选挪进来
 ```
 
 **rename 是原子的**，所以活动树在任何瞬间要么是旧的整棵、要么是新的整棵 ——
-**不存在半新半旧**。（本文件早前写的是「提交若被进程杀死，活动树会半新半旧」，
-那句话对 rename 提交是不准确的，已更正。）真正要处理的是另外两件事：
+**不存在半新半旧**。真正要处理的是另外两件事：
 
 | 失败形态 | 处理 |
 |---|---|
-| 两次 rename 之间进程被杀 → **目标不存在** | 提交前用 `fs.atomic()` 写日志；恢复时把 aside 移回来 |
-| 提交成功但 aside 没来得及删 | 恢复时按摘要判定，再删 |
+| 两次 rename 之间进程被杀 → **目标不存在** | 提交前写**相位标记**；恢复时按相位 + 摘要双判，把原件移回来 |
+| 提交成功但 `previous/` 没来得及删 | 恢复时按摘要判定，再删 |
 
-### 三条必须先说清的前提，都被断言了
+### 上游比我手写的那份严密在哪（逐条）
+
+| | 我手写的 | `HostDataTransaction` |
+|---|---|---|
+| 提交前重验 | 只重验 `before` | 重验 `before` **和** `after`（`CANDIDATE_CHANGED`） |
+| 嵌套目标 | 没有 | `OVERLAPPING_TARGETS`（父目录与子目录互为目标） |
+| 持久标记 | 一个 `commit-journal.json` | 五相位标记（`verified`→`switching`→`files-committed`→`settings-committed`→`finalized`） |
+| 恢复判定 | 只看摘要 | **相位 + 摘要**双判 |
+| 崩溃测试 | 注入（而且第一版注错了，见第 31 条） | **真杀子进程**（`destroyForcibly`） |
+
+### 适配层只加了两样东西，都不是改写上游
+
+**① `CROSS_DEVICE` —— 上游没有这条检查。**
+
+`HostDataTransaction` 直接 `fs.move`；跨文件系统时 `move` **不报错**，
+只是退化成拷贝加删除 —— 于是「两次 rename 换进去」这个原子性**静默消失**，
+而所有测试仍然全绿。补在适配层，上游那个类保持逐字节不动。
+它必须在 `prepare` 之前跑，所以适配层把它单独暴露成 `checkSameFileSystem()`。
+
+**② 设置轴故意做成「非空就抛 `SETTINGS_NOT_SUPPORTED`」。**
+
+上游会在提交时一并切 `settings.json`，并有三处断言
+（`SETTINGS_CHANGED` / `SETTINGS_COMMIT_VERIFICATION`）。我们的恢复路径只写用户数据。
+若给它一个「恒空表、`apply` 什么都不做」的实现，那三处会**永远通过** ——
+那就是「没有输入空间的断言」（第 30 条）。所以反过来：空表才接受，非空直接红。
+将来真做设置轴时它会红，而不是静默丢掉用户的设置。
+
+### 第二条前提同时是一条**运行约束**
 
 | 前提 | 不成立时会怎样 | 检查 |
 |---|---|---|
-| `task` 与活动目录**同一个文件系统** | `move` **不报错**，它只是退化成拷贝 —— 原子性静默消失 | `CROSS_DEVICE` |
-| 候选建好后活动目录**没被改过** | 提交会**静默覆盖**用户在等待期间写进去的东西 | `TARGET_CHANGED` |
-| 目录**缺了才建** | `fs.directory()` 在已存在时抛（后端是 `Files.createDirectory`），提交变成建目录失败 | `ensureDirectory()` |
+| `task` 与活动目录**同一个文件系统** | `move` **不报错**，它只是退化成拷贝 —— 原子性静默消失 | `CROSS_DEVICE`（适配层） |
+| 候选建好后活动目录**没被改过** | 提交会**静默覆盖**用户在等待期间写进去的东西 | `TARGET_CHANGED`（上游） |
 
-第二条同时是一条**运行约束**：合并发生在 `buildCandidates` 那一刻，之后写进活动目录的
-东西不在候选里。这个类只能做到「不静默地违反它」，**保证它不发生是调用方的责任** ——
+合并发生在 `buildCandidates` 那一刻，之后写进活动目录的东西不在候选里。
+适配层只能做到「不静默地违反它」，**保证它不发生是调用方的责任** ——
 恢复期间 DSH 应当停止，或至少目标成员不能被写。
 
-### 恢复判定看**摘要**，不看日志里的相位
+### 测试：故障注入按**命名边界**，不按计数
 
-日志里也记了相位（`PREPARED`/`COMMITTED`），但**它不是判据**：进程可能死在
-「相位写下去之前」或「写下去之后」，相位本身可能是过期的。
-
-| `active` | 摘要 | 判定 |
-|---|---|---|
-| 缺失 | — | aside 在 → 移回来；否则无事 |
-| 在 | == `candidateDigest` | 换进去了 → 收尾 |
-| 在 | == `before` | 还没换 → aside 是上一轮残留，删掉 |
-| 在 | **都不是** | **`RECOVERY_AMBIGUOUS`** —— 不猜，不覆盖，日志留着 |
-
-### 回切必须知道**每一步做没做**
-
-只靠「aside 在不在」推不出来：`aside` 缺失既可能是「还没挪走」，也可能是
-「这个成员原本就不存在」。分不清的后果很具体 —— **把原件挪进 `failed/`，
-而用户看到的是数据没了**。所以 `Entry` 上记两个标记（`asidePlaced` / `installed`），
-回切按它们精确回退。
-
-### 测试：故障注入，而且注入必须自证
-
-`HostRestoreCommitTest` 用 `FaultFs` 在**换入/换出动作**上按次序失败：
-
-| 注入 | 必须发生什么 |
+| 注入点 | 必须发生什么 |
 |---|---|
-| 第 1 次换出失败 | 活动目录**一动不动**（回切不能把原件挪走） |
-| 第 2 次换入失败 | 旧内容从 aside **挪回来** |
-| 从第 2 次起全失败 | 回切也失败 → 日志**留下** → `recover()` 救回 |
-
-第三条是「崩溃恢复」唯一诚实的测法：崩溃现场是**由真实代码路径产生**的，
-不是在测试里手搭一个（手搭的现场会和源码各说各话 —— 事故表第 17 条）。
+| `new-<id>` | 旧内容从 `previous/` **挪回来**，`recover()` 幂等 |
+| `new-<id>` + `rollback-*` 全失败 | 回切也失败 → 异常挂成 **suppressed**（不吞）→ 现场留在磁盘 → `recover()` 救回 |
 
 > ⚠️ **第一版注入没有注到它以为的地方。** 它数的是「第 N 次 `move`」，
 > 而 `fs.atomic()` 内部也在 `move`（发布日志、轮转 `.previous`），
-> 于是 `failAt=2` 实际打在 `move(active, aside)` 上 —— **三个用例当时都是绿的，
-> 却一个都没测到它名字说的事。** 现在按**语义**识别换入/换出动作，
-> 并且每条注入都断言 `fault.swaps` 的期望值（自证）。
+> 于是 `failAt=2` 实际打在 `move(active, previous)` 上 —— **三个用例当时都是绿的，
+> 却一个都没测到它名字说的事。** 现在用上游的 `Fault.boundary(name)`：
+> 边界名由**被测代码自己给出**，从根上不会有那个病。
 > 见 [`docs/INCIDENTS.md`](../docs/INCIDENTS.md) 第 31 条。
 
-本机真跑：**62 条**（2.4b-① 是 53；新增 9 条）。
+**上游那份测试和我们这份分工不同**：上游测的是**事务本身**（用它自己手搭的
+`sessions`/`settings` 两根），我们那份测的是**「接得上」** ——
+① 我们的候选树路径与上游 `candidate(id)` 同构吗；② `plan.before` 能直接当
+`expectedBefore` 吗；③ 适配层自己加的 `CROSS_DEVICE` 真的会在动任何东西之前拦下吗
+（上游没有这条检查，所以**它那边永远测不到**）。
+
+本机真跑：**65 条**（2.4b-① 是 53；`−9` 删掉手写的，`+5` 上游那份，`+7` 我们这份）。
 
 > ✅ **阶段 2.4b-② 已通过真实 CI**（run [38655637817](https://github.com/T0X5/DSHFusion/actions/runs/38655637817)，
-> commit `9d02c9f`）：**24/24 步全绿**，`:backup` **105 条测试 / 14 个测试类**
+> commit `9d02c9f`，**手写那一版**）：**24/24 步全绿**，`:backup` **105 条测试 / 14 个测试类**
 > （日志逐类打印 `9 com.dshbox.app.backup.HostRestoreCommitTest`），
 > 产物 `dshapp-debug-apk` 128,789,786 字节。Contracts 4/4 全绿。
+> **本轮换成移植版之后的新计数是 108（Java 65 + Kotlin 43），CI 待跑。**
 >
 > ⚠️ **CI 绿 ≠ 真机安全。** 这是本模块唯一真的会动活动目录的代码，
 > 而它的真机行为**一次都没被观察过** —— 还没有界面入口。
@@ -529,7 +568,7 @@ move(candidate, active)  // 候选挪进来
 |---|---|---|
 | ~~逻辑根 → 本机路径的映射（`NativeRestoreTargets` 那一层）~~ | ✅ **阶段 2.4b-① 已做** | 见上：`HostRestoreMapping.java`（自写）。审计推翻了「依赖设置子系统」这个理由 —— 真正的原因是**逻辑根词汇不同** |
 | 凭据的**字段级**排除（`settings.yaml` 里的模型凭据、桥 token） | 仍未做 | 2.3 做的是**机器本地记录**的投影（见下）；`settings.yaml` 里是否有需要单独排除的字段，**要先在真机上确认它的实际内容**才能决定 |
-| ~~把候选树提交到活动目录，以及失败回切~~ | ✅ **阶段 2.4b-② 已做** | 见下节。`NativeRestorePlan.buildCandidates()` 只写 `task/candidate/`（读完全部 405 行确认），所以 2.4a 是安全的；提交由 `HostRestoreCommit` 补上。
+| ~~把候选树提交到活动目录，以及失败回切~~ | ✅ **阶段 2.4b-② 已做** | 见下节。`NativeRestorePlan.buildCandidates()` 只写 `task/candidate/`（读完全部 405 行确认），所以 2.4a 是安全的；提交由上游的 `HostDataTransaction` + 我们的适配层补上。
 | ⚠️ **恢复期间目标必须静止** | 调用方的责任 | 合并（把活动目录拷进候选）发生在 `buildCandidates` 那一刻，之后写进活动目录的东西**不在候选里**。提交前会重新核验摘要并报 `TARGET_CHANGED` —— 但这个类只能做到「不静默地违反它」，做不到「保证它不发生」。**恢复时 DSH 应当停止**，或至少目标成员不能被写 |
 | ~~回切落在 `runtime-current/` ↔ `runtime-new/`~~ | ❌ **这个落点被审计推翻** | 那对槽换的是 base/node/dsh 三层**运行环境**（`BundleManager.promoteNewSlotToCurrent()`），而恢复写的是**用户数据** `user-data/.dsh`。用「换整个系统」去实现「换一个目录」是错的；环境更新属于阶段 3 |
 | 自动备份计划（每日 / 1–168h / 停止后，保留 3 份） | 阶段 2.5 | 依赖 2.1–2.4 |
