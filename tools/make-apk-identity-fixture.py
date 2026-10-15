@@ -110,6 +110,7 @@ ATTR_NAME = 0x01010003
 ATTR_VERSION_CODE = 0x0101021B
 ATTR_VERSION_NAME = 0x0101021C
 ATTR_AUTHORITIES = 0x01010018
+ATTR_PERMISSION = 0x01010006
 
 NO_INDEX = 0xFFFFFFFF
 
@@ -208,6 +209,15 @@ PHASE2_DESCRIPTORS = (
 )
 
 
+# 阶段 2.6：产物 manifest 里必须有的 `<service>`。
+#
+# ⚠️ 与 `check-apk-identity.py` 的断言 10 是配套的：夹具不带它，**每个场景都会红**。
+# 这不是断言太严，是夹具失真 —— 一个真的、能跑的产物本来就该声明这个服务。
+# 另开一个 `missing-job-service` 场景把它留空，那才是用来证明断言 10 会红的方向。
+SERVICE_NAME = "com.dshbox.app.service.AutomaticBackupJobService"
+SERVICE_PERMISSION = "android.permission.BIND_JOB_SERVICE"
+
+
 def build_axml(scenario: str) -> bytes:
     """拼出一份最小的 AndroidManifest.xml。"""
     if scenario == "upstream-id":
@@ -256,6 +266,10 @@ def build_axml(scenario: str) -> bytes:
         "provider",           # 12
         "authorities",        # 13
         authority,            # 14
+        "service",            # 15
+        "permission",         # 16
+        SERVICE_NAME,         # 17
+        SERVICE_PERMISSION,   # 18
     ]
     S = {s: i for i, s in enumerate(strings)}
 
@@ -266,6 +280,7 @@ def build_axml(scenario: str) -> bytes:
     res_map[S["name"]] = ATTR_NAME
     res_map[S["label"]] = ATTR_LABEL
     res_map[S["authorities"]] = ATTR_AUTHORITIES
+    res_map[S["permission"]] = ATTR_PERMISSION
 
     chunks = bytearray()
     chunks += build_start_element(
@@ -293,6 +308,17 @@ def build_axml(scenario: str) -> bytes:
         ],
     )
     chunks += build_end_element(S["provider"])
+    # JobService：断言 10 会核对它带 BIND_JOB_SERVICE。
+    # `missing-job-service` 场景里**整段不写** —— 那才是用来证明断言 10 会红的方向。
+    if scenario != "missing-job-service":
+        service_attrs = [(S["name"], ATTR_NAME, S[SERVICE_NAME], TYPE_STRING, S[SERVICE_NAME])]
+        if scenario != "job-service-no-permission":
+            service_attrs.append(
+                (S["permission"], ATTR_PERMISSION, S[SERVICE_PERMISSION], TYPE_STRING,
+                 S[SERVICE_PERMISSION])
+            )
+        chunks += build_start_element(S["service"], service_attrs)
+        chunks += build_end_element(S["service"])
     chunks += build_end_element(S["application"])
     chunks += build_end_element(S["manifest"])
 
@@ -314,7 +340,8 @@ def main() -> int:
 
     known = {"good", "upstream-id", "upstream-ver", "wrong-ns", "wrong-label",
              "bad-authority", "no-layers", "sidecar-only", "gz-stripped",
-             "no-manifest", "x64-layer", "arm64-layer", "missing-phase2-classes"}
+             "no-manifest", "x64-layer", "arm64-layer", "missing-phase2-classes",
+             "missing-job-service", "job-service-no-permission"}
     if scenario not in known:
         print(f"未知场景 {scenario!r}；可用：{sorted(known)}", file=sys.stderr)
         return 2

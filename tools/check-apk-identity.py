@@ -65,6 +65,8 @@ ATTR_ANDROID_VERSION_CODE = 0x0101021B
 ATTR_ANDROID_VERSION_NAME = 0x0101021C
 ATTR_ANDROID_LABEL = 0x01010001
 ATTR_ANDROID_AUTHORITIES = 0x01010018
+# `android:permission`：`<service>` 上用它声明 BIND_JOB_SERVICE（AOSP 固定值）。
+ATTR_ANDROID_PERMISSION = 0x01010006
 
 NO_ENTRY = 0xFFFFFFFF
 
@@ -183,6 +185,42 @@ def parse_manifest(axml: bytes) -> dict:
                     else:
                         auth = f"<{v_type:#04x}:{v_data:#010x}>"
                     result.setdefault("authorities", []).append(auth)
+
+            elif tag == "service" and attr_count:
+                # 收集 `<service>` 的 `android:name` 与 `android:permission`。
+                #
+                # 为什么要它：`JobService` **必须在 manifest 里带
+                # `android:permission="android.permission.BIND_JOB_SERVICE"`**，
+                # 否则系统不会把任务派给它 —— 而失败是**静默的**：
+                # `JobScheduler.schedule()` 返回 SUCCESS，之后永远不被拉起。
+                # 源码里的 manifest 有它（`verify-phase0.sh` 已查），但那是**源码**；
+                # 合并后的产物 manifest 才是设备上生效的那一份。
+                # 与断言 9 同一条理由：**声明在位不等于产物里有。**
+                base = node + attr_start
+                name = permission = ""
+                for i in range(attr_count):
+                    a_off = base + i * attr_size
+                    _a_ns, a_name, a_raw, _a_typed = struct.unpack_from("<iiiI", axml, a_off)
+                    attr_id = (
+                        resource_ids[a_name]
+                        if a_name < len(resource_ids) and resource_ids[a_name]
+                        else 0
+                    )
+                    if attr_id not in (ATTR_ANDROID_NAME, ATTR_ANDROID_PERMISSION):
+                        continue
+                    v_type, v_data = struct.unpack_from("<BI", axml, a_off + 15)
+                    if 0 <= a_raw < len(strings):
+                        value = strings[a_raw]
+                    elif v_type == TYPE_STRING and v_data < len(strings):
+                        value = strings[v_data]
+                    else:
+                        value = ""
+                    if attr_id == ATTR_ANDROID_NAME:
+                        name = value
+                    else:
+                        permission = value
+                if name:
+                    result.setdefault("services", []).append((name, permission))
 
             elif tag in ("manifest", "application") and attr_count:
                 base = node + attr_start
@@ -738,6 +776,30 @@ def main() -> int:
                 notes.append(
                     f"阶段 2 的类在产物里（{len(dex)} 个 dex，抽查 {len(LATE_PHASE_CLASSES)} 个代表类）"
                 )
+
+    # --- 断言 10：`JobService` 必须在**产物**的 manifest 里带 BIND_JOB_SERVICE ---
+    #
+    # 为什么单独一条：源码 manifest 里有它（5u 节已查），但设备上生效的是**合并后**的
+    # manifest。而缺了它的失败是**静默的** —— `JobScheduler.schedule()` 照常返回 SUCCESS，
+    # 只是任务永远不被拉起，于是「自动备份开着、再也不备份」。
+    # 与断言 9 同一条理由：**声明在位不等于产物里有。**
+    services = {name: permission for name, permission in manifest.get("services", [])}
+    job_service = next(
+        (name for name in services if name.endswith(".AutomaticBackupJobService")), None
+    )
+    if job_service is None:
+        problems.append(
+            "产物的 manifest 里没有 AutomaticBackupJobService —— "
+            "自动备份的心跳永远不会被系统拉起，而 `schedule()` 会照常报成功。"
+            "（源码 manifest 里有、合并后没有：这正是「声明在位不等于产物里有」。）"
+        )
+    elif "BIND_JOB_SERVICE" not in services[job_service]:
+        problems.append(
+            f"{job_service} 缺少 android:permission=BIND_JOB_SERVICE（实际「{services[job_service]}」）"
+            " —— 系统不会把任务派给它，而登记会照常返回 SUCCESS"
+        )
+    else:
+        notes.append(f"JobService 在产物 manifest 里且带 BIND_JOB_SERVICE：{job_service}")
 
     for n in notes:
         print(f"备注：{n}")

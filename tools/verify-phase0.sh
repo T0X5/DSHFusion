@@ -1002,7 +1002,7 @@ expect 0 "合成 APK：身份正确时应通过" \
 
 for scen in upstream-id upstream-ver wrong-ns wrong-label bad-authority \
             no-layers sidecar-only gz-stripped x64-layer arm64-layer \
-            missing-phase2-classes; do
+            missing-phase2-classes missing-job-service job-service-no-permission; do
     python3 tools/make-apk-identity-fixture.py "$SCRATCH/$scen.apk" "$scen" >/dev/null
 done
 
@@ -1065,6 +1065,11 @@ check_scenario gz-stripped   "但没有应用侧会查找的层本体"
 # 没有这一条，断言 9 就只是一条「现在绿着」的检查 ——
 # 而它要挡的正是「测试全绿、代码不在 APK 里」那件事（DIV-0021 之前四个阶段的真实状态）。
 check_scenario missing-phase2-classes "阶段 2 的类没有出现在产物的"
+# 断言 10 的两个负面方向：**源码 manifest 里有、产物里没有**，以及**有服务但缺权限**。
+# 缺 BIND_JOB_SERVICE 的失败是静默的：`JobScheduler.schedule()` 照常返回 SUCCESS，
+# 只是任务永远不被拉起 —— 于是「自动备份开着、再也不备份」。
+check_scenario missing-job-service "产物的 manifest 里没有 AutomaticBackupJobService"
+check_scenario job-service-no-permission "缺少 android:permission=BIND_JOB_SERVICE"
 
 check_scenario x64-layer     "dsh 层不是 arm64 架构的"
 
