@@ -37,6 +37,12 @@ jobs:
       - name: Validate workflow YAML (PyYAML)
         run: python3 tools/check-workflows.py
 
+      # 工作流里那段几十行的内联 Python **本地从来没被编译过** ——
+      # YAML 解析器不看它，actionlint 也不看它的宿主语言。
+      # 2.5 的计数步骤因此把语法错误带进了 CI，在第 13 步才红（第 36 条）。
+      - name: 工作流内联 Python 语法
+        run: python3 tools/check-workflow-python.py
+
       - name: Install actionlint
         run: |
           set -euo pipefail

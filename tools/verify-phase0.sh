@@ -699,6 +699,46 @@ section "5b. 工作流验证（真实解析器 / actionlint）"
 if python3 -c "import yaml" 2>/dev/null; then
     expect 0 "工作流 YAML 可被真实解析器解析且结构完整" \
         run_tool tools/check-workflows.py
+
+    # 内联 Python 的**语法**。YAML 解析器不看它，actionlint 也不看它的宿主语言，
+    # 于是那段几十行的脚本只在 CI 上跑 —— 而跑到它要十几分钟。
+    # 2.5 的计数步骤因此把 `):` 的错位带进了 CI，第 13 步才红（第 36 条）。
+    expect 0 "工作流内联 Python 语法可被编译器解析" \
+        run_tool tools/check-workflow-python.py
+
+    # ⚠️ 上面那条只证明「现在是对的」。下面证明它**会红** ——
+    # 否则「加了一条检查」和「这条检查能失败」是两件事（第 34 条）。
+    # 注入形态就取我真实犯过的那个：把元组的 `):` 挪到第一个条目之后。
+    WFP_BAK="$(mktemp)"
+    cp "$ROOT/.github/workflows/android.yml" "$WFP_BAK"
+    python3 - <<'PYI'
+import pathlib
+p = pathlib.Path(".github/workflows/android.yml")
+t = p.read_text(encoding="utf-8")
+old = """              ("com.dshbox.app.backup.HostRestoreTransactionTest", 7,
+               "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
+              ("com.deepseekharness.app.util.AutomaticBackupPolicyTest", 4,"""
+new = """              ("com.dshbox.app.backup.HostRestoreTransactionTest", 7,
+               "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
+          ):
+              ("com.deepseekharness.app.util.AutomaticBackupPolicyTest", 4,"""
+assert t.count(old) == 1
+p.write_text(t.replace(old, new), encoding="utf-8")
+PYI
+    if python3 tools/check-workflow-python.py >/dev/null 2>&1; then
+        fail "把元组的 ): 挪到条目中间之后，内联 Python 检查没有变红 —— 它对这个方向是瞎的"
+        CR_BAD=1
+    else
+        ok "内联 Python 检查能抓住元组提前闭合（我真实犯过的那个错）"
+    fi
+    cp "$WFP_BAK" "$ROOT/.github/workflows/android.yml"
+    rm -f "$WFP_BAK"
+    if python3 tools/check-workflow-python.py >/dev/null 2>&1; then
+        ok "复原后内联 Python 检查重新通过"
+    else
+        fail "复原后内联 Python 检查仍未通过 —— 注入没被还原干净"
+        CR_BAD=1
+    fi
 else
     printf '  [SKIP] %-52s 未安装 PyYAML\n' "工作流 YAML 解析"
     SKIP=$((SKIP + 1))
