@@ -129,19 +129,18 @@ jobs:
               problems.append(f"{codes} 没有运行（本机无 kotlinc，它只可能在这里跑）")
           elif classes[codes] != 8:
               problems.append(f"{codes} 跑了 {classes[codes]} 条，期望 8 条")
-          # 下限 = **预期**总数 124，即「不允许净减少」。
-          # 推导过程（不是数出来的）：阶段 2.4b-② 的 CI 实测 108（Java 65 + Kotlin 43）。
-          # 本轮（2.5）新增：
-          #      + 4（上游 AutomaticBackupPolicyTest，逐字节导入，含 DST 与时钟回拨）
-          #      + 5（上游 ScheduledBackupOwnerTest，逐字节导入，含跨线程拒绝）
-          #      + 7（我们的 DshAutomaticBackupRetentionTest，含「上游判据跑在我们的命名上
-          #           一份都删不掉」那条可证伪的审计实验）
-          #   = 81；Kotlin 侧未动仍是 43 ⇒ 81 + 43 = 124。
-          # 81 是本机实测（tools/run-backup-jvm-tests.sh），43 是 CI 实测。
-          # 拼出来的 124 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
-          # 若 CI 报的不是 124，先信 CI（docs/INCIDENTS.md 第 27 条）。
-          if total < 124:
-              problems.append(f":backup 只有 {total} 条测试，低于本轮预期总数 124")
+          # 下限 = **预期**总数 136，即「不允许净减少」。
+          # 推导过程（不是数出来的）：2.5 那轮的 CI 实测是 **124**（Java 81 + Kotlin 43），
+          # 已被逐类打印证实（18 个类）。
+          # 本轮（2.6，导出路径）新增：
+          #      + 12（我们的 DshBackupExporterTest —— 导出编排的本机测试，
+          #            含「被排除项的内容一个字节都不进归档」与六条负路径）
+          #   = 93；Kotlin 侧未动仍是 43 ⇒ 93 + 43 = 136。
+          # 93 是本机实测（tools/run-backup-jvm-tests.sh，15 个类），43 是 CI 实测。
+          # 拼出来的 136 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
+          # 若 CI 报的不是 136，先信 CI（docs/INCIDENTS.md 第 27 条）。
+          if total < 136:
+              problems.append(f":backup 只有 {total} 条测试，低于本轮预期总数 136")
           # 2.4 的恢复核心是**会毁数据**的那条路径，所以单独钉住它的类。
           # 「总数够了」不代表「新那 8 条在里面」（第 26 条的同族）。
           restore = "com.deepseekharness.app.backup.NativeRestorePlanTest"
@@ -168,6 +167,8 @@ jobs:
                "上游的事务测试没跑 = 提交/回切的严密性没有证据"),
               ("com.dshbox.app.backup.HostRestoreTransactionTest", 7,
                "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
+              ("com.dshbox.app.backup.DshBackupExporterTest", 12,
+               "导出编排是本模块第三段会泄数据的路径，它的本机测试必须在 CI 里也真跑"),
               ("com.deepseekharness.app.util.AutomaticBackupPolicyTest", 4,
                "导入的到期判定测试没跑 = 「计划什么时候该备份」没有证据"),
               ("com.deepseekharness.app.util.ScheduledBackupOwnerTest", 5,

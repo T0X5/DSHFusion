@@ -738,21 +738,36 @@ if python3 -c "import yaml" 2>/dev/null; then
     # 注入形态就取我真实犯过的那个：把元组的 `):` 挪到第一个条目之后。
     WFP_BAK="$(mktemp)"
     cp "$ROOT/.github/workflows/android.yml" "$WFP_BAK"
+    # ⚠️ 注入必须**自证它真的落在了它以为的地方**（第 31 条）。
+    # 这里用文件哈希：改完哈希没变，说明锚点没匹配上、文件根本没被改 ——
+    # 那次注入什么都没测到，而下面的检查会照常变绿，于是这条注入**静默失效**。
+    # 实测发生过：我往 android.yml 的元组里加了一条之后，这一段注入的锚点不再匹配，
+    # `assert` 抛错、文件原样不动，而套件报的是「检查没有变红 —— 它对这个方向是瞎的」。
+    # 那句报错是**对的结论、错的原因**：瞎的不是检查，是这条注入。
+    WFP_BEFORE="$(sha256sum "$ROOT/.github/workflows/android.yml" | cut -d' ' -f1)"
     python3 - <<'PYI'
-import pathlib
+import pathlib, re, sys
 p = pathlib.Path(".github/workflows/android.yml")
 t = p.read_text(encoding="utf-8")
-old = """              ("com.dshbox.app.backup.HostRestoreTransactionTest", 7,
-               "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
-              ("com.deepseekharness.app.util.AutomaticBackupPolicyTest", 4,"""
-new = """              ("com.dshbox.app.backup.HostRestoreTransactionTest", 7,
-               "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
-          ):
-              ("com.deepseekharness.app.util.AutomaticBackupPolicyTest", 4,"""
-assert t.count(old) == 1
-p.write_text(t.replace(old, new), encoding="utf-8")
+# 不再钉死具体那一行（它会随工作流演进而漂），改成按**结构**定位：
+# 把元组的终止符 `):` 插到列表的第一项之后。
+# 这与我真实犯过的错同形 —— 终止符提前出现。
+# 一个完整的元组 = 两行：`("类名", 条数,` + `"理由"),`。
+pattern = re.compile(
+    r'(\(\s*"com\.[^"]+",\s*\d+,\n\s+"[^"]*"\),\n)', re.M)
+match = pattern.search(t)
+if not match:
+    print("INJECTION_ANCHOR_NOT_FOUND", file=sys.stderr)
+    sys.exit(3)
+t = t[: match.end(1)] + "          ):\n" + t[match.end(1):]
+p.write_text(t, encoding="utf-8")
 PYI
-    if python3 tools/check-workflow-python.py >/dev/null 2>&1; then
+    WFP_INJ_RC=$?
+    WFP_AFTER="$(sha256sum "$ROOT/.github/workflows/android.yml" | cut -d' ' -f1)"
+    if [ "$WFP_INJ_RC" != 0 ] || [ "$WFP_BEFORE" = "$WFP_AFTER" ]; then
+        fail "内联 Python 的注入**没有生效**（锚点没匹配上，文件一个字节都没变）—— 这条注入需要修，不是检查需要修"
+        CR_BAD=1
+    elif python3 tools/check-workflow-python.py >/dev/null 2>&1; then
         fail "把元组的 ): 挪到条目中间之后，内联 Python 检查没有变红 —— 它对这个方向是瞎的"
         CR_BAD=1
     else
@@ -2498,6 +2513,37 @@ if [[ -f "$ABS" ]]; then
             ok "AndroidBackupFileSystem 没有引入 $bad"
         fi
     done
+
+    # ②b 导出编排在位，且**不重写容器格式** —— 它只允许调用上游那几个入口。
+    EXP="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExporter.java"
+    if [[ -f "$EXP" ]]; then
+        ok "导出编排 DshBackupExporter.java 在位"
+        for wanted in 'HostSnapshot.create' 'FileBackupSource' 'fs.move'; do
+            if grep -q "$wanted" "$EXP"; then
+                ok "导出编排调用了上游的 $wanted"
+            else
+                fail "导出编排里找不到 $wanted —— 它可能在重写上游已有的东西"
+                CR_BAD=1
+            fi
+        done
+        # 反向：不许自己去**解析/构造那个容器**（魔数与长度前缀不该出现在这一层）。
+        #
+        # ⚠️ 这一条的第一版我把 `MessageDigest.getInstance("SHA-256")` 也列进了禁令 ——
+        # 那会把这个类里**合法**的一处判红：它要给界面算**归档文件本身**的摘要。
+        # 又一次是「规则比意图宽、把正确实现判失败」（第 32 条）。所以禁令只覆盖
+        # 容器**格式**的记号；摘要算法的使用不在其中。
+        for bad in 'DSHADATA' 'DataOutputStream' 'length-prefix'; do
+            if grep -q "$bad" "$EXP"; then
+                fail "导出编排里出现了 $bad —— 容器格式只应由上游的 BackupArchive 处理"
+                CR_BAD=1
+            else
+                ok "导出编排没有自己碰容器格式（无 $bad）"
+            fi
+        done
+    else
+        fail "找不到导出编排 DshBackupExporter.java"
+        CR_BAD=1
+    fi
 
     # ③ 它必须真的被声明为「本机编不了」，而不是碰巧没被扫到。
     if grep -q '"AndroidBackupFileSystem.java"' "$ROOT/tools/run-backup-jvm-tests.sh"; then

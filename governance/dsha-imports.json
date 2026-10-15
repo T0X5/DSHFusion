@@ -770,6 +770,16 @@
         "local_path": "backup/src/test/java/com/dshbox/app/backup/DshAutomaticBackupRetentionTest.java",
         "why": "上面那个的测试，7 条。最关键的一条是 upstreamPrunerJudgementMatchesNothingOfOurs —— 把「不能直接抄上游 pruner」从一个**说法**变成一个**会红的实验**（事故表第 28 条：审计结论也要能被证伪）。它同时断言我们的策略**确实会删** —— 否则那条用例证明的只是「两边都不删」，成了一个两边都绿、什么也没区分开的断言。",
         "verified_by": "tools/run-backup-jvm-tests.sh"
+      },
+      {
+        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshBackupExporter.java",
+        "why": "导出编排：把「范围成员」翻译成 `BackupSource`、调上游的 `HostSnapshot.create`、把产物移出任务目录。**容器格式、逐文件校验、完整性判定一行都没有重写**（硬约束 2）。写成 Java 是为了本机真跑 —— 它决定「到底把哪些东西写进了归档」，是本模块第三段会泄数据/毁数据的路径（前两段是恢复的落点与提交回切）。成员与排除清单都是**参数**（纯数据 + `FileBackupSource.Policy` 回调），因为范围的词汇在 Kotlin 侧 —— 若在这里 import 它们，这一层就退化回「只有 CI 能验」。",
+        "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshBackupExporterTest.java（12 条）"
+      },
+      {
+        "local_path": "backup/src/test/java/com/dshbox/app/backup/DshBackupExporterTest.java",
+        "why": "上面那个的 12 条本机测试。两条最要紧的都**先自证前提成立**再断言性质：① 排除清单那一条先证明「回调真的被调用过且看得到 credentials」，否则 `assertFalse(内容不在归档里)` 在「策略压根没被调用」时**也是绿的**（第 30 条）；② 「路径出现在归档里」不等于「内容进了归档」—— 被排除项仍会留下一条`kind=EXCLUDED` 的元数据记录（没有载荷），这是有意的：「这次备份漏了什么」必须能从归档里读出来。我第一版就是断言「路径不许出现」，于是它把正确实现判失败了，而失败信息长得像「排除功能坏了」（第 32 条的同族）。",
+        "verified_by": "tools/run-backup-jvm-tests.sh（本机真编译真运行）"
       }
     ]
   }

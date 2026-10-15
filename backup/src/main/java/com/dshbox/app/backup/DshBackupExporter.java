@@ -1,0 +1,209 @@
+// DSHFusion 自写。不是 DSHA 的副本 —— 登记在 governance/dsha-imports.json 的 original 段。
+//
+// 为什么是 Java 而不是 Kotlin：本机有 JDK 17、没有 kotlinc（见 docs/INCIDENTS.md 第 21 条）。
+// 这一层决定「到底把哪些东西写进了归档」，是本模块第三段会毁数据/泄数据的路径
+// （前两段是恢复的落点与提交回切）。只让 CI 编译它太贵。
+// 与 `HostRestoreMapping` / `HostRestoreTransaction` / `DshAutomaticBackupRetention`
+// 同一条约定。
+package com.dshbox.app.backup;
+
+import com.deepseekharness.app.backup.BackupControl;
+import com.deepseekharness.app.backup.BackupFileSystem;
+import com.deepseekharness.app.backup.BackupSource;
+import com.deepseekharness.app.backup.FileBackupSource;
+import com.deepseekharness.app.backup.HostSnapshot;
+import com.deepseekharness.app.util.Ids;
+import java.io.*;
+import java.security.MessageDigest;
+import java.util.*;
+
+/**
+ * 把用户数据导出成一份 v5 归档。
+ *
+ * <h2>它做什么，不做什么</h2>
+ *
+ * 它只做三件事：把「范围成员」翻译成 {@link BackupSource}、调用上游的
+ * {@link HostSnapshot#create}、把产物移出任务目录。**容器格式、逐文件校验、
+ * 完整性判定全部在上游那个类里**，这里一行都不重写（硬约束 2）。
+ *
+ * <h2>为什么成员与排除都是参数</h2>
+ *
+ * 范围的词汇（{@code DshBackupScope}）与排除清单（{@code DshBackupExclusions}）
+ * 都在 Kotlin 侧。若在这里 import 它们，本机就编不了、跑不了，这一层就退化回
+ * 「只有 CI 能验」—— 而它恰恰是最该本机验的一层。
+ * 所以这里只认**纯数据**（{@link Member}）与一个 {@link FileBackupSource.Policy}
+ * 回调；Kotlin 侧负责把范围翻译成前者、把排除清单包成后者。
+ *
+ * <h2>任务目录与产物为什么必须分开</h2>
+ *
+ * 上游 {@code create} 有一条硬断言：{@code archive.getParentFile()} 必须**等于**
+ * {@code ownedTask}，而 {@link BackupSource#containsLocal} 又不允许任务目录落在任何
+ * 源根之内。这两条合起来的意思是：**产物必须先写在一个既在源之外、又被我们独占的
+ * 目录里**，写完再移出去。所以任务目录由调用方给出（应当是一块不在
+ * {@code user-data} 下的独占目录），产物文件名由这里从目标文件名派生。
+ */
+public final class DshBackupExporter {
+  private DshBackupExporter() {}
+
+  /** 任务目录里被上游自己使用的两个名字 —— 产物不能撞上它们。 */
+  private static final Set<String> RESERVED = Set.of("source-checks", "capture");
+
+  /** 一个范围成员：选中的那一小块用户数据。纯数据，不含任何 Kotlin 类型。 */
+  public static final class Member {
+    public final String id;
+    /** 相对 {@code userDataDir} 的路径，例如 {@code .dsh/sessions}。 */
+    public final String path;
+    /** 写进每条记录的 v5 范围名（例如 {@code sessions}）。 */
+    public final String scope;
+    public final boolean external;
+
+    public Member(String id, String path, String scope, boolean external) {
+      this.id = id;
+      this.path = path;
+      this.scope = scope;
+      this.external = external;
+    }
+
+    @Override
+    public String toString() {
+      return id + "(" + path + ")";
+    }
+  }
+
+  /** 一次导出的结果。{@code skipped} 是**没被选中**的成员，不是错误。 */
+  public static final class Exported {
+    public final File archive;
+    public final Map<String, Object> manifest;
+    public final long bytes;
+    public final String sha256;
+    public final List<String> skipped;
+
+    Exported(
+        File archive,
+        Map<String, Object> manifest,
+        long bytes,
+        String sha256,
+        List<String> skipped) {
+      this.archive = archive;
+      this.manifest = manifest;
+      this.bytes = bytes;
+      this.sha256 = sha256;
+      this.skipped = Collections.unmodifiableList(skipped);
+    }
+
+    /** 逐文件、给界面看的一行摘要。不含路径以外的任何用户数据。 */
+    public String describe() {
+      Object integrity = manifest.get("integrity");
+      return archive.getName()
+          + " · "
+          + bytes
+          + " 字节 · 完整性 "
+          + integrity
+          + (skipped.isEmpty() ? "" : " · 跳过 " + skipped.size() + " 项");
+    }
+  }
+
+  /**
+   * 导出。**不覆盖已存在的目标文件**（上游的 {@code move} 语义）。
+   *
+   * @param userDataDir 成员路径的解析起点（DSHFusion 的 {@code user-data}）
+   * @param taskDir 独占的临时目录，**必须不在 {@code userDataDir} 之下**
+   * @param destination 最终位置（例如下载目录里的一个文件）
+   * @param provenance 容器清单的**调用方字段**（{@code operation}/{@code createdAt}/
+   *     {@code appVersion}/{@code runtime}/{@code dataFormat}/{@code sensitivePolicy}/
+   *     {@code plugins}）。{@code integrity} 由上游自己推导，这里不放。
+   */
+  public static Exported export(
+      BackupFileSystem fs,
+      File userDataDir,
+      List<Member> members,
+      File taskDir,
+      File destination,
+      Map<String, Object> provenance,
+      FileBackupSource.Policy policy,
+      boolean rescue,
+      BackupControl control)
+      throws IOException {
+    if (members == null || members.isEmpty()) throw new IOException("NO_SELECTED_DATA");
+    File home = userDataDir.getAbsoluteFile();
+    File task = taskDir.getAbsoluteFile();
+    File target = destination.getAbsoluteFile();
+
+    if (!task.isDirectory()) throw new IOException("TASK_DIRECTORY_MISSING");
+    // 任务目录落在源之内 = 备份会把自己正在写的东西也读进去。
+    // 上游也有这条检查（BACKUP_DESTINATION_IN_SOURCE），但它是在 create 内部才抛 ——
+    // 那时已经建了草稿文件。这里提前一次，代价是一次字符串比较。
+    if (isInside(home, task)) throw new IOException("TASK_INSIDE_SOURCE");
+    if (isInside(home, target)) throw new IOException("DESTINATION_INSIDE_SOURCE");
+
+    File parent = target.getParentFile();
+    if (parent == null || !parent.isDirectory()) throw new IOException("DESTINATION_PARENT_MISSING");
+    if (target.exists()) throw new IOException("DESTINATION_EXISTS");
+    // 产物必须落在任务目录里（上游的硬断言），所以它是「任务目录 + 目标文件名」。
+    String name = target.getName();
+    if (RESERVED.contains(name)) throw new IOException("RESERVED_ARTIFACT_NAME");
+    File archive = new File(task, name);
+    if (archive.exists()) throw new IOException("ARTIFACT_EXISTS");
+
+    List<BackupSource> sources = new ArrayList<>();
+    List<String> skipped = new ArrayList<>();
+    Set<String> ids = new HashSet<>();
+    for (Member member : members) {
+      if (!ids.add(member.id)) throw new IOException("DUPLICATE_ROOT");
+      File root = new File(home, member.path);
+      // 没被选中（用户还没用过那一块）不是错误。如实报出来，不静默。
+      if (!root.exists()) {
+        skipped.add(member.id);
+        continue;
+      }
+      sources.add(new FileBackupSource(fs, member.id, member.scope, root, member.external, policy));
+    }
+    if (sources.isEmpty()) throw new IOException("NO_SELECTED_DATA");
+
+    Map<String, Object> manifest = HostSnapshot.create(
+        fs, sources, task, archive, provenance, rescue, control);
+
+    // 移出任务目录。上游的 move 不覆盖 —— 上面已经查过目标不存在，
+    // 但两次检查之间目标可能被人创建，那时 move 会抛，而不是悄悄盖掉别人的备份。
+    fs.move(archive, target);
+    long bytes = fs.stat(target).size;
+    return new Exported(target, manifest, bytes, sha256(fs, target), skipped);
+  }
+
+  /** 任务目录名：**必须匹配上游的 UUID 形状**（它自己会校验）。 */
+  public static String taskName() {
+    return UUID.randomUUID().toString();
+  }
+
+  static boolean isInside(File ancestor, File candidate) {
+    File a = ancestor.getAbsoluteFile();
+    File c = candidate.getAbsoluteFile();
+    while (c != null) {
+      if (c.equals(a)) return true;
+      c = c.getParentFile();
+    }
+    return false;
+  }
+
+  private static String sha256(BackupFileSystem fs, File file) throws IOException {
+    MessageDigest digest;
+    try {
+      digest = MessageDigest.getInstance("SHA-256");
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IOException("SHA256_UNAVAILABLE", impossible);
+    }
+    try (InputStream in = fs.read(file, fs.stat(file))) {
+      byte[] buffer = new byte[64 * 1024];
+      int n;
+      while ((n = in.read(buffer)) > 0) digest.update(buffer, 0, n);
+    }
+    StringBuilder out = new StringBuilder(64);
+    for (byte b : digest.digest()) out.append(String.format("%02x", b));
+    return out.toString();
+  }
+
+  /** 供 Kotlin 侧构造合法的任务目录名时自检，避免把非法 UUID 传进来。 */
+  public static boolean validTaskName(String name) {
+    return Ids.uuid(name);
+  }
+}
