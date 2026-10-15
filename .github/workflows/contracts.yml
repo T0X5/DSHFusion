@@ -43,6 +43,12 @@ jobs:
       - name: 工作流内联 Python 语法
         run: python3 tools/check-workflow-python.py
 
+      # 本机没有 kotlinc（第 21 条），所以 .kt 的编译结论只能由 CI 给出 ——
+      # 而一轮 CI 十几分钟。这两类错**不需要类型信息**就能判，
+      # 让它们活到 CI 就是十几分钟一轮（2.6 第 ④ 段第一次真跑红的就是这两类）。
+      - name: Kotlin 机械错误（缺 import / 残留 it.）
+        run: python3 tools/check-kotlin-hazards.py
+
       - name: Install actionlint
         run: |
           set -euo pipefail

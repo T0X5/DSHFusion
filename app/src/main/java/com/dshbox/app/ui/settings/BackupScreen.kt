@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
 import com.dshbox.app.DshApp
 import com.dshbox.app.R
@@ -188,7 +189,7 @@ fun BackupScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                     text = result.message(context),
                     style = MaterialTheme.typography.bodyMedium,
                     color =
-                        if (it.ok) MaterialTheme.colorScheme.primary
+                        if (result.ok) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.error,
                 )
             }

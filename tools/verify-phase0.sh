@@ -2870,6 +2870,49 @@ else
     CR_BAD=1
 fi
 
+# ⑥b Kotlin 机械错误：本机没有 kotlinc，所以这两类**必须**在这里拦下。
+expect 0 "Kotlin 机械错误检查（扩展函数缺 import / 具名 lambda 残留 it.）" \
+    run_tool tools/check-kotlin-hazards.py
+
+# 注入 A：删掉 `vectorResource` 的 import —— 这正是 2.6 第 ④ 段第一次真跑红的那条。
+KS_BAK="$(mktemp)"
+cp "$SCREEN" "$KS_BAK"
+if grep -q '^import androidx.compose.ui.res.vectorResource$' "$SCREEN"; then
+    sed -i '/^import androidx.compose.ui.res.vectorResource$/d' "$SCREEN"
+    if python3 "$ROOT/tools/check-kotlin-hazards.py" >/dev/null 2>&1; then
+        fail "删掉 vectorResource 的 import 之后检查没有变红 —— 它对这个方向是瞎的"
+        CR_BAD=1
+    else
+        ok "缺 import → Kotlin 机械错误检查判失败（抓到真实发生过的那条）"
+    fi
+else
+    fail "找不到 vectorResource 的 import 行 —— 这条注入的锚点失效了（注入需要修，不是检查需要修）"
+    CR_BAD=1
+fi
+cp "$KS_BAK" "$SCREEN"
+
+# 注入 B：把 `result.ok` 改回 `it.ok` —— 具名 lambda 里残留 it.。
+if grep -q 'if (result.ok) MaterialTheme' "$SCREEN"; then
+    sed -i 's/if (result.ok) MaterialTheme/if (it.ok) MaterialTheme/' "$SCREEN"
+    if python3 "$ROOT/tools/check-kotlin-hazards.py" >/dev/null 2>&1; then
+        fail "具名 lambda 里塞回 it. 之后检查没有变红 —— 它对这个方向是瞎的"
+        CR_BAD=1
+    else
+        ok "具名 lambda 残留 it. → Kotlin 机械错误检查判失败"
+    fi
+else
+    fail "找不到 result.ok —— 这条注入的锚点失效了（注入需要修，不是检查需要修）"
+    CR_BAD=1
+fi
+cp "$KS_BAK" "$SCREEN"
+rm -f "$KS_BAK"
+if python3 "$ROOT/tools/check-kotlin-hazards.py" >/dev/null 2>&1; then
+    ok "复原后 Kotlin 机械错误检查重新通过"
+else
+    fail "复原后 Kotlin 机械错误检查仍未通过 —— 注入没被还原干净"
+    CR_BAD=1
+fi
+
 # ⑦ 反向：界面上出现的每个 backup_* 文案键，六份资源里都必须有。
 #    这一条与 i18n 门禁**不重复**：门禁查的是六份之间一致，
 #    而它能允许「六份都没有某个键」—— 那样界面会在运行时抛。
