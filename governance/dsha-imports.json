@@ -357,65 +357,245 @@
     }
   ],
   "not_imported": {
-    "note": "同样属于备份能力、但按阶段**刻意不搬**的类及理由。阶段 2.1–2.2 搬的是「判断归档对不对」与「决定备份什么」；剩下这一批全部是**恢复编排**，归阶段 2.4。其中只有 BackupTree / AndroidBackupFileSystem / AndroidTreeFileSystem 是因为 Android 耦合（AndroidTreeFileSystem 的批量快速路径）而搬不进来，其余都是因为绑定 DSHA 自己的模型（rootfs 分包、user-data-v5、自建插件目录）。",
+    "note": "「我们**没有**从上游拿这个文件」的清单。每一条都带 `verify` —— **可执行的验证声明**，由 tools/check-dsha-imports.py 真跑。\n\n这不是形式主义：第 33 条的成因就是我写下一句没验证的「没搬」，然后自己相信了它，于是重写了一个本来就在可达范围内的实现。**登记文件会终止下一个人的怀疑**，所以每一句「为什么没搬」都必须附上它的验证方式。\n\n`verify` 的三种断言（路径可以是文件，也可以是目录，目录递归查）：\n- `absent`：这些路径必须**不存在**（证明「没搬」不是嘴上说说）\n- `must_not_contain`：这些路径里不许出现某个标识符（证明它依赖的东西确实不在）\n- `must_contain`：这些路径里必须出现某个标识符（证明我们**有**替代物，而不是单纯缺能力）",
     "items": [
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeRestoreTargets.java",
         "reason": "**三条独立理由，最强的不是「依赖 android」。**\n① **逻辑根词汇根本不同（决定性）**：归档的根名 = `BackupSource.id()`（`HostSnapshot.java:43`/`:220`），而 `BackupSource.description()` 只给 `id`/`scope`/`external` 三个键（`BackupSource.java:62-68`）。本类的 `target()` 第一句就是 `BackupJson.string(root, \"logicalKind\")` —— **我们的根没有这个键，它会直接抛**。它认的根名是 `dsh-home`/`dsh-child`/`native-settings`/`plugin-store`/`plugin-package`/`project`，其中 `dsh-child` 是「`.dsh` 的子条目逐个成根」；我们是「一个 `DshBackupMember` 一个根」。**这是两套不同的归档词汇，不是同一套的两个实现。**\n② **目的地路径不同**：它写 `runtime-current/base`、`files/user-data-v5/dsh`、`files/plugin-imports/<task>`；我们的是 `user-data/.dsh`。\n③ **设置钩子不同**：它在 4 处调用 `new ConfigStore(context).hostSettingsState()/applyHostSettings()/prepareHostSettings()`，指向 DSHA 自己的设置与凭据子系统（`ConfigStore` 817 行 → `KeyVault` 145 → `CredentialRead` 73）—— 那是 SharedPreferences + Keystore；骨干是 Kotlin + DataStore。搬进这套等于在骨干旁边长期并行第二套设置模型，每次双上游同步都会冲突。\n⇒ 2.4b **另写一个 `Mapping`**（权威实现是我们自己的归档词汇），本类不导入。审计全文见 docs/FUSION-PLAN.md 的「2.4b 的只读审计结论」。",
-        "phase": "2.4b"
+        "phase": "2.4b",
+        "verify": {
+          "note": "决定性理由是「逻辑根词汇不同」。这两个检查一起证明它：我们的根描述只有 id/scope/external 三个键，而上游 target() 第一句就要 logicalKind。",
+          "must_not_contain": [
+            {
+              "path": "backup/src/main/java/com/deepseekharness/app/backup/BackupSource.java",
+              "text": "logicalKind"
+            }
+          ],
+          "must_contain": [
+            {
+              "path": "backup/src/main/java/com/deepseekharness/app/backup/BackupSource.java",
+              "text": "value.put(\"id\""
+            },
+            {
+              "path": "backup/src/main/java/com/deepseekharness/app/backup/BackupSource.java",
+              "text": "value.put(\"scope\""
+            },
+            {
+              "path": "backup/src/main/java/com/deepseekharness/app/backup/BackupSource.java",
+              "text": "value.put(\"external\""
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/DataRootPolicy.java",
-        "reason": "依赖 ManagedRuntimeLayout 与 CredentialPaths，同属 DSHA 的受管运行时模型。"
+        "reason": "依赖 ManagedRuntimeLayout 与 CredentialPaths，同属 DSHA 的受管运行时模型。",
+        "verify": {
+          "note": "理由说它依赖 ManagedRuntimeLayout 与 CredentialPaths。这条检查证明那两个类不在我们树里 —— 它不可能单独搬过来。",
+          "must_not_contain": [
+            {
+              "path": "backup/src/main/java/",
+              "text": "ManagedRuntimeLayout"
+            },
+            {
+              "path": "backup/src/main/java/",
+              "text": "CredentialPaths"
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupPreview.java",
-        "reason": "审计确认它**不参与**恢复预检，只用于导出前展示范围大小；阶段 2.2 做范围备份时再评估。"
+        "reason": "审计确认它**不参与**恢复预检，只用于导出前展示范围大小；阶段 2.2 做范围备份时再评估。",
+        "verify": {
+          "note": "理由说它不参与恢复预检。这条检查证明：预检与恢复的代码里没有任何地方提到它。",
+          "must_not_contain": [
+            {
+              "path": "backup/src/main/java/com/deepseekharness/app/backup/NativeRestorePlan.java",
+              "text": "BackupPreview"
+            },
+            {
+              "path": "backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java",
+              "text": "BackupPreview"
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupErrorCode.java",
-        "reason": "它不是枚举，而是异常→错误码的归类器，且含两处 Android 类名判断。真正有用的东西是它透传的那套错误码表，而那张表已经通过容器的 IOException message 自然存在，本阶段不需要额外包装。"
+        "reason": "它不是枚举，而是异常→错误码的归类器，且含两处 Android 类名判断。真正有用的东西是它透传的那套错误码表，而那张表已经通过容器的 IOException message 自然存在，本阶段不需要额外包装。",
+        "verify": {
+          "note": "理由说「真正有用的错误码表已经通过容器的 IOException message 自然存在，本阶段不需要额外包装」。这条检查证明那个归类器没有进树，而错误码确实以字面量形式散在容器源码里（107 个，由 tools/check-backup-contract.py 逐个核对可抛出）。",
+          "absent": [
+            "backup/src/main/java/com/deepseekharness/app/backup/BackupErrorCode.java"
+          ],
+          "must_contain": [
+            {
+              "path": "backup/src/main/java/com/deepseekharness/app/backup/BackupArchive.java",
+              "text": "throw new IOException(\""
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/AndroidBackupFileSystem.java",
-        "reason": "BackupTree 的 Android 实现（lstat/NOFOLLOW、批量列举）。阶段 2.2 的 JVM 侧已有 JvmBackupFileSystem 供单测；Android 实现等 2.4 有真实调用方时再搬，那时才验证得了。"
+        "reason": "BackupTree 的 Android 实现（lstat/NOFOLLOW、批量列举）。阶段 2.2 的 JVM 侧已有 JvmBackupFileSystem 供单测；Android 实现等 2.4 有真实调用方时再搬，那时才验证得了。",
+        "verify": {
+          "note": "理由说阶段 2.2/2.4 用的是 JvmBackupFileSystem。这条检查证明 Android 实现没有进树，而 JVM 实现在。",
+          "absent": [
+            "backup/src/main/java/com/deepseekharness/app/backup/AndroidBackupFileSystem.java"
+          ],
+          "must_contain": [
+            {
+              "path": "backup/src/test/java/com/deepseekharness/app/backup/JvmBackupFileSystem.java",
+              "text": "implements BackupFileSystem"
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/AndroidTreeFileSystem.java",
-        "reason": "同上（LeafBatch / DigestDirectory 快速路径）。"
+        "reason": "同上（LeafBatch / DigestDirectory 快速路径）。",
+        "verify": {
+          "note": "同 AndroidBackupFileSystem；另外证明它的 Android 快路径确实已被 BackupTree 摘掉（2.4a 的适配）。",
+          "absent": [
+            "backup/src/main/java/com/deepseekharness/app/backup/AndroidTreeFileSystem.java"
+          ],
+          "must_not_contain": [
+            {
+              "path": "backup/src/main/java/com/deepseekharness/app/backup/BackupTree.java",
+              "text": "AndroidTreeFileSystem"
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ColdInstallTransaction.java",
-        "reason": "恢复事务之一：依赖 DSHA 的冷装模型与 BackupTree。阶段 2.4 的范围。"
+        "reason": "恢复事务之一：依赖 DSHA 的冷装模型与 BackupTree。阶段 2.4 的范围。",
+        "verify": {
+          "note": "理由说它属于阶段 2.4 的恢复编排、依赖 DSHA 的冷装模型。这条检查证明它没进树，而 2.4 的编排用的是上游的 HostDataTransaction。",
+          "absent": [
+            "backup/src/main/java/com/deepseekharness/app/backup/ColdInstallTransaction.java"
+          ],
+          "must_contain": [
+            {
+              "path": "backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java",
+              "text": "HostDataTransaction"
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ManagedRuntimeTransaction.java",
-        "reason": "恢复事务之一：DSHA 的受管运行时。阶段 2.4 的范围。"
+        "reason": "恢复事务之一：DSHA 的受管运行时。阶段 2.4 的范围。",
+        "verify": {
+          "note": "理由说它属于 DSHA 的受管运行时。这条检查证明它没进树，而「受管运行时」这套模型在我们树里一个字都没有。",
+          "absent": [
+            "backup/src/main/java/com/deepseekharness/app/backup/ManagedRuntimeTransaction.java"
+          ],
+          "must_not_contain": [
+            {
+              "path": "backup/src/main/java/",
+              "text": "ManagedRuntimeLayout"
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/EnvironmentRebuildTransaction.java",
-        "reason": "恢复事务之一：重建 rootfs 分包。DSHFusion 没有对应的分包模型（DIV-0015 / 分层运行环境是 DSHBox 的）。"
+        "reason": "恢复事务之一：重建 rootfs 分包。DSHFusion 没有对应的分包模型（DIV-0015 / 分层运行环境是 DSHBox 的）。",
+        "verify": {
+          "note": "理由说 DSHFusion 没有对应的分包模型（分层运行环境是 DSHBox 的）。这条检查证明这个事务没进树，而 DSHBox 那侧的分层安装器在（两者不是同一个东西）。",
+          "absent": [
+            "backup/src/main/java/com/deepseekharness/app/backup/EnvironmentRebuildTransaction.java"
+          ],
+          "must_contain": [
+            {
+              "path": "app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+              "text": "BundledRuntimeInstaller"
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ConfigurationSnapshots.java",
-        "reason": "恢复事务之一：DSHA 的 profile 配置快照。DSHFusion 的 profile 布局不同（见 DshBackupScope 里对 .dsh/profiles 的说明）。"
+        "reason": "恢复事务之一：DSHA 的 profile 配置快照。DSHFusion 的 profile 布局不同（见 DshBackupScope 里对 .dsh/profiles 的说明）。",
+        "verify": {
+          "note": "理由说 DSHFusion 的 profile 布局不同。这条检查证明：我们的范围模型自己声明了 profiles 的路径与范围，而这个快照类没进树。",
+          "absent": [
+            "backup/src/main/java/com/deepseekharness/app/backup/ConfigurationSnapshots.java"
+          ],
+          "must_contain": [
+            {
+              "path": "backup/src/main/java/com/dshbox/app/backup/DshBackupScope.kt",
+              "text": "\".dsh/profiles\""
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ProfileSettingsTransaction.java",
-        "reason": "同上。"
+        "reason": "同上。",
+        "verify": {
+          "note": "同 ConfigurationSnapshots。",
+          "absent": [
+            "backup/src/main/java/com/deepseekharness/app/backup/ProfileSettingsTransaction.java"
+          ],
+          "must_contain": [
+            {
+              "path": "backup/src/main/java/com/dshbox/app/backup/DshBackupScope.kt",
+              "text": "\".dsh/profiles\""
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/QuarantinedPluginReview.java",
-        "reason": "插件隔离复核，接的是 DSHA 自己的插件管理目录（plugin-src / plugin-history）—— 本仓库不存在。DSHFusion 侧的对应物是 plugin-manager 模块的 plugin-guard.json。"
+        "reason": "插件隔离复核，接的是 DSHA 自己的插件管理目录（plugin-src / plugin-history）—— 本仓库不存在。DSHFusion 侧的对应物是 plugin-manager 模块的 plugin-guard.json。",
+        "verify": {
+          "note": "理由说它接的是 DSHA 自己的插件管理目录，本仓库不存在，对应物是 plugin-manager 的 GuardState。这条检查证明两边各自的那一半。",
+          "absent": [
+            "backup/src/main/java/com/deepseekharness/app/backup/QuarantinedPluginReview.java"
+          ],
+          "must_contain": [
+            {
+              "path": "plugin-manager/src/main/java/com/dshbox/pluginmanager/safety/GuardState.kt",
+              "text": "plugin-guard"
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/NativeConfigurationReset.java",
-        "reason": "与 NativeRestorePlan 同属 DSHA 的原生恢复模型。"
+        "reason": "与 NativeRestorePlan 同属 DSHA 的原生恢复模型。",
+        "verify": {
+          "note": "理由说它与 NativeRestorePlan 同属 DSHA 的原生恢复模型。这条检查证明它没进树，而 NativeRestorePlan 在 —— 说明我们只取了预检那一半，没取原生重置那一半。",
+          "absent": [
+            "backup/src/main/java/com/deepseekharness/app/backup/NativeConfigurationReset.java"
+          ],
+          "must_contain": [
+            {
+              "path": "backup/src/main/java/com/deepseekharness/app/backup/NativeRestorePlan.java",
+              "text": "buildCandidates"
+            }
+          ]
+        }
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/AndroidBackupFileSystem.java + AndroidTreeFileSystem.java + NativeStorage.java",
         "reason": "**需要 DSHFusion 骨干没有的原生库**：`NativeStorage` 调 `System.loadLibrary(\"termux\")` 并声明 7 个 native 方法，符号在 DSHA 的 `libtermux.so` 里（DSHFusion 只有 libproot/libproot-loader/libtalloc/libandroid-shmem/libzstd-jni）。而且这三者只被 `BackupTree` 的 **Android 快路径**使用 —— 那是 proroot 的批量遍历优化，DSHBox 用的是 proot，路径不适用。导入 = 编译得过、运行必 `UnsatisfiedLinkError` 的死代码。**若将来 DSHFusion 有了等价的原生批量读取，可以按本文件的 `derived` 段里 BackupTree 那条把这条快路径接回来（届时需要先解决 libtermux 的原生符号）。**",
-        "phase": "——"
+        "phase": "——",
+        "verify": {
+          "note": "理由说它需要 DSHFusion 骨干没有的原生库（System.loadLibrary(\"termux\")，符号在 DSHA 的 libtermux.so 里）。这两条检查证明：libtermux.so 不在树里，而 libproot 系列在 —— 缺的是那一个库，不是「原生能力」。",
+          "absent": [
+            "backup/src/main/java/com/deepseekharness/app/backup/NativeStorage.java",
+            "app/src/main/jniLibs/arm64-v8a/libtermux.so"
+          ],
+          "present": [
+            "app/src/main/jniLibs/arm64-v8a/libproot.so",
+            "app/src/main/jniLibs/arm64-v8a/libproot-loader.so"
+          ]
+        }
       }
     ]
   },

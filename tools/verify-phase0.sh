@@ -2218,6 +2218,58 @@ else
     CR_BAD=1
 fi
 
+# ⑩b **not_imported 的验证声明必须真跑，而且必须会红。**
+#     第 33 条的成因就是一句没验证的「没搬」，而登记文件会**终止下一个人的怀疑**。
+#     三种断言各注一次：抽掉 verify / 把 must_contain 的文本改成不存在 / 让 absent 的路径真的在。
+VERIFY_INJ() {
+    python3 - "$1" <<'PYV'
+import json, sys
+mode = sys.argv[1]
+p = "governance/dsha-imports.json"
+d = json.load(open(p, encoding="utf-8"))
+items = d["not_imported"]["items"]
+if mode == "drop":
+    items[0].pop("verify", None)
+elif mode == "contain":
+    for e in items:
+        v = e.get("verify") or {}
+        if v.get("must_contain"):
+            v["must_contain"][0]["text"] = "这个字符串在任何源码里都不存在-9f3a"
+            break
+elif mode == "absent":
+    for e in items:
+        v = e.get("verify") or {}
+        if v.get("absent"):
+            v["absent"].append("AGENTS.md")   # 这个路径当然在
+            break
+json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+PYV
+}
+VERIFY_BAK="$(mktemp)"
+cp governance/dsha-imports.json "$VERIFY_BAK"
+VERIFY_BAD=0
+for MODE in drop contain absent; do
+    VERIFY_INJ "$MODE"
+    if python3 tools/check-dsha-imports.py >/dev/null 2>&1; then
+        fail "注入 $MODE 之后验证声明检查没有变红 —— 它对这个方向是瞎的"
+        VERIFY_BAD=1
+    fi
+    cp "$VERIFY_BAK" governance/dsha-imports.json
+done
+if [ "$VERIFY_BAD" = "0" ]; then
+    ok "not_imported 的验证声明三个方向都能变红（抽掉 verify / 内容不成立 / absent 落空）"
+else
+    CR_BAD=1
+fi
+cp "$VERIFY_BAK" governance/dsha-imports.json
+rm -f "$VERIFY_BAK"
+if python3 tools/check-dsha-imports.py >/dev/null 2>&1; then
+    ok "复原后 not_imported 验证声明重新全部成立"
+else
+    fail "复原后导入核验仍未通过 —— 注入没被还原干净"
+    CR_BAD=1
+fi
+
 # ⑪ **改了检查器，就必须证明它仍然有界**（第 32 条）。
 # 我把 check-backup-contract.py 的「悬空限定名」规则从 `[A-Za-z0-9_.]\s*new` 改成
 # `[A-Za-z0-9_]\s*\.\s*new`（旧的那个字符类会匹配 `return` 的最后一个字母，于是把

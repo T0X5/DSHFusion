@@ -208,6 +208,97 @@ def check_not_imported_disjoint(doc: dict, taken_upstream: set) -> list:
     return problems
 
 
+def _texts(path: pathlib.Path):
+    """把一个路径展开成 (相对路径, 文本) 列表。目录则递归取文本文件。"""
+    if path.is_file():
+        try:
+            return [(path, path.read_text(encoding="utf-8", errors="replace"))]
+        except OSError:
+            return []
+    out = []
+    for child in sorted(path.rglob("*")):
+        if child.is_file() and child.suffix in {".java", ".kt", ".kts", ".py", ".sh", ".json"}:
+            try:
+                out.append((child, child.read_text(encoding="utf-8", errors="replace")))
+            except OSError:
+                pass
+    return out
+
+
+def run_not_imported_verifications(doc: dict) -> list:
+    """真跑 `not_imported[].verify` 里的每一条断言。
+
+    ## 为什么这一节必须真跑，而不是「写了就算」
+
+    第 33 条的成因是我在登记文件里写下一句**没验证过**的「没搬」，然后自己相信了它，
+    于是从零重写了一个上游本来就有、而且更严密的实现。
+
+    登记文件的性质决定了它错得更贵：**它会终止下一个读它的人的怀疑。**
+    所以每一句「为什么没搬」都配一条可执行的断言，由这里跑。
+
+    三种断言（路径可以是文件，也可以是目录 —— 目录递归查）：
+    - `absent`           ：这些路径必须不存在
+    - `must_not_contain` ：这些路径里不许出现某个标识符
+    - `must_contain`     ：这些路径里必须出现某个标识符
+
+    ⚠️ 只跑声明，不判断「这条声明是否真的证明了那个理由」——
+    后者不可机械判定。但**「理由」里出现过的每个标识符至少要被某条断言碰到**，
+    这条可判定性很弱，所以我不假装它成立；本函数只保证：**声明不成立时它一定红。**
+    """
+    problems = []
+    section = doc.get("not_imported")
+    if not isinstance(section, dict):
+        return problems
+    items = section.get("items") or []
+    checked = 0
+    for entry in items:
+        name = str(entry.get("upstream_path", "?"))
+        verify = entry.get("verify")
+        if not isinstance(verify, dict) or not verify:
+            problems.append(f"{name} 没有 verify —— 「没搬」的理由没有可执行的验证方式（第 33 条）")
+            continue
+        if not str(verify.get("note", "")).strip():
+            problems.append(f"{name} 的 verify 没有 note —— 说清这条检查为什么能证明上面那个理由")
+            continue
+
+        for relative in verify.get("absent") or []:
+            checked += 1
+            if (ROOT / relative).exists():
+                problems.append(f"{name} 的 verify 说 {relative} 不存在，而它**在**")
+
+        for relative in verify.get("present") or []:
+            checked += 1
+            if not (ROOT / relative).exists():
+                problems.append(f"{name} 的 verify 说 {relative} 应该在，而它**不在**")
+
+        for key, want in (("must_contain", True), ("must_not_contain", False)):
+            for item in verify.get(key) or []:
+                checked += 1
+                relative, text = str(item.get("path", "")), str(item.get("text", ""))
+                target = ROOT / relative
+                if not target.exists():
+                    problems.append(f"{name} 的 verify 指向不存在的路径 {relative}")
+                    continue
+                scanned = _texts(target)
+                # ⚠️ 目录里一个可扫的文本文件都没有时，`must_not_contain` 会**静默通过** ——
+                # 它是一条不可能变红的断言（第 30 条）。这里把它变成一条问题。
+                # 实测抓到过：我对着只放 .so 的 jniLibs 目录写 must_contain，红了；
+                # 而同一目录上的 must_not_contain 是**绿**的，绿得毫无意义。
+                if target.is_dir() and not scanned:
+                    problems.append(
+                        f"{name} 的 verify 指向目录 {relative}，但那里一个可扫的文本文件都没有 —— "
+                        "这条断言不可能变红")
+                    continue
+                hits = [p for p, body in scanned if text in body]
+                if want and not hits:
+                    problems.append(f"{name} 的 verify 要求 {relative} 里出现 {text!r}，实际没有")
+                if not want and hits:
+                    problems.append(
+                        f"{name} 的 verify 要求 {relative} 里不出现 {text!r}，"
+                        f"实际出现在 {hits[0].relative_to(ROOT).as_posix()}")
+    return problems + [] if False else problems, checked
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="核验 DSHA 导入副本的来源头与正文一致性")
     parser.add_argument("--update", action="store_true",
@@ -331,9 +422,10 @@ def main() -> int:
         | {str(i.get("upstream_path", "")) for i in ((doc.get("derived") or {}).get("items") or [])}
     )
     not_imported_problems = check_not_imported_disjoint(doc, upstream_taken)
+    verify_problems, verify_checked = run_not_imported_verifications(doc)
 
     if (missing or bad_header or mismatched or unregistered or stray
-            or derived_problems or original_problems or not_imported_problems):
+            or derived_problems or original_problems or not_imported_problems or verify_problems):
         print("DSHA 导入副本核验失败：", file=sys.stderr)
         for item in missing:
             print(f"  ✗ 缺失: {item}", file=sys.stderr)
@@ -354,6 +446,8 @@ def main() -> int:
             print(f"  ✗ 自写文件登记有问题: {item}", file=sys.stderr)
         for item in not_imported_problems:
             print(f"  ✗ not_imported 登记有问题: {item}", file=sys.stderr)
+        for item in verify_problems:
+            print(f"  ✗ not_imported 的验证声明不成立: {item}", file=sys.stderr)
         # 提示只在真的与逐字节副本有关时出现 —— 错在 derived 段时还讲「正文按设计是
         # 逐字节副本」会把人引到错的地方。
         if missing or bad_header or mismatched or unregistered or stray:
@@ -367,6 +461,12 @@ def main() -> int:
                 "同一路径不能既在 files/derived/original 里、又在 not_imported 里 —— "
                 "那会让下一个读登记的人以为树里没有这个文件（见 docs/INCIDENTS.md 第 33 条）。",
                 file=sys.stderr)
+        if verify_problems:
+            print(
+                "\nnot_imported 的 `verify` 是**可执行的**：它由本检查器真跑。"
+                "理由说「没搬」，就得有一条断言证明「确实不在 / 依赖的东西确实不在 / 替代物确实在」。"
+                "第 33 条就是因为一句没验证的「没搬」而重写了一个上游本来就有的实现。",
+                file=sys.stderr)
         if derived_problems:
             print(
                 "\nderived 段是「改写/适配后移植」的登记：正文本来就与上游不同，"
@@ -379,7 +479,8 @@ def main() -> int:
     print(
         f"DSHA 导入副本核验通过：{len(registered)} 个文件、{total_bytes} 字节（含来源头），"
         f"正文逐字节与 {upstream.get('id', '?')}@{str(upstream.get('locked_commit', '?'))[:12]} 一致；"
-        f"导入目录内无未登记文件；改写/适配移植 {derived_note}。")
+        f"导入目录内无未登记文件；改写/适配移植 {derived_note}；"
+        f"not_imported 的 {verify_checked} 条验证声明全部成立。")
     return 0
 
 
