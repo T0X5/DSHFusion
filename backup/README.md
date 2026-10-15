@@ -639,6 +639,37 @@ OK (81 tests)
 
 （2.4b-② 的 65 + 导入的 9 + 保留策略的 7 = 81。）
 
+## 阶段 2.6 加了什么：生产侧文件系统、导出编排、依赖边
+
+到 2.5 为止，这个模块有 124 条测试全绿，而**它一个字节都没进过 APK** ——
+`settings.gradle.kts` 有 `include(":backup")`，所以 CI 能单独编译并测试它，
+但 `app` 的依赖列表里没有它。于是「测试全绿」和「代码在设备上」是两件事，
+而输出上完全一样。
+
+2.6 补这条边，顺带补上它缺的两块：
+
+| 加了什么 | 来源 | 为什么 |
+|---|---|---|
+| `AndroidBackupFileSystem` + `OwnershipCheckFailure` | 逐字节导入 | 导出需要一个**生产侧**的 `BackupFileSystem`，而此前只有 `src/test/` 里的 JVM 版。它用 `android.system.Os` / `ParcelFileDescriptor` / `Process.myUid` —— **全是平台 API**，与 `NativeStorage`（要 `libtermux.so`）是两种性质 |
+| `DshBackupExporter` | 本仓库自写（Java） | 导出编排。**容器格式、逐文件校验、完整性判定一行都没有重写** —— 5r 节有一条断言钉住这一点 |
+| `app → :backup` | DIV-0021 | 阶段 2 的产出第一次会进 APK |
+
+**本机编不了的部分怎么管。** `AndroidBackupFileSystem` 需要 `android.jar`，
+而本机没有。`tools/run-backup-jvm-tests.sh` 现在**按依赖**（import 了 `android.`）
+识别它们，并与一张声明表逐一对照 —— 多一个少一个都退 2。
+一个静默的排除会让「本机全绿」的覆盖面悄悄小于它宣称的覆盖面，
+那正是这个项目反复吃亏的形态。被排除的那份不是没人管：正文由
+`check-dsha-imports.py` 逐字节核验，平台 API 与「没引入原生库」由 5r 节钉住。
+
+**导出编排里两处「少一步就静默出错」的地方**（都在本机有测试）：
+
+1. **排除谓词的坐标系差一个前缀。** `Policy.exclusion` 给的是「相对成员根」的，
+   而 `DshBackupExclusions.isExcluded` 收的是「相对 user-data」的。少了拼接则
+   **排除一条都不命中、且不报任何错** —— 归档里安静地带上机器本地凭据。
+2. **「路径出现在归档里」≠「内容进了归档」。** 被排除项仍会留下一条
+   `kind=EXCLUDED` 的元数据记录（没有载荷），这是有意的：
+   「这次备份漏了什么」必须能从归档里读出来。
+
 ## 这个模块**不**做什么
 
 明确划出去的部分，免得读者以为「格式与预检」等于「能备份能恢复」：
