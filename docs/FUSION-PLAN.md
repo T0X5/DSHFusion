@@ -145,8 +145,8 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 | 2.3 | 凭据排除（机器本地记录 **投影**掉，而不是整份删除） | DSHA `CredentialProjection`＋`CredentialFileBackupSource` | ✅ **已通过真实 CI**（run [38643847540](https://github.com/T0X5/DSHFusion/actions/runs/38643847540)，commit `19e95bd`，**24/24 步全绿**；`:backup` **76 条测试**、产物 128,791,472 字节）。分支 `phase-2.3/credential-exclusion`，PR #8 | 安全项，独立可测 |
 | 2.4a | **恢复核心**：预检 + 候选构建 + 校验（`NativeRestorePlan`/`BackupTree`） | DSHA `NativeRestorePlan`＋`BackupTree`＋`DataFormatEvidence`＋`RuntimeDescriptor` | ✅ **已通过真实 CI**（run [38647873314](https://github.com/T0X5/DSHFusion/actions/runs/38647873314)，commit `0629409`，**24/24 步全绿**；`:backup` **85 条测试 / 12 个类**、产物 128,789,848 字节）。分支 `phase-2.4/restore-core`，PR #10 | 会毁数据的那条路径，必须先能本机真跑 |
 | 2.4b-① | **恢复的落点**：逻辑根 → 本机路径映射（**落在 `user-data/` 的成员上，不是 runtime 槽**） | DSHA `NativeRestoreTargets` **不导入**（见下），另写 `HostRestoreMapping.java` | ✅ **已实现**（2026-10-14，同一分支）。✅ **已通过真实 CI**（run [38651955250](https://github.com/T0X5/DSHFusion/actions/runs/38651955250)，`0aea1dd`，**24/24 步全绿**，`:backup` **96 条 / 13 个类**）。本机真跑 **53 条** Java 测试（42 → 53），含**端到端往返**与**改动注入**；成员表与 `DshBackupScope` 的一致性由 `check-backup-contract.py` 逐项核验并做过漂移注入 | **一个成员一个 group**：`read` 指向成员自己，于是候选树不把整个 `.dsh` 卷进来 |
-| 2.4b-② | **提交候选树到活动目录 + 失败回切** | 无上游可搬，另写 `HostRestoreCommit.java` | ✅ **已实现**（2026-10-14，同一分支）。本机真跑 **62 条** Java 测试（53 → 62），含三条故障注入（各自自证 `fault.swaps`）。崩溃现场由**真实代码路径**产生 | 三条前提都被断言：`CROSS_DEVICE`（跨设备时 move 退化成拷贝、原子性静默消失）、`TARGET_CHANGED`（提交前重新核验）、目录缺了才建。⚠️ 由此得出一条**运行约束**：恢复期间目标必须静止，这条只能由调用方保证 |
-| 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA `AutomaticBackups` | 未开始 | 最后做，依赖 2.1–2.4 |
+| 2.4b-② | **提交候选树到活动目录 + 失败回切** | 无上游可搬，另写 `HostRestoreCommit.java` | ✅ **已实现**（2026-10-14，同一分支）。本机真跑 **62 条** Java 测试（53 → 62），含三条故障注入（各自自证 `fault.swaps`）。✅ **CI run [38655637817](https://github.com/T0X5/DSHFusion/actions/runs/38655637817) / `9d02c9f`：24/24 全绿，`:backup` 105 条 / 14 个类**（预测的 105 被逐字证实），产物 128,789,786 字节。⚠️ 真机行为未观察过。崩溃现场由**真实代码路径**产生 | 三条前提都被断言：`CROSS_DEVICE`（跨设备时 move 退化成拷贝、原子性静默消失）、`TARGET_CHANGED`（提交前重新核验）、目录缺了才建。⚠️ 由此得出一条**运行约束**：恢复期间目标必须静止，这条只能由调用方保证 |
+| 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA 有**完整实现**（见下节审计） | 🔍 **只读审计已完成，实现未开始** | 最后做，依赖 2.1–2.4 |
 
 **2.2 落地时校正了本表的两处假设**（都是对照真实代码后改的，不是推测）：
 
@@ -448,6 +448,73 @@ void syncDirectory(File directory) throws IOException;    // 持久化屏障
 > 未运行的检查写「未运行」，不写「通过」。
 
 ---
+
+### 2.5 的只读审计结论（2026-10-14）—— 审计已做，实现未开始
+
+**这一节只有审计，一行实现代码都没写**，所以下面不声称任何一条成立。
+
+#### 一、骨干里**什么都没有**
+
+DSHBox 全库搜 `autobackup`/`schedul`/`Automatic` —— **零命中**；
+版本目录 `libs.versions.toml` 里没有 `work`/`alarm`/`job` 任何依赖。
+所以 2.5 对本项目是**全新功能**，不是「把骨干的能力接上」。
+
+#### 二、DSHA 侧有一整套，规模与耦合如下
+
+| 类 | 行数 | `android.*` 导入 | 判定 |
+|---|---|---|---|
+| `AutomaticBackupPolicy` | 30 | **0**（只有 `java.time`） | ✅ **可复用**，且有上游测试 |
+| `AutomaticBackupPruner` | 35 | **0** | ⚠️ 需适配（见三） |
+| `VerifiedBackupCopy` | 107 | **0** | ⚠️ 需适配（见三） |
+| `AutomaticBackups` | 244 | 2 | ❌ 不可复用（见四） |
+| `AutomaticBackupService` | 178 | 4 | ❌ 不可复用（Android Service） |
+| `ScheduledBackupOwner` | 82 | **0** | ⚠️ 需看它引用了什么 |
+
+`AutomaticBackupPolicy` 里就是计划本身：`Math.max(1, Math.min(168, intervalHours))` ——
+**1–168 小时的钳位**，与阶段 2 的验收条目逐字对上。
+
+#### 三、「零 android 导入」在这里**不代表可复用**（这一条与 2.4b 的教训同族）
+
+`AutomaticBackupPruner` 看起来最干净（35 行、零 android），但它写着：
+
+```java
+Set<String> allowed = Set.of("portable.dshbak", "verified.json", "operation.json", "source-checks");
+```
+
+那是 **DSHA 自己的归档目录命名与文件清单**。我们的归档由 `HostSnapshot` 产出，
+命名不同。直接搬过来会**永远匹配不上**，于是「清理」静默变成空操作 ——
+**一个什么都不删的 pruner，和没有 pruner，在日志上长得一模一样。**
+
+`VerifiedBackupCopy` 同理：它的 `metadata.get("automatic")`、`result(true)`、
+`created` 都是 DSHA 备份记录的字段词汇。
+
+⇒ **结论：这两个类要按我们的归档词汇重写，不能逐字节搬。** 这是 2.5 的主要工作量。
+
+#### 四、编排层不可复用，理由是「指向上游自己的应用内部」
+
+`AutomaticBackups` 的 18 个公开方法里，几乎每一个的第一个参数都是 `Context`，
+它自己就是一个 **`SharedPreferences` 的设置门面**（`prefs`/`enabled`/`recordError`/
+`suspendForFactoryReset`…），并且 `idle()`/`idleForOwner()` 直接调
+`HarnessController.get(context)`。**我们的设置不在 `SharedPreferences` 里，
+也没有 `HarnessController`。** 与 2.4b 拒绝 `NativeRestoreTargets` 的理由同类：
+不是平台 API 的问题，是**架构承诺**的问题。
+
+#### 五、调度机制：两个上游**独立地**选了同一个
+
+| | 机制 | 依据 |
+|---|---|---|
+| DSHA | `JobScheduler` | `AutomaticBackups.java:50`、`AutomaticBackupService` 类注释「JobScheduler 持有任务寿命，不从后台强行启动前台服务或停止用户会话」 |
+| DSHBox | `JobScheduler` | `RelayA11yWatchdog.kt:23` 注释：「用平台自带的 JobScheduler 而不是 WorkManager：本模块不引入新依赖」 |
+
+⇒ **2.5 用平台 `JobScheduler`，不引入任何新依赖。** 两个上游各自独立地得出同一结论，
+而骨干还有一条显式的不引依赖约定 —— 这条不需要再论证。
+
+#### 六、审计**没有**回答的问题（不许当成已知）
+
+- `ScheduledBackupOwner`（82 行、零 android）到底管什么，**还没读**。
+- 「停止后备份」这个触发点在我们的架构里对应什么事件，**还没定**。
+- DSH 正在跑时做自动备份，与 2.4b-② 刚立下的**运行约束**（恢复期间目标必须静止）
+  如何共存 —— **这是一个真问题，还没解**。
 
 ## 阶段 3 — 设备能力
 

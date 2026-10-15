@@ -513,6 +513,14 @@ move(candidate, active)  // 候选挪进来
 
 本机真跑：**62 条**（2.4b-① 是 53；新增 9 条）。
 
+> ✅ **阶段 2.4b-② 已通过真实 CI**（run [38655637817](https://github.com/T0X5/DSHFusion/actions/runs/38655637817)，
+> commit `9d02c9f`）：**24/24 步全绿**，`:backup` **105 条测试 / 14 个测试类**
+> （日志逐类打印 `9 com.dshbox.app.backup.HostRestoreCommitTest`），
+> 产物 `dshapp-debug-apk` 128,789,786 字节。Contracts 4/4 全绿。
+>
+> ⚠️ **CI 绿 ≠ 真机安全。** 这是本模块唯一真的会动活动目录的代码，
+> 而它的真机行为**一次都没被观察过** —— 还没有界面入口。
+
 ## 这个模块**不**做什么
 
 明确划出去的部分，免得读者以为「格式与预检」等于「能备份能恢复」：
