@@ -1,5 +1,6 @@
 package com.dshbox.app.backup
 
+import com.deepseekharness.app.backup.CredentialProjection
 import com.deepseekharness.app.util.BackupScopes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -146,7 +147,35 @@ class DshBackupScopeTest {
 
     @Test
     fun fullScopeCoversTheWholeDshHome() {
-        assertEquals(listOf(DshBackupMember("dsh", ".dsh", "", "application")), DshBackupScope.FULL.members)
+        // FULL 有**两个**成员，而且第二个是必须的。
+        //
+        // 凭据文件为什么不能只靠 `.dsh` 那棵树带走：`CredentialFileBackupSource`
+        // 会对**它拿到的每一个 item** 做投影，所以它只能套在「根就是那个文件」的源上。
+        // 让它跟着 `.dsh` 整棵树走，投影就没法施加 —— 而**这正是真机上泄漏 API Key 的成因**
+        // （那条路径的排除清单还写错了名字，两错叠加）。
+        //
+        // 所以：`.dsh` 那棵树负责除凭据以外的一切，凭据由**单独的成员**负责；
+        // 而 `.dsh` 树里的原样副本由 `DshBackupExclusions.CREDENTIALS` 排除掉。
+        // 两者缺一不可 —— 少了这个成员，归档里没有 provider 凭据（换设备要重填）；
+        // 少了那条排除，原样泄漏。
+        assertEquals(
+            listOf(
+                DshBackupMember("dsh", ".dsh", "", "application"),
+                DshBackupMember(
+                    "credentials",
+                    ".dsh/" + CredentialProjection.FILE,
+                    CredentialProjection.FILE,
+                    "settings",
+                ),
+            ),
+            DshBackupScope.FULL.members,
+        )
+        // 反向：凭据成员必须**单独存在**，而不是被并进 `.dsh` 那棵树。
+        assertEquals(
+            "凭据必须是独立的根（否则投影无法施加）",
+            1,
+            DshBackupScope.FULL.members.count { it.id == "credentials" },
+        )
     }
 
     @Test
