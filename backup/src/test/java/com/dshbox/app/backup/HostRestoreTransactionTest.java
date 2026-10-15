@@ -221,6 +221,68 @@ public class HostRestoreTransactionTest {
     assertTrue(new File(sessions(staged), "local-only").isDirectory());
   }
 
+  /**
+   * **「恢复后逐文件校验」真的会红吗。**
+   *
+   * <p>阶段 2 的验收标准里有一条「恢复后**逐文件校验**」，它由
+   * `HostDataTransaction.commit` 实现：把所有候选换进去之后，它**重新对目标取摘要**
+   * 并与候选记录的 `after` 比，不一致就抛 `COMMIT_VERIFICATION`。
+   *
+   * <p>⚠️ **先前没有任何用例观察到它触发过。** 上游那份 `everyIoFailureRestoresFilesAndSettings`
+   * 注入的是**抛异常**，而 `COMMIT_VERIFICATION` 需要的是**数据被改**（不抛，只是对不上）——
+   * 两条路径完全不同。所以「实现存在」与「它会红」在这里是两件事。
+   *
+   * <p>注入点选 `settings-write`：它在 `files-committed` **之后**、重新取摘要**之前**，
+   * 正好是那次校验要覆盖的窗口。在那里改一个已换入的文件，摘要必然对不上。
+   */
+  @Test
+  public void postCommitFileVerificationIsRealAndRollsBack() throws Exception {
+    Staged staged = stage(fs);
+    File restoredFile = new File(sessions(staged), "a.json");
+
+    HostRestoreTransaction injecting =
+        new HostRestoreTransaction(
+            fs,
+            staged.restoreTask,
+            staged.plan,
+            name -> {
+              // 换入已经完成、还没重新取摘要 —— 把换进去的内容改掉。
+              // **不抛异常**：要证的正是「不改就发现不了」的那种损坏。
+              if (name.equals("settings-write")) {
+                Files.write(restoredFile.toPath(), "{\"session\":999}".getBytes(StandardCharsets.UTF_8));
+              }
+            });
+
+    injecting.prepare(staged.groups, new BackupControl(null));
+    IOException failure =
+        assertThrows(IOException.class, () -> injecting.commit(new BackupControl(null)));
+    assertEquals(
+        "换入之后的数据被改，逐文件校验必须发现（而不是当成成功）",
+        "COMMIT_VERIFICATION",
+        failure.getMessage());
+
+    // 而且它**不会**把这份它解释不了的数据抹掉。
+    //
+    // ⚠️ 我第一版在这里断言「原件必须回来」，然后红了。原因值得记：
+    // `recover()` 只在目标摘要**等于候选的 `after`** 时才把新数据挪去 `failed/` 并换回原件；
+    // 摘要既不等于 before 也不等于 after 时，它抛 `FAILED_RETAINED` ——
+    // **拒绝丢弃它无法解释的数据**。
+    //
+    // 那是对的：那份数据可能是用户在提交之后自己写的。静默抹掉它才是真正的数据损失。
+    // 所以正确的性质是「现场保留 + 明确报错」，而不是「无条件回切」。
+    HostRestoreTransaction recovering = new HostRestoreTransaction(fs, staged.restoreTask, staged.plan);
+    IOException refused =
+        assertThrows(IOException.class, recovering::recover);
+    assertEquals(
+        "摘要对不上两个记录值时，恢复必须拒绝动手（那份数据可能是用户自己写的）",
+        "FAILED_RETAINED",
+        refused.getMessage());
+    assertEquals(
+        "拒绝动手 = 现场原样保留，既不抹掉也不假装成功",
+        "{\"session\":999}",
+        read(restoredFile));
+  }
+
   /** 回切本身也失败时，现场必须留着，而 `recover()` 还能救回来。 */
   @Test
   public void whenRollbackAlsoFailsRecoverStillRestoresTheOriginal() throws Exception {

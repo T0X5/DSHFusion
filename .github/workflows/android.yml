@@ -139,7 +139,7 @@ jobs:
           #            状态机拒绝乱序、以及五条负路径）
           #      + 11（我们的 DshAutomaticBackupRunnerTest —— 自动备份的**顺序**：
           #            导出失败时一份旧备份都不许少；读不了的归档不删也不计数）
-          #   = 119；Kotlin 侧未动仍是 43 ⇒ 119 + 43 = 162。
+          #   = 120；Kotlin 侧未动仍是 43 ⇒ 120 + 43 = 163。
           # 119 是本机实测（tools/run-backup-jvm-tests.sh，17 个类），43 是 CI 实测。
           # 拼出来的 162 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
           # 若 CI 报的不是 162，先信 CI（docs/INCIDENTS.md 第 27 条）。
@@ -169,7 +169,7 @@ jobs:
           for name, want, why in (
               ("com.deepseekharness.app.backup.HostDataTransactionTest", 5,
                "上游的事务测试没跑 = 提交/回切的严密性没有证据"),
-              ("com.dshbox.app.backup.HostRestoreTransactionTest", 7,
+              ("com.dshbox.app.backup.HostRestoreTransactionTest", 8,
                "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
               ("com.dshbox.app.backup.DshAutomaticBackupRunnerTest", 11,
                "自动备份的**顺序**守卫没跑 = 「导出失败时不会净损失旧备份」没有证据"),

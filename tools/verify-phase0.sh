@@ -2271,10 +2271,10 @@ else
     fail "HostDataTransactionTest 有 $TXN_N 条 @Test，期望 5"
     CR_BAD=1
 fi
-if [ "$ADP_N" = "7" ]; then
-    ok "适配层集成测试 7 条 @Test"
+if [ "$ADP_N" = "8" ]; then
+    ok "适配层集成测试 8 条 @Test"
 else
-    fail "HostRestoreTransactionTest 有 $ADP_N 条 @Test，期望 7"
+    fail "HostRestoreTransactionTest 有 $ADP_N 条 @Test，期望 8"
     CR_BAD=1
 fi
 
