@@ -2294,6 +2294,115 @@ else
     CR_BAD=1
 fi
 
+section "5q. 自动备份的到期判定与保留策略（阶段 2.5）"
+
+RET="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRetention.java"
+RET_TEST="$ROOT/backup/src/test/java/com/dshbox/app/backup/DshAutomaticBackupRetentionTest.java"
+POLICY="$ROOT/backup/src/main/java/com/deepseekharness/app/util/AutomaticBackupPolicy.java"
+OWNER="$ROOT/backup/src/main/java/com/deepseekharness/app/util/ScheduledBackupOwner.java"
+
+# ① 只有一份保留策略实现（不保留两套 —— 硬约束 2）
+# ⚠️ 只数 **主源码**，而且要加括号 —— 第一版我写成 `find src -name A -o -name B`：
+# 它把 `...RetentionTest.java` 也算进来了，于是「不唯一」红了，而实际只有一份实现。
+# `-o` 不分组时还会与隐含的 `-print` 结合出反直觉的结果。
+COUNT=$(find "$ROOT/backup/src/main" \( -name '*Retention*.java' -o -name '*Pruner*.java' \) 2>/dev/null | wc -l)
+if [ "$COUNT" = "1" ] && [ -f "$RET" ]; then
+    ok "保留策略只有一份实现（DshAutomaticBackupRetention），上游那份没有并存"
+else
+    fail "保留策略实现不唯一（找到 $COUNT 份）—— 两套实现会各自演化"
+    CR_BAD=1
+fi
+
+# ② 两个逐字节导入的纯逻辑类在位（内容由 check-dsha-imports.py 逐字节核）
+for f in "$POLICY" "$OWNER"; do
+    if [ -f "$f" ]; then
+        ok "已导入 $(basename "$f")（到期判定 / 单飞票据）"
+    else
+        fail "缺少 $(basename "$f") —— 2.5 的可复用部分没搬进来"
+        CR_BAD=1
+    fi
+done
+
+# ③ 比上游严的三条规则都在源码里（不是只在注释里说）
+STRICT_BAD=0
+for RULE in 'OPERATION.equals' 'COMPLETE.contains' 'Math.max(1, keep)' 'unverified'; do
+    if ! grep -q -- "$RULE" "$RET"; then
+        fail "保留策略缺少「$RULE」—— 比上游严的那三条没落实"
+        STRICT_BAD=1
+    fi
+done
+if [ "$STRICT_BAD" = "0" ]; then
+    ok "比上游严的三条都在源码里：只碰 MAINTENANCE / 证明不了完整的不删 / keep 不允许为 0"
+else
+    CR_BAD=1
+fi
+
+# ④ **审计结论的可证伪形式必须在位。**
+#    第 28 条：审计的结论也要能被推翻。没有这条用例，「不能直接抄上游 pruner」
+#    就只是一句说法 —— 而它恰恰是我在 2.4b-② 栽过的同一个坑（第 33 条）。
+if grep -q 'upstreamPrunerJudgementMatchesNothingOfOurs' "$RET_TEST"; then
+    if grep -q 'assertEquals(2, r.expired.size())' "$RET_TEST"; then
+        ok "审计结论有可证伪形式，且**同时**断言我们的策略确实会删（不是两边都不删的空断言）"
+    else
+        fail "审计实验只断言「上游不删」—— 那是个两边都绿、什么也没区分开的断言"
+        CR_BAD=1
+    fi
+else
+    fail "缺少 upstreamPrunerJudgementMatchesNothingOfOurs —— 审计结论无法被推翻"
+    CR_BAD=1
+fi
+
+# ⑤ **四个方向各注一次**，证明每条规则都有自己的守卫。
+#    只证明「删得对」不够 —— 要证明「删错了会红」。
+#    ⚠️ 用 mktemp，不写死 /tmp（本文件上方已有过这个教训）。
+RET_BAK="$(mktemp)"
+cp "$RET" "$RET_BAK"
+RET_INJ() {
+    python3 - "$1" <<'PYR'
+import pathlib, sys
+m = sys.argv[1]
+p = pathlib.Path("backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRetention.java")
+t = p.read_text(encoding="utf-8")
+subs = {
+ "operation": ("if (!OPERATION.equals(archive.operation)) continue;", "// 变异"),
+ "integrity": ("      if (!COMPLETE.contains(archive.integrity)) {", "      if (false) {"),
+ "keepzero":  ("int wanted = Math.max(1, keep);", "int wanted = keep;"),
+ "tie":       (".thenComparing(Comparator.comparing((Archive a) -> a.name).reversed());",
+               ".thenComparing(a -> a.name);"),
+}
+old, new = subs[m]
+assert t.count(old) == 1, m
+p.write_text(t.replace(old, new), encoding="utf-8")
+PYR
+}
+RET_INJ_BAD=0
+for MODE in operation integrity keepzero tie; do
+    RET_INJ "$MODE"
+    RUN=$(bash tools/run-backup-jvm-tests.sh 2>&1 | grep -oE 'Tests run: [0-9]+,  Failures: [0-9]+' | head -1)
+    case "$RUN" in
+        *"Failures: 1") : ;;
+        *) fail "注入 $MODE 之后没有恰好 1 条红（实际：${RUN:-没跑到}）—— 这条规则的守卫不成立"
+           RET_INJ_BAD=1 ;;
+    esac
+    cp "$RET_BAK" "$RET"
+done
+if [ "$RET_INJ_BAD" = "0" ]; then
+    ok "保留策略四个方向都能变红（operation 过滤 / 完整性过滤 / keep 下限 / 平局次序）"
+else
+    CR_BAD=1
+fi
+cp "$RET_BAK" "$RET"
+rm -f "$RET_BAK"
+
+# ⑥ 「为什么没搬上游那几个 2.5 类」必须逐条带验证声明（第 33 条）。
+#    这里只检查条数够不够 —— 声明本身成不成立由 check-dsha-imports.py 真跑。
+if python3 tools/check-dsha-imports.py 2>&1 | grep -q 'not_imported 的 .* 条验证声明全部成立'; then
+    ok "2.5 的「没搬」条目（AutomaticBackups / AutomaticBackupService / Pruner / VerifiedBackupCopy / VerifiedFilePublication）都带可执行验证声明"
+else
+    fail "2.5 的 not_imported 验证声明不成立"
+    CR_BAD=1
+fi
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do

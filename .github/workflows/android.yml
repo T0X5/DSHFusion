@@ -129,19 +129,19 @@ jobs:
               problems.append(f"{codes} 没有运行（本机无 kotlinc，它只可能在这里跑）")
           elif classes[codes] != 8:
               problems.append(f"{codes} 跑了 {classes[codes]} 条，期望 8 条")
-          # 下限 = **预期**总数 108，即「不允许净减少」。
-          # 推导过程（不是数出来的）：阶段 2.4b-② 的 CI 实测 105（Java 62 + Kotlin 43）。
-          # 本轮把 2.4b-② 从「手写的 350 行」换成「逐字节导入上游的 HostDataTransaction
-          # + 一层适配」，本机真跑从 62 变成 65：
-          #   62 − 9（删掉手写的 HostRestoreCommitTest）
-          #      + 5（上游 HostDataTransactionTest，适配后导入，含真杀子进程那条）
-          #      + 7（我们的 HostRestoreTransactionTest，集成 + CROSS_DEVICE + 设置轴）
-          #   = 65；Kotlin 侧未动仍是 43 ⇒ 65 + 43 = 108。
-          # 65 是本机实测（tools/run-backup-jvm-tests.sh），43 是 CI 实测。
-          # 拼出来的 108 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
-          # 若 CI 报的不是 108，先信 CI（docs/INCIDENTS.md 第 27 条）。
-          if total < 108:
-              problems.append(f":backup 只有 {total} 条测试，低于本轮预期总数 108")
+          # 下限 = **预期**总数 124，即「不允许净减少」。
+          # 推导过程（不是数出来的）：阶段 2.4b-② 的 CI 实测 108（Java 65 + Kotlin 43）。
+          # 本轮（2.5）新增：
+          #      + 4（上游 AutomaticBackupPolicyTest，逐字节导入，含 DST 与时钟回拨）
+          #      + 5（上游 ScheduledBackupOwnerTest，逐字节导入，含跨线程拒绝）
+          #      + 7（我们的 DshAutomaticBackupRetentionTest，含「上游判据跑在我们的命名上
+          #           一份都删不掉」那条可证伪的审计实验）
+          #   = 81；Kotlin 侧未动仍是 43 ⇒ 81 + 43 = 124。
+          # 81 是本机实测（tools/run-backup-jvm-tests.sh），43 是 CI 实测。
+          # 拼出来的 124 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
+          # 若 CI 报的不是 124，先信 CI（docs/INCIDENTS.md 第 27 条）。
+          if total < 124:
+              problems.append(f":backup 只有 {total} 条测试，低于本轮预期总数 124")
           # 2.4 的恢复核心是**会毁数据**的那条路径，所以单独钉住它的类。
           # 「总数够了」不代表「新那 8 条在里面」（第 26 条的同族）。
           restore = "com.deepseekharness.app.backup.NativeRestorePlanTest"
@@ -164,6 +164,17 @@ jobs:
                "上游的事务测试没跑 = 提交/回切的严密性没有证据"),
               ("com.dshbox.app.backup.HostRestoreTransactionTest", 7,
                "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
+          ):
+              # 2.5 的三个类。前两个是**逐字节导入**的上游测试 ——
+              # 「导入的源码能编过」不等于「导入的测试真的跑了」，所以要分别钉。
+              # 第三个里有一条是审计结论的**可证伪形式**：它证明「直接抄上游 pruner
+              # 会静默变成空操作」不是一句说法，而是一个会红的实验（事故表第 28 条）。
+              ("com.deepseekharness.app.util.AutomaticBackupPolicyTest", 4,
+               "导入的到期判定测试没跑 = 「计划什么时候该备份」没有证据"),
+              ("com.deepseekharness.app.util.ScheduledBackupOwnerTest", 5,
+               "导入的单飞票据测试没跑 = 「过期请求不会覆盖新设置」没有证据"),
+              ("com.dshbox.app.backup.DshAutomaticBackupRetentionTest", 7,
+               "保留策略测试没跑 = 「只保留 3 份」没有证据，且审计结论失去可证伪形式"),
           ):
               if name not in classes:
                   problems.append(f"{name} 没有运行（{why}）")

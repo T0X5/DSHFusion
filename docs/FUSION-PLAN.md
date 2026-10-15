@@ -146,7 +146,7 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
 | 2.4a | **恢复核心**：预检 + 候选构建 + 校验（`NativeRestorePlan`/`BackupTree`） | DSHA `NativeRestorePlan`＋`BackupTree`＋`DataFormatEvidence`＋`RuntimeDescriptor` | ✅ **已通过真实 CI**（run [38647873314](https://github.com/T0X5/DSHFusion/actions/runs/38647873314)，commit `0629409`，**24/24 步全绿**；`:backup` **85 条测试 / 12 个类**、产物 128,789,848 字节）。分支 `phase-2.4/restore-core`，PR #10 | 会毁数据的那条路径，必须先能本机真跑 |
 | 2.4b-① | **恢复的落点**：逻辑根 → 本机路径映射（**落在 `user-data/` 的成员上，不是 runtime 槽**） | DSHA `NativeRestoreTargets` **不导入**（见下），另写 `HostRestoreMapping.java` | ✅ **已实现**（2026-10-14，同一分支）。✅ **已通过真实 CI**（run [38651955250](https://github.com/T0X5/DSHFusion/actions/runs/38651955250)，`0aea1dd`，**24/24 步全绿**，`:backup` **96 条 / 13 个类**）。本机真跑 **53 条** Java 测试（42 → 53），含**端到端往返**与**改动注入**；成员表与 `DshBackupScope` 的一致性由 `check-backup-contract.py` 逐项核验并做过漂移注入 | **一个成员一个 group**：`read` 指向成员自己，于是候选树不把整个 `.dsh` 卷进来 |
 | 2.4b-② | **提交候选树到活动目录 + 失败回切** | **上游有**：`HostDataTransaction` 逐字节导入 + 自写适配层 `HostRestoreTransaction.java`（第一版手写了 350 行，理由经实测是错的，已删除） | ✅ **已实现**（2026-10-14，同一分支）。**手写那版**的 CI run [38655637817](https://github.com/T0X5/DSHFusion/actions/runs/38655637817) / `9d02c9f`：24/24 全绿，`:backup` 105 条 / 14 个类，产物 128,789,786 字节。**换成移植版后**本机真跑 **65 条**（`−9` 删手写的 / `+5` 上游那份 / `+7` 我们那份），新计数 108，CI 待跑。⚠️ 真机行为未观察过 | 三条前提都被断言：`CROSS_DEVICE`（**上游没有**，补在适配层）、`TARGET_CHANGED` + `CANDIDATE_CHANGED`（上游）、`OVERLAPPING_TARGETS`（上游）。⚠️ 运行约束不变：恢复期间目标必须静止，只能由调用方保证 |
-| 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA 有**完整实现**（见下节审计） | 🔍 **只读审计已完成，实现未开始** | 最后做，依赖 2.1–2.4 |
+| 2.5 | 自动备份计划（每天 / 1–168h / 停止后，保留 3 份） | DSHA **两个纯逻辑类可逐字节复用**，编排层与 pruner 必须自写 | 🚧 **审计完成 + 核心已实现**（`AutomaticBackupPolicy`/`ScheduledBackupOwner` 逐字节导入；`DshAutomaticBackupRetention` 自写）；调度胶水未接 | 最后做，依赖 2.1–2.4 |
 
 **2.2 落地时校正了本表的两处假设**（都是对照真实代码后改的，不是推测）：
 
@@ -533,12 +533,70 @@ Set<String> allowed = Set.of("portable.dshbak", "verified.json", "operation.json
 ⇒ **2.5 用平台 `JobScheduler`，不引入任何新依赖。** 两个上游各自独立地得出同一结论，
 而骨干还有一条显式的不引依赖约定 —— 这条不需要再论证。
 
-#### 六、审计**没有**回答的问题（不许当成已知）
+#### 六、当初没回答的三个问题，现在都有答案了（2026-10-15）
 
-- `ScheduledBackupOwner`（82 行、零 android）到底管什么，**还没读**。
-- 「停止后备份」这个触发点在我们的架构里对应什么事件，**还没定**。
-- DSH 正在跑时做自动备份，与 2.4b-② 刚立下的**运行约束**（恢复期间目标必须静止）
-  如何共存 —— **这是一个真问题，还没解**。
+**① `ScheduledBackupOwner` 到底管什么。** 读了全文（82 行，只依赖 `java.lang`）：
+它是**线程受限的单飞票据所有者**。事件线程（主线程）独占「这次的调度参数」和
+「这次请求产生的那个 job id」，于是能回答一个别的写法答不对的问题：
+*「现在拿到的这个 job id，是不是我这次提交的那个？」*
+没有它就会出现「用户改了设置 → 旧请求晚到 → 把新设置重新提交成旧参数」。
+`Ticket.parameters` 用的是**引用相等**（`active.parameters != parameters`），
+不是 `equals` —— 调用方必须传同一个实例。**可逐字节复用，已导入。**
+
+**② 「停止后备份」对应我们架构里的什么事件。** `due()` 的 `stop` 分支只要一个
+`stopped` 时间戳（`stopped > since && now >= stopped`）。骨干侧对应
+`SandboxService` 的停止路径；**这一条是胶水，还没写**，所以下面不声称它成立。
+
+**③ 自动备份与「恢复期间目标必须静止」如何共存 —— 这是个伪冲突。**
+
+我当初把它记成「真问题」，是因为把两条路径混在了一起：
+
+| | 恢复（2.4b-②） | 备份（2.5） |
+|---|---|---|
+| 对活动目录做什么 | **写**（换进候选树） | **只读** |
+| 为什么需要静止 | `buildCandidates` 把活动树合进候选，提交前重验 `before`；中途被改则 `TARGET_CHANGED` **拒绝提交** | 逐文件读 + 哈希 |
+| 不静止的后果 | **拒绝**（安全的那一侧） | 可能拿到**跨文件的撕裂视图** |
+
+所以约束是**恢复单方面的**，备份并不受它约束。而「撕裂视图」这件事上游早就
+用容器里的 `integrity` 字段表达过了（`QUIESCENT`/`EXTERNAL_CHECKED`/`PARTIAL`/
+`BEST_EFFORT`，见 `HostSnapshot.java:200-210`）—— 它描述的是**逐文件校验的完整性**，
+**不是**跨文件一致性。`HostSnapshot` 从不声称跨文件一致。
+
+⇒ **这正是上游有 `stop` 模式的原因**：它是那个「用户想要一个跨文件一致的时点」
+的选项。所以三种模式不是三个并列的功能，而是**一致性强度递增**的三档：
+`interval`/`daily`（随时可跑，逐文件完整）→ `stop`（DSH 停下之后，跨文件一致）。
+
+⇒ 设计结论：自动备份**可以在 DSH 运行时跑**，但归档的 `integrity` 必须如实，
+**不允许**把它标成跨文件一致。
+
+#### 2.5 的设计与实现（2026-10-15）
+
+| 部分 | 归属 | 说明 |
+|---|---|---|
+| 到期判定 `AutomaticBackupPolicy` | **逐字节导入**（30 行，纯 `java.time`） | 三种模式：`stop` / `interval`（1–168h 夹取）/ 本地日历时刻 |
+| 单飞票据 `ScheduledBackupOwner` | **逐字节导入**（82 行，纯 `java.lang`） | 见上面 ① |
+| 它们的测试 | **逐字节导入**（4 + 5 条） | 含 DST 与时钟回拨、跨线程拒绝 |
+| 保留策略 `DshAutomaticBackupRetention` | **自写** | 见下 |
+| 调度胶水（`JobService` + 设置界面） | **自写，未开始** | 用平台 `JobScheduler`，不引入新依赖 |
+
+**保留策略为什么必须自写 —— 而且这条结论有可证伪的形式。**
+审计原来只是**说**「直接搬会静默变成空操作」。现在
+`DshAutomaticBackupRetentionTest.upstreamPrunerJudgementMatchesNothingOfOurs`
+把上游那段判据**跑在我们的真实产物名上**，断言它一份都删不掉；
+同时断言我们的策略**确实会删** —— 否则那条用例证明的只是「两边都不删」，
+成了一个两边都绿、什么也没区分开的断言（事故表第 30 条的同族）。
+
+**比上游严的三条**（每条都有注入证明它会红）：
+
+1. 只碰 `operation = MAINTENANCE`。手动 `EXPORT` 与救援 `RESCUE` **永不入候选**。
+   上游用 `metadata.automatic`，我们用容器本来就强制的 `operation` —— 少一个真相来源。
+2. 证明不了完整的 `PARTIAL`/`BEST_EFFORT` **既不计数也不删，而且要报出来**
+   （`Result.unverified` + `explain()`）。上游在这里是静默 `continue`。
+3. `keep` 小于 1 时按 1 处理。**一个把用户全部备份删光的保留策略比没有保留策略更危险。**
+
+**审计自身的更正。** 我在审计里写「命名不同」，实际差别比那更大：上游的自动备份是
+**一个目录 + 四个具名成员**，我们的是**单文件** `DSHDATA` 容器。所以直接抄不是
+「命名对不上」，是**连输入都没有**（`fs.list(file)` 对一个文件会抛）。
 
 ## 阶段 3 — 设备能力
 
