@@ -84,6 +84,18 @@ public final class DshAutomaticBackupRunner {
       return new Outcome(false, reason, "", List.of(), Map.of(), 0L);
     }
 
+    /**
+     * 到点了但**没能做成**。
+     *
+     * <p>公开是因为调用方（`app` 里的 `JobService`）要能在自己的前置条件不满足时
+     * 报出同一套结果 —— 而构造器是包内可见的（本类的所有实例都应当由
+     * {@link #run} 产出，那是一条有意的约束）。所以给一个**收窄的**入口，
+     * 而不是把构造器打开。
+     */
+    public static Outcome failed(String reason) {
+      return new Outcome(false, reason, "", List.of(), Map.of(), 0L);
+    }
+
     public String describe() {
       if (!ran) return "未到点：" + reason;
       if (!reason.isEmpty()) return "失败：" + reason;

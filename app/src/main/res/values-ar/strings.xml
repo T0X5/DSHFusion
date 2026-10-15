@@ -695,4 +695,17 @@
     <string name="restore_running">جارٍ الاستعادة…</string>
     <string name="restore_done">تمت الاستعادة: %1$s</string>
     <string name="restore_failed">فشلت الاستعادة: %1$s</string>
+
+    <!-- 阶段 2.6：自动备份 -->
+    <string name="auto_section">النسخ الاحتياطي التلقائي</string>
+    <string name="auto_intro">يحتفظ تلقائيًا بأحدث نسخ قليلة. لا تدخل بيانات الاعتماد إلى الأرشيف أبدًا.</string>
+    <string name="auto_enable">النسخ الاحتياطي تلقائيًا</string>
+    <string name="auto_mode_interval">كل عدة ساعات</string>
+    <string name="auto_mode_daily">مرة واحدة يوميًا</string>
+    <string name="auto_mode_stop">بعد إيقاف الصندوق الرملي</string>
+    <string name="auto_interval_value">%1$d ساعة</string>
+    <string name="auto_last_never">لم يتم النسخ بعد</string>
+    <string name="auto_last">آخر نسخة: %1$s</string>
+    <string name="auto_run_now">انسخ الآن</string>
+    <string name="auto_keep_note">تُنقّى النسخ التلقائية فقط؛ يُحتفظ بـ %1$d كحد أقصى. لا تُحذف النسخ اليدوية أو نسخ الإنقاذ أبدًا.</string>
 </resources>

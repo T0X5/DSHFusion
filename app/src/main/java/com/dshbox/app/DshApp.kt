@@ -7,6 +7,8 @@ import com.dshbox.app.di.ServiceLocator
 import com.dshbox.app.sandbox.OfficialPluginOverlay
 import com.dshbox.app.service.DshboxLayoutMigration
 import com.dshbox.app.service.SandboxService
+import com.dshbox.app.service.AutomaticBackupJobService
+import com.dshbox.app.service.AutomaticBackupSettingsStore
 import com.dshbox.app.ui.theme.AppLocaleState
 import com.dshbox.app.ui.theme.AppThemeState
 import com.dshbox.app.util.FileOps
@@ -28,6 +30,20 @@ class DshApp : Application() {
             File(container.sandboxConfig.userDataDir, Constants.DSHBOX_ASSETS_RELATIVE_DIR),
         )
         if (layout.changed) android.util.Log.i("DshApp", "dshbox layout migrated $layout")
+
+        // 自动备份的心跳（阶段 2.6 第 ⑥ 段，DIV-0022）。
+        //
+        // **必须在这里重登记一次**：心跳用的是 `setPersisted(false)`（不跨重启保留），
+        // 所以设备重启之后那条任务就没了。少了这一行，自动备份会在重启后
+        // **静默停止** —— 用户看到开关还开着，而再也不会有新备份。
+        // 这与本项目反复吃亏的那个形态同族：**一个不再发生的动作，看起来和
+        // 「还没到点」完全一样。**
+        //
+        // 只在开启时才登记；关掉时不取消（`onStartJob` 会立刻返回）——
+        // 见 `AutomaticBackupJobService.schedule` 的注释。
+        if (AutomaticBackupSettingsStore.enabled(this)) {
+            AutomaticBackupJobService.schedule(this)
+        }
 
         // 功能开关预置层：用 dsh 官方的 `--patch` 入口打开上游"按 profile 默认关闭"
         // 的官方条目（当前为侧边栏「浏览器」）。各层互不覆盖。

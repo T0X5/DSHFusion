@@ -83,6 +83,14 @@
 
         <!-- appcompat 应用内语言持久化（API<33 生效；API 33+ 走系统
              LocaleManager）。autoStoreLocales=true 时进程启动自动恢复上次所选语言。 -->
+        <!-- 自动备份的调度胶水（阶段 2.6 第 ⑥ 段）。
+             BIND_JOB_SERVICE 是必需权限：没有它系统不会把任务派给这个服务，
+             而失败是**静默的** —— 任务登记成功、之后永远不被拉起。 -->
+        <service
+            android:name=".service.AutomaticBackupJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false"

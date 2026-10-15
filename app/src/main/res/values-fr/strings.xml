@@ -665,4 +665,17 @@
     <string name="restore_running">Restauration…</string>
     <string name="restore_done">Restauré : %1$s</string>
     <string name="restore_failed">Échec de la restauration : %1$s</string>
+
+    <!-- 阶段 2.6：自动备份 -->
+    <string name="auto_section">Sauvegarde automatique</string>
+    <string name="auto_intro">Conserve automatiquement les dernières sauvegardes. Les identifiants n’entrent jamais dans une archive.</string>
+    <string name="auto_enable">Sauvegarde automatique</string>
+    <string name="auto_mode_interval">Toutes les N heures</string>
+    <string name="auto_mode_daily">Une fois par jour</string>
+    <string name="auto_mode_stop">Après l’arrêt du bac à sable</string>
+    <string name="auto_interval_value">%1$d heures</string>
+    <string name="auto_last_never">Aucune sauvegarde pour l’instant</string>
+    <string name="auto_last">Dernière sauvegarde : %1$s</string>
+    <string name="auto_run_now">Sauvegarder maintenant</string>
+    <string name="auto_keep_note">Seules les sauvegardes automatiques sont purgées ; %1$d au maximum sont conservées. Les archives manuelles et de secours ne sont jamais supprimées.</string>
 </resources>

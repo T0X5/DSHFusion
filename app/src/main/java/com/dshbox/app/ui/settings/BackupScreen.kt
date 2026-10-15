@@ -201,6 +201,10 @@ fun BackupScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 userDataDir = container.sandboxConfig.userDataDir,
                 cacheDir = context.cacheDir,
             )
+
+            // 自动备份的设置与「立即备份一次」。它与上面两节共用同一个屏：
+            // 三件事都是「我的数据现在怎么样」，分三个入口只会让人找不到。
+            AutomaticBackupSection()
         }
     }
 }

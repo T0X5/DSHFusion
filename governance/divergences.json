@@ -388,6 +388,22 @@
       "reapply": "在 `app/build.gradle.kts` 的 dependencies 块里加一行 `implementation(project(\":backup\"))`。",
       "conflict_risk": "低 —— 新增一行依赖；上游若也往这里加依赖，是不冲突的追加。",
       "note": "⚠️ **接上依赖不等于接上界面。** 这一条只让代码进 APK；导出/恢复的界面入口是 2.6 的下一段，做完之前阶段 2 的验收标准（restorable on another device）仍然不满足，也不声称满足。"
+    },
+    {
+      "id": "DIV-0022",
+      "title": "`DshApp.onCreate` 里重登记自动备份的心跳任务（阶段 2.6 第 ⑥ 段）",
+      "upstream": "dshbox",
+      "type": "patch",
+      "phase": 2,
+      "target_files": [
+        "app/src/main/java/com/dshbox/app/DshApp.kt"
+      ],
+      "change": "在 `onCreate` 里、布局迁移之后，加一段：**若自动备份已开启，就重登记一次心跳任务**（`AutomaticBackupJobService.schedule(this)`）。\n\n心跳用的是 `setPersisted(false)`（不跨重启保留，理由见 `schedule` 的注释：开机后设置可能已被改过，而持久化还要另加开机广播权限）。所以设备重启之后那条任务就没了 —— **少了这一段，自动备份会在重启后静默停止**：用户看到开关还开着，而再也不会有新备份。",
+      "rationale": "这是本项目反复吃亏的那个形态：**一个不再发生的动作，看起来和「还没到点」完全一样。** 没有这一行，`stop`/`daily`/`interval` 三种模式的行为在重启前后不一致，而没有任何东西会报出来。放在 `onCreate` 而不是 `MainActivity`：心跳不该依赖用户打开界面。",
+      "detection": "`tools/verify-phase0.sh` 的 5u 节断言这一段在位，且它**早于**任何依赖它的代码。",
+      "reapply": "在 `DshApp.onCreate` 的布局迁移那段之后，追加 `if (AutomaticBackupSettingsStore.enabled(this)) { AutomaticBackupJobService.schedule(this) }`。",
+      "conflict_risk": "低 —— 追加在 `onCreate` 的尾部；上游若也在这里加逻辑，两边是并行的追加。",
+      "note": "⚠️ **诚实边界**：`stop` 模式需要的「沙箱停止时刻」目前**只有界面上的停止动作会记**；通知栏的停止走 `SandboxService` 内部路径，**没有记**。所以从通知栏停止之后，`stop` 模式不会到期。这是**已知缺口**，不是「大概能用」。"
     }
   ]
 }

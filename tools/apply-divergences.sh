@@ -1634,6 +1634,47 @@ def handle_div_0019(entry) -> tuple[str, str]:
 
 
 
+def handle_div_0022(entry) -> tuple[str, str]:
+    """`DshApp.onCreate` 里重登记自动备份心跳（DIV-0022，阶段 2.6）。
+
+    这一条偏离只有三行，但缺了它的后果是**静默**的：心跳用 `setPersisted(false)`，
+    重启后任务就没了，于是「开关还开着、再也不备份」。
+
+    所以查两件事：① 那一段在位；② `AutomaticBackupJobService` 确实用的是
+    `setPersisted(false)` —— 若哪天改成 `true`，这一段就成了冗余，
+    而**冗余本身不是问题，「以为它在起作用其实不必要」才是**，
+    所以两条一起查，让两者的关系显式。
+    """
+    problems = []
+
+    app = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "DshApp.kt"
+    if not app.exists():
+        return PENDING, "app/src/main/java/com/dshbox/app/DshApp.kt 尚未导入"
+    text = read(app)
+
+    if "AutomaticBackupJobService.schedule(this)" not in text:
+        problems.append(
+            "DshApp.onCreate 里没有重新登记自动备份心跳 —— "
+            "重启之后自动备份会静默停止（开关还开着，再也不备份）")
+    if "AutomaticBackupSettingsStore.enabled(this)" not in text:
+        problems.append("重登记没有先判断开关状态 —— 关掉之后也会登记一条空转的心跳")
+
+    service = (
+        ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app"
+        / "service" / "AutomaticBackupJobService.kt"
+    )
+    if not service.exists():
+        problems.append("AutomaticBackupJobService.kt 不存在")
+    elif "setPersisted(false)" not in read(service):
+        problems.append(
+            "心跳不再用 setPersisted(false) —— 那么 DshApp 里那段重登记就成了冗余，"
+            "请一并说明（两者的关系必须是显式的）")
+
+    if problems:
+        return FAILED, "；".join(problems)
+    return OK, "重启后会重登记心跳，且只在开启时登记"
+
+
 def handle_div_0021(entry) -> tuple[str, str]:
     """`app` 依赖 `:backup`（DIV-0021，阶段 2.6）。
 
@@ -1783,6 +1824,7 @@ HANDLERS = {
     "DIV-0019": handle_div_0019,
     "DIV-0020": handle_div_0020,
     "DIV-0021": handle_div_0021,
+    "DIV-0022": handle_div_0022,
 }
 
 

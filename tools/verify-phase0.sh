@@ -3100,6 +3100,56 @@ else
     CR_BAD=1
 fi
 
+# ── 胶水层：JobService / 设置存储 / 界面 ────────────────────────────────
+SVC="$ROOT/app/src/main/java/com/dshbox/app/service/AutomaticBackupJobService.kt"
+STORE="$ROOT/app/src/main/java/com/dshbox/app/service/AutomaticBackupSettingsStore.kt"
+AUTOUI="$ROOT/app/src/main/java/com/dshbox/app/ui/settings/AutomaticBackupSection.kt"
+for f in "$SVC" "$STORE" "$AUTOUI"; do
+    if [[ -f "$f" ]]; then ok "自动备份的胶水层在位：$(basename "$f")"; else fail "缺 $(basename "$f")"; CR_BAD=1; fi
+done
+if [[ -f "$SVC" ]]; then
+    # JobService **必须**在 manifest 里带 BIND_JOB_SERVICE，否则系统不会派任务 —
+    # 而失败是静默的：登记成功、之后永远不被拉起。
+    if grep -q 'AutomaticBackupJobService' "$ROOT/app/src/main/AndroidManifest.xml" &&
+       grep -q 'BIND_JOB_SERVICE' "$ROOT/app/src/main/AndroidManifest.xml"; then
+        ok "JobService 已在 manifest 注册且带 BIND_JOB_SERVICE"
+    else
+        fail "JobService 没有在 manifest 注册（或没有 BIND_JOB_SERVICE）—— 任务登记成功但永远不被拉起"
+        CR_BAD=1
+    fi
+    expect 0 "界面与心跳走同一条路径（runOnceFor）" \
+        grep -q 'fun runOnceFor(' "$SVC"
+    expect 0 "只有成功才推进 last（失败也推进会让一次磁盘满变成永不重试）" \
+        grep -q 'outcome.ran && outcome.reason.isEmpty()' "$SVC"
+    expect 1 "没有把 setPersisted 写成 true（那与 DshApp 里的重登记冗余）" \
+        grep -q 'setPersisted(true)' "$SVC"
+fi
+if [[ -f "$AUTOUI" ]]; then
+    expect 0 "界面上的「立即备份一次」调的是同一条入口" \
+        grep -q 'AutomaticBackupJobService.runOnceFor' "$AUTOUI"
+    # 界面**不许**自己做到期判定 —— 那会出现「界面说该备份、任务说不该」。
+    #
+    # ⚠️ **这是同一个坑的第三次**（第 35 条与它的补记）。前两次分别是
+    # 「注释里引用了上游的 allowed 集合」与「注释里写了另一个 API 的名字」，
+    # 这次是 KDoc 里那句「该不该备份是 AutomaticBackupPolicy 的事」。
+    # **规律很稳定：只要我在注释里解释「这件事归谁管」，那条检查就会被自己的解释命中。**
+    # 所以下面统一用「剥注释再看」—— 而且这一节里凡是「不许出现某个标识符」的断言
+    # 都该这么写，不该靠我记得。
+    if python3 - "$AUTOUI" <<'PYI'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+code = re.sub(r"//[^\n]*", "", code)
+sys.exit(1 if "AutomaticBackupPolicy" in code else 0)
+PYI
+    then
+        ok "界面代码里没有自己做到期判定（注释里的提及不算）"
+    else
+        fail "界面代码里出现了 AutomaticBackupPolicy —— 到期判定只许有一份"
+        CR_BAD=1
+    fi
+fi
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do

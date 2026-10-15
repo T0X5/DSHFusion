@@ -657,4 +657,17 @@
     <string name="restore_running">Restoring…</string>
     <string name="restore_done">Restored: %1$s</string>
     <string name="restore_failed">Restore failed: %1$s</string>
+
+    <!-- 阶段 2.6：自动备份 -->
+    <string name="auto_section">Automatic backup</string>
+    <string name="auto_intro">Keeps the newest few backups automatically. Credentials never enter an archive.</string>
+    <string name="auto_enable">Back up automatically</string>
+    <string name="auto_mode_interval">Every N hours</string>
+    <string name="auto_mode_daily">Once a day</string>
+    <string name="auto_mode_stop">After the sandbox stops</string>
+    <string name="auto_interval_value">%1$d hours</string>
+    <string name="auto_last_never">Never backed up yet</string>
+    <string name="auto_last">Last backup: %1$s</string>
+    <string name="auto_run_now">Back up now</string>
+    <string name="auto_keep_note">Only automatic backups are pruned; at most %1$d are kept. Manual and rescue archives are never deleted.</string>
 </resources>

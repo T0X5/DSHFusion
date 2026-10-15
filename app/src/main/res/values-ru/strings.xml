@@ -675,4 +675,17 @@
     <string name="restore_running">Восстановление…</string>
     <string name="restore_done">Восстановлено: %1$s</string>
     <string name="restore_failed">Не удалось восстановить: %1$s</string>
+
+    <!-- 阶段 2.6：自动备份 -->
+    <string name="auto_section">Автоматическое резервное копирование</string>
+    <string name="auto_intro">Автоматически сохраняет несколько последних копий. Учётные данные в архив не попадают.</string>
+    <string name="auto_enable">Автоматическое копирование</string>
+    <string name="auto_mode_interval">Каждые N часов</string>
+    <string name="auto_mode_daily">Раз в день</string>
+    <string name="auto_mode_stop">После остановки песочницы</string>
+    <string name="auto_interval_value">%1$d ч</string>
+    <string name="auto_last_never">Копий ещё не было</string>
+    <string name="auto_last">Последняя копия: %1$s</string>
+    <string name="auto_run_now">Скопировать сейчас</string>
+    <string name="auto_keep_note">Очищаются только автоматические копии; хранится не более %1$d. Ручные и спасательные архивы не удаляются никогда.</string>
 </resources>
