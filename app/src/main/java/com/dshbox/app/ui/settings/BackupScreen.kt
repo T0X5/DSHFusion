@@ -216,6 +216,9 @@ sealed interface ExportOutcome {
     /** 成功。[displayName] 是交给 MediaStore 的那个名字。 */
     data class Done(
         val displayName: String,
+        /** 可读的导出时刻。文件名里那个 `20261016-030146` 其实**已经是秒级**，
+         *  但人看着要一位一位数 —— 所以结果行里另给一个 `2026-10-16 03:01:46`。 */
+        val at: String,
         val bytes: Long,
         val skipped: Int,
         val integrity: String,
@@ -241,7 +244,7 @@ private fun ExportOutcome.message(context: android.content.Context): String =
     when (this) {
         is ExportOutcome.Done -> {
             val size = Formatter.formatFileSize(context, bytes)
-            val base = stringResource(R.string.backup_export_ok, displayName, size, integrity)
+            val base = stringResource(R.string.backup_export_ok, displayName, at, size, integrity)
             if (skipped == 0) base
             else base + " " + stringResource(R.string.backup_export_skipped, skipped)
         }
@@ -314,6 +317,7 @@ internal fun runExport(
         publish(written.archive, name)
         ExportOutcome.Done(
             displayName = name,
+            at = readableNow(),
             bytes = written.bytes,
             skipped = written.skipped.size,
             integrity = written.manifest["integrity"]?.toString().orEmpty(),
@@ -349,6 +353,15 @@ private fun provenance(): Map<String, Any> =
 
 private fun stamp(): String =
     SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+
+/**
+ * 给人看的导出时刻。
+ *
+ * 文件名里那个 `20261016-030146` **本来就是秒级**（年月日-时分秒），
+ * 但连在一起不好读；结果行里另给一个带分隔符的。
+ */
+private fun readableNow(): String =
+    SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
 
 /** 落在 `cacheDir` 下的任务根。放在这里而不是 `user-data` 里 —— 见 `runExport` 的注释。 */
 private const val TASK_ROOT_NAME = "backup-task"
