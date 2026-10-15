@@ -193,6 +193,14 @@ fun BackupScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                         else MaterialTheme.colorScheme.error,
                 )
             }
+
+            // 恢复与导出同屏：它们是同一件事的两个方向，而用户要在这两者之间做判断
+            // （「我刚导出的是哪一份？」「恢复它会覆盖什么？」）。
+            RestoreSection(
+                scope = scope,
+                userDataDir = container.sandboxConfig.userDataDir,
+                cacheDir = context.cacheDir,
+            )
         }
     }
 }

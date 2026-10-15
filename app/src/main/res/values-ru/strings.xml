@@ -660,4 +660,19 @@
     <string name="backup_export_skipped">Пропущено элементов: %1$d</string>
     <string name="backup_export_failed">Не удалось экспортировать: %1$s</string>
     <string name="backup_settings_entry">Резервное копирование</string>
+
+    <!-- 阶段 2.6：从归档恢复 -->
+    <string name="restore_section">Восстановление из архива</string>
+    <string name="restore_intro">Выберите архив и сначала проверьте его. До подтверждения ничего не записывается; замена проверяется и автоматически откатывается при сбое.</string>
+    <string name="restore_pick">Выбрать архив…</string>
+    <string name="restore_precheck_button">Проверить</string>
+    <string name="restore_report">корней: %1$d, будет заменено: %2$d, конфликтов: %3$d</string>
+    <string name="restore_overwrites">Будет заменено: %1$s</string>
+    <string name="restore_warnings">Предупреждения: %1$s</string>
+    <string name="restore_commit_button">Восстановить</string>
+    <string name="restore_confirm_title">Восстановить этот архив?</string>
+    <string name="restore_confirm_message">Это заменит текущий %1$s. Сначала создаётся параллельный кандидат и повторно проверяется цель; неудачная замена откатывается автоматически.</string>
+    <string name="restore_running">Восстановление…</string>
+    <string name="restore_done">Восстановлено: %1$s</string>
+    <string name="restore_failed">Не удалось восстановить: %1$s</string>
 </resources>

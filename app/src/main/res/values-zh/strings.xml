@@ -632,4 +632,19 @@
     <string name="backup_export_skipped">跳过 %1$d 项</string>
     <string name="backup_export_failed">导出失败：%1$s</string>
     <string name="backup_settings_entry">备份与恢复</string>
+
+    <!-- 阶段 2.6：从归档恢复 -->
+    <string name="restore_section">从归档恢复</string>
+    <string name="restore_intro">选一份归档并先预检。在你点确认之前不会写入任何东西；换入过程有校验，失败会自动回切。</string>
+    <string name="restore_pick">选择归档文件…</string>
+    <string name="restore_precheck_button">预检</string>
+    <string name="restore_report">将恢复 %1$d 个根，覆盖 %2$d 个，冲突 %3$d 个</string>
+    <string name="restore_overwrites">将被替换：%1$s</string>
+    <string name="restore_warnings">警告：%1$s</string>
+    <string name="restore_commit_button">确认恢复</string>
+    <string name="restore_confirm_title">确认恢复这份归档？</string>
+    <string name="restore_confirm_message">这会替换当前的 %1$s。恢复前会先建平行候选并重验目标；换入失败会自动回切。</string>
+    <string name="restore_running">恢复中…</string>
+    <string name="restore_done">已恢复：%1$s</string>
+    <string name="restore_failed">恢复失败：%1$s</string>
 </resources>

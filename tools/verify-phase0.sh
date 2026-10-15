@@ -2913,11 +2913,72 @@ else
     CR_BAD=1
 fi
 
+# ⑥c 恢复界面（阶段 2.6 第 ⑤ 段的前半）。
+RESTORE="$ROOT/app/src/main/java/com/dshbox/app/ui/settings/RestoreSection.kt"
+if [[ -f "$RESTORE" ]]; then
+    ok "恢复界面 RestoreSection.kt 在位"
+    if grep -q 'RestoreSection(' "$SCREEN"; then
+        ok "恢复界面已挂进备份屏（与导出同屏：它们是同一件事的两个方向）"
+    else
+        fail "RestoreSection 没有被挂载 —— 界面存在但打不开"
+        CR_BAD=1
+    fi
+    # ① 两段式：**必须先预检再提交**，不许一个按钮做完。
+    expect 0 "恢复走两段式：先 inspect 再 commit" \
+        grep -q 'run.inspect(' "$RESTORE"
+    expect 0 "提交前必须 prepare（它会重验目标）" \
+        grep -q 'run.prepare(BackupControl(null))' "$RESTORE"
+    # ② `selectedScopes` 是**安全属性**：必须来自用户选的范围，不许写死通配符。
+    expect 0 "selectedScopes 取自 Kotlin 桥（来自用户选的范围）" \
+        grep -q 'DshBackupExportBridge.selectedScopes' "$RESTORE"
+    if python3 - "$RESTORE" <<'PYI'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+# 剥注释后不许出现写死的 application 通配符
+code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+code = re.sub(r"//[^\n]*", "", code)
+sys.exit(1 if '"application"' in code or '\"application\"' in code else 0)
+PYI
+    then
+        ok "代码里没有写死 \"application\" 通配范围（那会把别的范围也恢复进来）"
+    else
+        fail "恢复代码里写死了 \"application\" —— 上游把它当通配符，用户选「会话」时会连设置与插件一起恢复"
+        CR_BAD=1
+    fi
+    # ③ 任务根必须在 user-data 之外。
+    expect 0 "恢复任务根建在 cacheDir 下" \
+        grep -q 'File(cacheDir, RESTORE_TASK_ROOT)' "$RESTORE"
+    # ④ 中转归档必须**在 inspect 之后**才删 —— 删早了预检会读到空文件。
+    if python3 - "$RESTORE" <<'PYI'
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+# `staged?.delete()` 必须出现在 `run.inspect(` 之后（同一个函数体内）。
+i_del = text.find("staged?.delete()")
+i_inspect = text.find("run.inspect(")
+sys.exit(0 if i_del > 0 and i_inspect > 0 and i_del > i_inspect else 1)
+PYI
+    then
+        ok "中转归档在 inspect **之后**才删（删早了预检会读到空文件）"
+    else
+        fail "中转归档的删除位置在 inspect 之前或找不到 —— 预检会在真机上神秘地失败"
+        CR_BAD=1
+    fi
+    # ⑤ 「会覆盖什么」必须摆给用户看 —— 别的数字都不告诉他「我会失去什么」。
+    expect 0 "预检结果把「将被替换」的那一栏摆出来" \
+        grep -q 'R.string.restore_overwrites' "$RESTORE"
+    # ⑥ 确认对话框必须在（恢复是本模块唯一会毁数据的用户操作）。
+    expect 0 "提交前有确认对话框" \
+        grep -q 'AlertDialog(' "$RESTORE"
+else
+    fail "找不到恢复界面 RestoreSection.kt"
+    CR_BAD=1
+fi
+
 # ⑦ 反向：界面上出现的每个 backup_* 文案键，六份资源里都必须有。
 #    这一条与 i18n 门禁**不重复**：门禁查的是六份之间一致，
 #    而它能允许「六份都没有某个键」—— 那样界面会在运行时抛。
 MISSING=""
-for key in $(grep -oE 'R\.string\.backup_[a-z_]+' "$SCREEN" 2>/dev/null | sed 's/R\.string\.//' | sort -u); do
+for key in $(grep -ohE 'R\.string\.(backup|restore)_[a-z_]+' "$SCREEN" "$ROOT/app/src/main/java/com/dshbox/app/ui/settings/RestoreSection.kt" 2>/dev/null | sed 's/R\.string\.//' | sort -u); do
     for lang in values values-zh values-ar values-es values-fr values-ru; do
         if ! grep -q "name=\"$key\"" "$ROOT/app/src/main/res/$lang/strings.xml"; then
             MISSING="$MISSING $key($lang)"

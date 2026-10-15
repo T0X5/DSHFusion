@@ -650,4 +650,19 @@
     <string name="backup_export_skipped">Se omitieron %1$d elementos</string>
     <string name="backup_export_failed">Error al exportar: %1$s</string>
     <string name="backup_settings_entry">Copia de seguridad y restauración</string>
+
+    <!-- 阶段 2.6：从归档恢复 -->
+    <string name="restore_section">Restaurar desde un archivo</string>
+    <string name="restore_intro">Elige un archivo y compruébalo primero. No se escribe nada hasta que confirmes; el reemplazo se verifica y se revierte solo si falla.</string>
+    <string name="restore_pick">Elegir un archivo…</string>
+    <string name="restore_precheck_button">Comprobar</string>
+    <string name="restore_report">%1$d raíz(ces), %2$d por reemplazar, %3$d conflicto(s)</string>
+    <string name="restore_overwrites">Se reemplazará: %1$s</string>
+    <string name="restore_warnings">Avisos: %1$s</string>
+    <string name="restore_commit_button">Restaurar ahora</string>
+    <string name="restore_confirm_title">¿Restaurar este archivo?</string>
+    <string name="restore_confirm_message">Esto reemplaza el %1$s actual. Primero se crea un candidato paralelo y se reverifica el destino; si el reemplazo falla, se revierte solo.</string>
+    <string name="restore_running">Restaurando…</string>
+    <string name="restore_done">Restaurado: %1$s</string>
+    <string name="restore_failed">Error al restaurar: %1$s</string>
 </resources>

@@ -642,4 +642,19 @@
     <string name="backup_export_skipped">%1$d item(s) skipped</string>
     <string name="backup_export_failed">Export failed: %1$s</string>
     <string name="backup_settings_entry">Backup &amp; Restore</string>
+
+    <!-- 阶段 2.6：从归档恢复 -->
+    <string name="restore_section">Restore from an archive</string>
+    <string name="restore_intro">Pick an archive and check it first. Nothing is written until you confirm; the switch-in is verified and rolls back automatically if it fails.</string>
+    <string name="restore_pick">Choose an archive…</string>
+    <string name="restore_precheck_button">Check it</string>
+    <string name="restore_report">%1$d root(s), %2$d to be replaced, %3$d conflict(s)</string>
+    <string name="restore_overwrites">Will be replaced: %1$s</string>
+    <string name="restore_warnings">Warnings: %1$s</string>
+    <string name="restore_commit_button">Restore now</string>
+    <string name="restore_confirm_title">Restore this archive?</string>
+    <string name="restore_confirm_message">This replaces the current %1$s. A parallel candidate is built and the destination is re-verified first; a failed switch-in rolls back automatically.</string>
+    <string name="restore_running">Restoring…</string>
+    <string name="restore_done">Restored: %1$s</string>
+    <string name="restore_failed">Restore failed: %1$s</string>
 </resources>

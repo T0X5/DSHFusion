@@ -680,4 +680,19 @@
     <string name="backup_export_skipped">تم تخطي %1$d عنصرًا</string>
     <string name="backup_export_failed">فشل التصدير: %1$s</string>
     <string name="backup_settings_entry">النسخ الاحتياطي والاستعادة</string>
+
+    <!-- 阶段 2.6：从归档恢复 -->
+    <string name="restore_section">الاستعادة من أرشيف</string>
+    <string name="restore_intro">اختر أرشيفًا وتحقق منه أولًا. لن يُكتب أي شيء قبل التأكيد؛ عملية الاستبدال مُتحقَّق منها وتتراجع تلقائيًا عند الفشل.</string>
+    <string name="restore_pick">اختر أرشيفًا…</string>
+    <string name="restore_precheck_button">تحقّق</string>
+    <string name="restore_report">%1$d جذر، %2$d سيُستبدل، %3$d تعارض</string>
+    <string name="restore_overwrites">سيُستبدل: %1$s</string>
+    <string name="restore_warnings">تحذيرات: %1$s</string>
+    <string name="restore_commit_button">استعادة الآن</string>
+    <string name="restore_confirm_title">هل تريد استعادة هذا الأرشيف؟</string>
+    <string name="restore_confirm_message">سيستبدل هذا %1$s الحالي. يُبنى مرشّح موازٍ ويُعاد التحقق من الهدف أولًا؛ وإذا فشل الاستبدال يتراجع تلقائيًا.</string>
+    <string name="restore_running">جارٍ الاستعادة…</string>
+    <string name="restore_done">تمت الاستعادة: %1$s</string>
+    <string name="restore_failed">فشلت الاستعادة: %1$s</string>
 </resources>

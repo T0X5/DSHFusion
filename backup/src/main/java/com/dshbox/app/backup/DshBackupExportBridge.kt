@@ -52,6 +52,37 @@ object DshBackupExportBridge {
     fun exclusions(): Predicate<String> = Predicate { path -> DshBackupExclusions.isExcluded(path) }
 
     /**
+     * 恢复侧的成员：`id` / **`path`** / `v5Scope`。
+     *
+     * 与 [members] 的差别只有一个字段，但那个字段是**决定性的**：
+     * 归档里**不记录路径**（`BackupSource.description()` 只有 `id`/`scope`/`external`），
+     * 所以恢复时「这个根该落到哪里」只能由我们自己的范围模型给。
+     * 用 [members] 去恢复会在 `HostRestoreMapping` 里因为字段对不上而暴露 ——
+     * 不是靠运气，是靠类型。
+     */
+    @JvmStatic
+    fun restoreMembers(scope: DshBackupScope): List<HostRestoreMapping.Member> =
+        scope.members.map { member ->
+            HostRestoreMapping.Member(member.id, member.path, member.v5Scope)
+        }
+
+    /**
+     * 恢复时交给上游 `NativeRestorePlan.inspect` 的 `selected` —— **v5 范围名**集合。
+     *
+     * ## 这是一个安全属性，不是配置
+     *
+     * 上游把 `selected` 当**范围名**集合，而且 **`"application"` 在里面是通配符**：
+     * `selected.contains("application")` 会让归档里的**每一个**根都通过。
+     * 图省事传 `setOf("application")`，会让「用户选了会话、却拿到一份全量归档」时
+     * 把**设置与插件也一起恢复**进去。
+     *
+     * 所以它只能来自用户选的那个范围 —— 这里直接用 [DshBackupScope.v5Scopes]，
+     * **不自己拼字符串**（那是「两套词汇各说各话」的起点）。
+     */
+    @JvmStatic
+    fun selectedScopes(scope: DshBackupScope): Set<String> = scope.v5Scopes
+
+    /**
      * 建议的归档文件名。
      *
      * 用范围的 [DshBackupScope.filePrefix] 而不是自己拼 —— 那条不变式

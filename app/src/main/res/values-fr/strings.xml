@@ -650,4 +650,19 @@
     <string name="backup_export_skipped">%1$d élément(s) ignoré(s)</string>
     <string name="backup_export_failed">Échec de l’exportation : %1$s</string>
     <string name="backup_settings_entry">Sauvegarde et restauration</string>
+
+    <!-- 阶段 2.6：从归档恢复 -->
+    <string name="restore_section">Restaurer depuis une archive</string>
+    <string name="restore_intro">Choisissez une archive et vérifiez-la d’abord. Rien n’est écrit avant votre confirmation ; le remplacement est vérifié et se rétablit automatiquement en cas d’échec.</string>
+    <string name="restore_pick">Choisir une archive…</string>
+    <string name="restore_precheck_button">Vérifier</string>
+    <string name="restore_report">%1$d racine(s), %2$d à remplacer, %3$d conflit(s)</string>
+    <string name="restore_overwrites">Sera remplacé : %1$s</string>
+    <string name="restore_warnings">Avertissements : %1$s</string>
+    <string name="restore_commit_button">Restaurer</string>
+    <string name="restore_confirm_title">Restaurer cette archive ?</string>
+    <string name="restore_confirm_message">Cela remplace le %1$s actuel. Un candidat parallèle est construit et la destination revérifiée d’abord ; un remplacement en échec se rétablit automatiquement.</string>
+    <string name="restore_running">Restauration…</string>
+    <string name="restore_done">Restauré : %1$s</string>
+    <string name="restore_failed">Échec de la restauration : %1$s</string>
 </resources>
