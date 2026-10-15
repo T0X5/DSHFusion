@@ -7,6 +7,7 @@ import com.dshbox.app.di.ServiceLocator
 import com.dshbox.app.sandbox.OfficialPluginOverlay
 import com.dshbox.app.service.DshboxLayoutMigration
 import com.dshbox.app.service.SandboxService
+import com.dshbox.app.sandbox.SandboxState
 import com.dshbox.app.service.AutomaticBackupJobService
 import com.dshbox.app.service.AutomaticBackupSettingsStore
 import com.dshbox.app.ui.theme.AppLocaleState
@@ -14,10 +15,23 @@ import com.dshbox.app.ui.theme.AppThemeState
 import com.dshbox.app.util.FileOps
 import com.dshbox.app.util.MoveEngine
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 class DshApp : Application() {
     lateinit var container: AppContainer
         private set
+
+    /**
+     * 进程级作用域，只用来观察沙箱状态。
+     *
+     * `SupervisorJob`：一条观察流挂掉不该影响别的（目前只有一条，但这条约定值钱）。
+     */
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
@@ -43,6 +57,27 @@ class DshApp : Application() {
         // 见 `AutomaticBackupJobService.schedule` 的注释。
         if (AutomaticBackupSettingsStore.enabled(this)) {
             AutomaticBackupJobService.schedule(this)
+        }
+
+        // 「停止后」这一档的判据：沙箱**转入** STOPPED 的时刻。
+        //
+        // 为什么要观察状态而不是在 `stopSandbox()` 里记一笔：停止有**至少五条**路径
+        // （界面上的停止按钮直接调 `sandboxManager.stopSandbox()`，**根本不经过**
+        // `SandboxService`；通知栏走 `ACTION_STOP_SANDBOX`；还有运行时更新与开发用接收器）。
+        // 在每一条里各记一笔是注定会漏的 —— 漏掉的那一条会**静默地**不触发备份，
+        // 而用户看到的是「开关开着、什么都没发生」。
+        //
+        // `sandboxState` 是所有路径的**唯一汇聚点**（`DefaultSandboxManager` 改的就是它），
+        // 所以观察它既覆盖全部路径，也不用改 `sandbox-manager` 一行。
+        applicationScope.launch {
+            container.sandboxManager.sandboxState
+                .map { it == SandboxState.STOPPED }
+                .distinctUntilChanged()
+                .collect { stopped ->
+                    if (stopped) {
+                        AutomaticBackupSettingsStore.setStopped(this@DshApp, System.currentTimeMillis())
+                    }
+                }
         }
 
         // 功能开关预置层：用 dsh 官方的 `--patch` 入口打开上游"按 profile 默认关闭"

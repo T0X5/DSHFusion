@@ -421,6 +421,22 @@
       "reapply": "用 `tools/i18n_check.sh` 里的 Python 段落替换原来的 bash+grep-P 扫描，并保留「零文件即失败」的守卫。",
       "conflict_risk": "中 —— 上游若也改这一段，两边会冲突；但上游那份在本机本来就是坏的，所以冲突时以我们这份为准，并复核白名单。",
       "note": "⚠️ 白名单（4 个文件）是按**文件**放的，所以「同一文件里新写的中文日志」不会被拦。这是上游的既有设计，本次不改 —— 但要记住它：往白名单文件里加中文日志不会被任何门禁拦住。"
+    },
+    {
+      "id": "DIV-0024",
+      "title": "`DshApp` 观察 `sandboxState` 记录「沙箱停止时刻」（阶段 2.5「停止后」的判据）",
+      "upstream": "dshbox",
+      "type": "patch",
+      "phase": 2,
+      "target_files": [
+        "app/src/main/java/com/dshbox/app/DshApp.kt"
+      ],
+      "change": "在 `DshApp.onCreate` 里起一条进程级协程，观察 `container.sandboxManager.sandboxState`，**转入 `STOPPED` 时**写一个时间戳（`AutomaticBackupSettingsStore.setStopped`）。\n\n**为什么不在 `stopSandbox()` 里记一笔**：停止有至少五条路径 —— 界面上的停止按钮**直接调 `sandboxManager.stopSandbox()`、根本不经过 `SandboxService`**；通知栏走 `ACTION_STOP_SANDBOX`；还有 `OnlineRuntimeImportManager`（两处）与 `DevInstallReceiver`（两处）。在每条里各记一笔是注定会漏的。\n\n`sandboxState` 是**唯一汇聚点**（`DefaultSandboxManager` 改的就是它），观察它既覆盖全部路径，也不用改 `sandbox-manager` 一行。",
+      "rationale": "2.5 的三档里「停止后」需要一个停止时刻，而**这个时间戳此前根本没有任何写入方** —— `stop` 模式一次都不会触发，用户看到的是「开关开着、什么都没发生」。漏一条路径的后果是**静默的**：那条路径停止之后不会备份，而没有任何东西会报出来。",
+      "detection": "`tools/verify-phase0.sh` 的 5u 节：断言观察在 `DshApp` 里，且 `setStopped` **有调用方**（这一条正是先前缺的）。",
+      "reapply": "在 `DshApp.onCreate` 末尾起协程收集 `sandboxState`，`distinctUntilChanged()` 后只在 `STOPPED` 时写时间戳。",
+      "conflict_risk": "低 —— 追加在 `onCreate` 尾部，与 DIV-0022 相邻。",
+      "note": "⚠️ 先前我在 `AutomaticBackupSettingsStore` 的注释与设备文档里都写「只有界面上的停止会记、通知栏不记」——**那是错的，而且错得更糟**：当时 `setStopped` **没有任何调用方**，所以缺口的范围是**全部**。我凭「界面那条我见过」推断了其余路径，而没有搜一遍调用方（第 28 条同族：从「我见过的」推断「全部」）。两处都已更正。"
     }
   ]
 }

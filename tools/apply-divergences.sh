@@ -1634,6 +1634,41 @@ def handle_div_0019(entry) -> tuple[str, str]:
 
 
 
+def handle_div_0024(entry) -> tuple[str, str]:
+    """观察 `sandboxState` 记录停止时刻（DIV-0024，阶段 2.5「停止后」）。
+
+    这里查的**关键是「有时间戳的写入方」**，而不只是「观察那段代码在位」——
+    先前那个缺口的形态是：字段、setter、策略判定**全都在**，
+    而**没有任何东西调用那个 setter**。所以「代码在位」完全证明不了这件事。
+    """
+    problems = []
+
+    app = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "DshApp.kt"
+    if not app.exists():
+        return PENDING, "DshApp.kt 尚未导入"
+    text = read(app)
+
+    if "sandboxState" not in text:
+        problems.append("DshApp 里没有观察 sandboxState —— 「停止后」拿不到时刻")
+    if "SandboxState.STOPPED" not in text:
+        problems.append("观察里没有判断 STOPPED —— 那么任何状态变化都会记一笔（包括 RUNNING）")
+    if "setStopped(" not in text:
+        problems.append(
+            "DshApp 里没有调用 setStopped —— 这正是先前的缺口形态："
+            "字段/setter/判定全在，而没有任何写入方，于是 `stop` 模式一次都不触发")
+
+    # 反向：要有 distinctUntilChanged，否则同一个 STOPPED 状态重复推送会反复覆写时刻。
+    if "distinctUntilChanged" not in text:
+        problems.append(
+            "没有 distinctUntilChanged —— 同一个 STOPPED 被重复推送时会反复覆写时刻，"
+            "把「停止后」变成「一直在停止后」")
+
+    if problems:
+        return FAILED, "；".join(problems)
+    return OK, "观察 sandboxState 且真的写了停止时刻（有写入方）"
+
+
+
 def handle_div_0023(entry) -> tuple[str, str]:
     """`i18n_check.sh` 第 4 项改用 Python（DIV-0023，阶段 2.6）。
 
@@ -1863,6 +1898,7 @@ HANDLERS = {
     "DIV-0021": handle_div_0021,
     "DIV-0022": handle_div_0022,
     "DIV-0023": handle_div_0023,
+    "DIV-0024": handle_div_0024,
 }
 
 
