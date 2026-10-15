@@ -84,17 +84,6 @@ public final class DshAutomaticBackupRunner {
       return new Outcome(false, reason, "", List.of(), Map.of(), 0L);
     }
 
-    /**
-     * 到点了但**没能做成**。
-     *
-     * <p>公开是因为调用方（`app` 里的 `JobService`）要能在自己的前置条件不满足时
-     * 报出同一套结果 —— 而构造器是包内可见的（本类的所有实例都应当由
-     * {@link #run} 产出，那是一条有意的约束）。所以给一个**收窄的**入口，
-     * 而不是把构造器打开。
-     */
-    public static Outcome failed(String reason) {
-      return new Outcome(false, reason, "", List.of(), Map.of(), 0L);
-    }
 
     public String describe() {
       if (!ran) return "未到点：" + reason;
@@ -224,6 +213,24 @@ public final class DshAutomaticBackupRunner {
       if (victim.isFile() && victim.delete()) deleted.add(archive.name);
     }
     return new Outcome(true, "", name, deleted, retention.explain(), bytes);
+  }
+
+  /**
+   * 到点了但**没能做成**。
+   *
+   * <p>放在**外层**而不是嵌套的 {@code Outcome} 里：调用方写
+   * {@code DshAutomaticBackupRunner.failed(...)}。我第一版把它放进了 `Outcome`，
+   * 于是调用处 `DshAutomaticBackupRunner.failed` **解析不了** ——
+   * 而本机编不了 `app` 的 Kotlin，这个错只能等 CI（那一次红在
+   * `:app:compileDebugKotlin`）。位置本身没有语义，但**跨语言调用时，
+   * 名字挂在哪一层是要读出来的**。
+   *
+   * <p>公开是因为调用方要能在自己的前置条件不满足时报出同一套结果 ——
+   * 而 `Outcome` 的构造器是包内可见的（所有实例都应当由 {@link #run} 产出，
+   * 那是一条有意的约束）。所以给一个**收窄的**入口，而不是把构造器打开。
+   */
+  public static Outcome failed(String reason) {
+    return new Outcome(false, reason, "", List.of(), Map.of(), 0L);
   }
 
   /** 容器清单里**调用方该给**的那几个字段。`integrity` 由上游推导，这里不放。 */
