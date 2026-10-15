@@ -6,6 +6,7 @@ import static org.junit.Assert.*;
 import com.deepseekharness.app.backup.BackupArchive;
 import com.deepseekharness.app.backup.BackupControl;
 import com.deepseekharness.app.backup.BackupFileSystem;
+import com.deepseekharness.app.backup.CredentialProjection;
 import com.deepseekharness.app.backup.FileBackupSource;
 import com.deepseekharness.app.backup.JvmBackupFileSystem;
 import java.io.*;
@@ -286,6 +287,118 @@ public class DshBackupExporterTest {
     assertEquals("", DshBackupExporter.join("", ""));
     // 根自身：把整个 .dsh/credentials 选成一个成员时，它自己那条也必须能被排除。
     assertEquals(".dsh/credentials", DshBackupExporter.join(".dsh/credentials", ""));
+  }
+
+  // ───────────────── 凭据：必须被投影，且不许原样出现 ─────────────────
+  //
+  // 🔴 **这一节是补的，而它的缺席是真机上泄漏了 API Key 的直接原因。**
+  //
+  // 先前的情况：`CredentialFileBackupSource`（做投影的那个装饰器）全库只被它自己的
+  // 单测引用 —— **生产路径上没有任何人用它**；而排除清单里写的路径
+  // `.dsh/credentials` 与真机上的 `.credentials.yaml` 根本不是同一个名字。
+  // 两个错叠在一起：`.credentials.yaml` **原样**进了归档，用户的 API Key 与
+  // 浏览器会话授权明文躺在 `/sdcard/Download/` 里。
+  //
+  // 而当时 127 条本机测试 + 308 项套件 + CI 24/24 **全绿**：
+  //   ① `CredentialProjectionTest` 直接 new 那个装饰器 → 证明「投影能工作」，
+  //      **证明不了「它被用了」**；
+  //   ② 排除清单的测试断言 `isExcluded(".dsh/credentials")` 为真 → 而那个字符串
+  //      就在清单里，必然为真。**没人问过「这个路径存在吗」**；
+  //   ③ 导出编排的测试断言「策略回调被调用」→ 证明不了「真的凭据文件被挡住」。
+
+  /** 一份**真实的** `.credentials.yaml`：一条机器本地记录 + 两条 provider ref。 */
+  private static final String CREDENTIALS =
+      "version: 1\n"
+          + "records:\n"
+          + "  client-connection/browser-session:\n"
+          + "    kind: grant\n"
+          + "    payload:\n"
+          + "      version: 1\n"
+          + "      secret: MACHINE-LOCAL-SECRET\n"
+          + "refs:\n"
+          + "  PROVIDER_KEY: sk-PROVIDER-KEY-VALUE\n";
+
+  /**
+   * 归档里每条记录的 (path, 载荷文本)。
+   *
+   * <p>⚠️ 我第一版返回一个在 `close()` 里回填的 `FilterOutputStream` —— 而载荷**从来没被
+   * 回填过**（读取器不保证调 `close()`）。于是断言拿到的是空串，而失败信息看起来像
+   * 「投影把 provider 的 ref 弄丢了」，把我引向了错的方向。
+   * 改成「先收下 sink，`read` 结束后再取内容」—— 不依赖任何调用时序。
+   */
+  private static Map<String, String> payloads(File archive) throws IOException {
+    List<String> paths = new ArrayList<>();
+    List<java.io.ByteArrayOutputStream> sinks = new ArrayList<>();
+    try (InputStream in = Files.newInputStream(archive.toPath())) {
+      BackupArchive.read(
+          in,
+          new BackupArchive.Visitor() {
+            @Override
+            public OutputStream payload(int ordinal, BackupArchive.Record record) {
+              paths.add(record.path);
+              java.io.ByteArrayOutputStream sink = new java.io.ByteArrayOutputStream();
+              sinks.add(sink);
+              return sink;
+            }
+          },
+          new BackupControl(null));
+    }
+    Map<String, String> collected = new LinkedHashMap<>();
+    for (int i = 0; i < paths.size(); i++) {
+      collected.put(paths.get(i), sinks.get(i).toString(StandardCharsets.UTF_8));
+    }
+    return collected;
+  }
+
+  /**
+   * 端到端：**归档里必须只有投影之后的那一份凭据，而且不许有原样那一份。**
+   *
+   * <p>三条断言缺一不可 —— 前两条证明投影生效，第三条证明**没有第二份原样的**。
+   * 少了第三条，「投影生效」与「原样那份也在」可以同时为真（真机就是那样）。
+   */
+  @Test
+  public void credentialsAreProjectedAndNeverIncludedVerbatim() throws Exception {
+    File home = temporary.newFolder("cred-home");
+    write(new File(home, ".dsh/" + CredentialProjection.FILE), CREDENTIALS);
+    write(new File(home, ".dsh/sessions/a.json"), "{\"a\":1}");
+
+    // 与 `DshBackupScope.FULL` 的成员一致：`.dsh` 整棵树 + **单独的**凭据成员。
+    List<DshBackupExporter.Member> members =
+        List.of(
+            new DshBackupExporter.Member("dsh", ".dsh", "application", false),
+            new DshBackupExporter.Member(
+                "credentials", ".dsh/" + CredentialProjection.FILE, "settings", false));
+
+    File archive = new File(temporary.newFolder("dl-cred"), "a.dshbak");
+    // 排除谓词收的是 **user-data 相对**路径 —— 与真实链路一致。
+    export(home, members, archive, ".dsh/" + CredentialProjection.FILE);
+
+    Map<String, String> contents = payloads(archive);
+    String all = String.join("\n", contents.values());
+
+    // ① 机器本地记录**必须不在**。
+    assertFalse(
+        "机器本地记录（浏览器会话授权）绝不能进归档：「" + all + "」",
+        all.contains("MACHINE-LOCAL-SECRET"));
+    assertFalse("连它的键名也不该留下", all.contains("client-connection/browser-session"));
+
+    // ② provider 的 ref **必须在** —— 否则换设备后要重填 API Key（B 方案的全部意义）。
+    assertTrue(
+        "provider 的 ref 必须保留，否则换设备后要重填 API Key：「" + all + "」",
+        all.contains("sk-PROVIDER-KEY-VALUE"));
+
+    // ③ **只有一份**凭据文件。这一条挡的是「投影那份在、原样那份也在」——
+    //    真机上的泄漏正是这个形态，而前两条断言在那种情况下**全都成立**。
+    long count =
+        contents.keySet().stream()
+            .filter(path -> path.endsWith(CredentialProjection.FILE))
+            .count();
+    assertEquals(
+        "归档里凭据文件必须只出现一次（多出来的那一份就是原样泄漏）：「"
+            + contents.keySet()
+            + "」",
+        1L,
+        count);
   }
 
   // ─────────────────────────── 负路径 ───────────────────────────

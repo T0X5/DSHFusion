@@ -10,6 +10,8 @@ package com.dshbox.app.backup;
 import com.deepseekharness.app.backup.BackupControl;
 import com.deepseekharness.app.backup.BackupFileSystem;
 import com.deepseekharness.app.backup.BackupSource;
+import com.deepseekharness.app.backup.CredentialFileBackupSource;
+import com.deepseekharness.app.backup.CredentialProjection;
 import com.deepseekharness.app.backup.FileBackupSource;
 import com.deepseekharness.app.backup.HostSnapshot;
 import com.deepseekharness.app.util.Ids;
@@ -168,9 +170,36 @@ public final class DshBackupExporter {
         skipped.add(member.id);
         continue;
       }
-      sources.add(
+      boolean credentials = isCredentialFile(member.path);
+      BackupSource source =
           new FileBackupSource(
-              fs, member.id, member.scope, root, member.external, policyFor(member, excluded)));
+              fs,
+              member.id,
+              member.scope,
+              root,
+              member.external,
+              // ⚠️ **凭据源不套排除清单。**
+              //
+              // 排除清单里那条 `.dsh/.credentials.yaml` 是给**别的**源用的
+              // （让 `.dsh` 那棵树不要把凭据原样带走）。而这个成员的**根就是那个文件**，
+              // 它的相对路径是 `""` —— 拼出来正好命中那条排除，于是整个文件被排掉、
+              // 归档里一个字都不剩。
+              //
+              // 我第一版就是这样：断言「provider 的 ref 必须保留」红了，而归档里
+              // 凭据那条记录的内容是**空的**。两个「排除」叠在一起，把该留的那份也删了。
+              credentials ? null : policyFor(member, excluded));
+      // 🔴 **凭据文件必须套上投影。**
+      //
+      // 阶段 2.3 做了 `CredentialFileBackupSource`（删掉机器本地记录、保留 provider 的
+      // `refs:`），它的单测也过了 —— 但**生产路径上从来没有人用它**：
+      // 那个类全库只被它自己的测试引用。于是真机上导出时，`.credentials.yaml`
+      // **原样**进了归档，用户的 API Key 与浏览器会话授权明文躺在下载目录里。
+      //
+      // 这里按**路径**判断，而不是按调用方传进来的标志位 —— 因为「忘了传标志位」
+      // 正是这个 bug 的形态。按路径判断则**不可能忘**：任何范围只要含这个文件，
+      // 它就被投影。
+      if (credentials) source = new CredentialFileBackupSource(source);
+      sources.add(source);
     }
     if (sources.isEmpty()) throw new IOException("NO_SELECTED_DATA");
 
@@ -218,6 +247,18 @@ public final class DshBackupExporter {
     if (head.isEmpty()) return tail;
     if (tail.isEmpty()) return head;
     return head + "/" + tail;
+  }
+
+  /**
+   * 这个成员是不是凭据文件。
+   *
+   * <p>认的是**文件名**（`CredentialProjection.FILE`，来自逐字节导入的副本），
+   * 不认调用方传的标志位 —— 见上面那段注释：这个 bug 的形态就是「没人接上」。
+   */
+  static boolean isCredentialFile(String memberPath) {
+    return memberPath != null
+        && (memberPath.equals(CredentialProjection.FILE)
+            || memberPath.endsWith("/" + CredentialProjection.FILE));
   }
 
   /** 任务目录名：**必须匹配上游的 UUID 形状**（它自己会校验）。 */

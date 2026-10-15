@@ -2393,7 +2393,7 @@ clone_fixture() {
 
 ---
 
-## 附录：贯穿全部 38 条的同一个病
+## 附录：贯穿全部 41 条的同一个病
 
 > 这张表原本在 `AGENTS.md` 里。它三次把那个文件撑过指令预算而被**静默截断**
 > （截掉的正是「编码约定」与「已知陷阱」）—— 所以移到这里。
@@ -2688,3 +2688,98 @@ if (archive.equals(target)) throw new IOException("DESTINATION_IS_ARTIFACT");
 - 而两次本机测试都全绿 —— 因为它们用的是**另一套** `BackupFileSystem`。
   **`JvmBackupFileSystem` 是测试替身，它的行为与生产那份不同；凡是「靠它才通过」的结论，
   在真机上都要重新问一遍。**
+
+
+## 41. 🔴 **真机导出的归档里，用户的 API Key 是明文** —— 而每一条门禁都绿
+
+### 发生了什么
+
+用户按我的清单做真机验证。导出成功之后，我用设备桥读了那份归档（他授权我读）：
+
+```yaml
+version: 1
+records:
+  client-connection/browser-session:
+    kind: grant
+    payload:
+      secret: <浏览器会话授权>
+refs:
+  EZLOOK_API_KEY: sk-<真实 API Key>
+  EZLOOK_GPT_API_KEY: sk-<真实 API Key>
+```
+
+**这是他的真实凭据，明文，躺在 `/sdcard/Download/DSHFusion/`** ——
+下载目录是全手机共享的，任何申请了存储权限的 app 都能读。
+
+### 两个成因叠在一起，任何一个单独都足以泄漏
+
+**① 「凭据投影」这个功能，生产路径上从来没人用过。**
+
+`CredentialFileBackupSource`（阶段 2.3 做的那个做投影的装饰器）全库只被**它自己的单测**引用：
+
+```
+backup/src/test/java/.../CredentialProjectionTest.java:128
+backup/src/test/java/.../CredentialProjectionTest.java:159
+```
+
+导出编排给每个成员建的都是普通的 `FileBackupSource` —— **没有一层套上投影**。
+
+**② 排除清单里的路径根本不存在。**
+
+```kotlin
+val CREDENTIALS: List<String> = listOf(".dsh/credentials")
+```
+
+而真机上的文件名是 **`.dsh/.credentials.yaml`**。
+它的注释写着「`Constants.kt` 第 148 行把 DSH 的数据列为 `… / credentials`」——
+**我把那个逻辑名当成了路径，没有去设备上看一眼真实文件名。**
+
+### 为什么每一条门禁都绿
+
+| 门禁 | 它实际证明的 | 它没问的问题 |
+|---|---|---|
+| `CredentialProjectionTest`（投影） | 直接 `new` 那个装饰器 → **投影逻辑正确** | **它被接在生产路径上了吗** |
+| 排除清单的测试 | `isExcluded(".dsh/credentials")` 为真 | **这个路径存在吗** |
+| 导出编排的测试 | 策略回调**被调用**了 | 真的凭据文件**被挡住了吗** |
+| CI（24/24） | 编得过、测试跑得过 | **从没导出过一份归档来看** |
+
+**`CredentialProjectionTest` 证明的是「投影能工作」，不是「它被用了」。**
+而本机测试**看不到 Kotlin**（只编译 `.java`），所以清单里那个错路径
+**从来没有被任何本机测试覆盖过** —— 我的 Java 测试是用**参数**把路径显式传进去的，
+于是测的是「我传的那个字符串」，而不是「清单里那个字符串」。
+
+### 修法（用户选了 B：投影后保留 provider 凭据）
+
+1. **排除清单引用常量**：`.dsh/" + CredentialProjection.FILE` —— 两处不可能再各写一份。
+2. **FULL 范围加一个单独的 `credentials` 成员**：投影只能套在「根就是那个文件」的源上
+   （`CredentialFileBackupSource` 对**它拿到的每一个 item** 都做投影）。
+3. **导出编排按路径自动套投影**：`if (isCredentialFile(member.path)) source = new CredentialFileBackupSource(source);`
+   —— **按路径判断而不是靠调用方传标志位**，因为「没人接上」正是这个 bug 的形态。
+4. **凭据源豁免排除清单**：它的根就是那个被排除的路径，相对路径 `""` 拼出来正好命中 ——
+   于是整个文件被排掉，归档里一个字都不剩（我第一版就是这样，断言「provider 的 ref 必须保留」红了）。
+
+### 新增的守卫
+
+**端到端测试**（`credentialsAreProjectedAndNeverIncludedVerbatim`）三条断言缺一不可：
+
+- ① 机器本地记录**必须不在**；
+- ② provider 的 ref **必须在**（否则换设备要重填 API Key —— B 方案的全部意义）；
+- ③ 凭据文件**只能出现一次**。
+
+**③ 是关键**：真机上的泄漏形态是「投影那份在、原样那份也在」——
+而前两条在那种情况下**全都成立**。少了 ③，这个测试会绿着放走真机那个 bug。
+
+**套件 5v 节**（7 项，含注入）：因为本机测试看不到 Kotlin，
+清单里的路径只能靠**文本断言**守 —— 并带一条注入（把路径改回手抄的，必须变红）。
+
+### 教训
+
+- **「测试通过」与「功能被调用」是两件事。** 一个类只要有单测，
+  就会在报告里显示成「已覆盖」；而它可能**从未出现在生产路径上**。
+  判据应该是「生产路径上有人调它吗」——那需要对**入口**断言，不是对类断言。
+- **我照着注释里的逻辑名猜了一个路径。** `Constants.kt` 写的是 DSH 数据的**逻辑清单**
+  （`profiles / sessions / settings.yaml / storages / credentials`），
+  而 `credentials` 是**名字**不是**文件名**。真机上看一眼就能避免 ——
+  而这正是「没有真机验证不得标记为成功」那条硬约束要挡的事。
+- **同一个坑的第 6 次**：我在清单的 KDoc 里写了「现在改成引用 `CredentialProjection.FILE`」，
+  于是注入之后那条 grep **仍然命中注释**、检查没红。剥注释才修好。

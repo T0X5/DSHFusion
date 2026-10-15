@@ -3155,6 +3155,122 @@ PYI
     fi
 fi
 
+section "5v. 凭据不进归档（真机泄漏过 API Key，这一节是那次事故的守卫）"
+
+# 🔴 这一节存在的理由：**真机上导出的归档里，用户的 API Key 与浏览器会话授权是明文。**
+#
+# 两个成因叠在一起，而 127 条本机测试 + 308 项套件 + CI 24/24 **全绿**：
+#   ① `CredentialFileBackupSource`（做投影的那个装饰器）全库只被**它自己的单测**引用，
+#      生产路径上没人用它 —— 于是「投影」这个功能从未生效；
+#   ② `DshBackupExclusions.CREDENTIALS` 写的是 `.dsh/credentials`，而真机上的文件名是
+#      `.credentials.yaml`（我照着 `Constants.kt` 里的**逻辑名**猜的）—— 那条排除
+#      匹配不到任何东西。
+#
+# 而本机测试为什么抓不到：
+#   - 投影的单测**直接 new** 那个装饰器 → 证明「投影能工作」，证明不了「它被用了」；
+#   - Java 测试**看不到 Kotlin**（本机只编译 .java），所以清单里那个错路径
+#     **从来没有被任何本机测试覆盖过** —— 我用参数把路径显式传进测试，
+#     于是测的是「我传的那个字符串」，而不是「清单里那个字符串」。
+
+EXCL="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExclusions.kt"
+SCOPE="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupScope.kt"
+EXPORT="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExporter.java"
+
+# ① 清单必须引用那个**逐字节导入的副本里定义的文件名**，不许自己另写一份。
+# ⚠️ **剥注释再查。** 这是同一族问题的第 **6** 次发作（第 35 条 + 两次补记 + §39 补记 + §18）：
+# 我在清单的 KDoc 里写了「现在改成引用 `CredentialProjection.FILE`」，
+# 于是注入（把代码里的引用改回手抄路径）之后这条 grep **仍然命中注释里的那句话**，
+# 检查没红。**规律还是那条：把「为什么」写得越清楚，越容易命中读同一棵树的检查。**
+if python3 - "$EXCL" <<'PYV'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+code = re.sub(r"(?m)^\s*//.*$", "", code)
+sys.exit(0 if "CredentialProjection.FILE" in code else 1)
+PYV
+then
+    ok "排除清单的**代码**引用 CredentialProjection.FILE（注释里的提及不算）"
+else
+    fail "排除清单的代码里没有引用 CredentialProjection.FILE —— 它又写了一个手抄的文件名（真机上就是这样漏的）"
+    CR_BAD=1
+fi
+# 反向：不许再出现手抄的字面量。
+if python3 - "$EXCL" <<'PYV'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+code = re.sub(r"(?m)^\s*//.*$", "", code)
+# 手抄的凭据文件名（`.credentials.yaml`）不该出现在代码里 —— 只该经由常量引用。
+sys.exit(1 if re.search(r'"\.credentials\.yaml"', code) else 0)
+PYV
+then
+    ok "清单里没有手抄的凭据文件名（只经常量引用）"
+else
+    fail "清单里出现了手抄的 \".credentials.yaml\" —— 应当只引用 CredentialProjection.FILE"
+    CR_BAD=1
+fi
+
+# ② FULL 范围必须有一个**单独的**凭据成员（投影只能套在「根就是那个文件」的源上）。
+if grep -q '"credentials"' "$SCOPE"; then
+    ok "FULL 范围里有单独的 credentials 成员"
+else
+    fail "FULL 范围里没有 credentials 成员 —— 归档里不会带 provider 凭据（换设备要重填 API Key）"
+    CR_BAD=1
+fi
+
+# ③ 导出编排必须**按路径**自动套投影 —— 不许靠调用方传标志位（那正是漏掉的那个形态）。
+if grep -q 'new CredentialFileBackupSource(source)' "$EXPORT" && grep -q 'isCredentialFile(member.path)' "$EXPORT"; then
+    ok "导出编排按路径自动套投影（不可能忘）"
+else
+    fail "导出编排没有按路径自动套投影 —— 投影会再次变成「只被单测引用」的死代码"
+    CR_BAD=1
+fi
+# ④ 凭据源必须**豁免**排除清单（否则它把自己的根排掉，归档里一个字都不剩）。
+if grep -q 'credentials ? null : policyFor(member, excluded)' "$EXPORT"; then
+    ok "凭据源豁免排除清单（否则它会把自身的根排掉）"
+else
+    fail "凭据源没有豁免排除清单 —— 归档里凭据记录的内容会是空的"
+    CR_BAD=1
+fi
+
+# ⑤ 注入：把清单里的路径改回那个**错的**，上面 ① 必须变红。
+VX_BAK="$(mktemp)"
+cp "$EXCL" "$VX_BAK"
+VX_BEFORE="$(sha256sum "$EXCL" | cut -d' ' -f1)"
+sed -i 's|listOf(".dsh/" + CredentialProjection.FILE)|listOf(".dsh/credentials")|' "$EXCL"
+VX_AFTER="$(sha256sum "$EXCL" | cut -d' ' -f1)"
+if [ "$VX_BEFORE" = "$VX_AFTER" ]; then
+    fail "注入**没有生效**（锚点没匹配上）—— 这条注入需要修，不是检查需要修"
+    CR_BAD=1
+elif python3 - "$EXCL" <<'PYV'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+code = re.sub(r"(?m)^\s*//.*$", "", code)
+sys.exit(0 if "CredentialProjection.FILE" in code else 1)
+PYV
+then
+    fail "把清单路径改回手抄的 \".dsh/credentials\" 之后，① 没有变红"
+    CR_BAD=1
+else
+    ok "注入：清单改回手抄路径 → ① 会红（抓得住真机那次泄漏的成因之一）"
+fi
+cp "$VX_BAK" "$EXCL"
+rm -f "$VX_BAK"
+if python3 - "$EXCL" <<'PYV'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+code = re.sub(r"(?m)^\s*//.*$", "", code)
+sys.exit(0 if "CredentialProjection.FILE" in code else 1)
+PYV
+then
+    ok "复原后清单重新引用常量"
+else
+    fail "复原失败 —— 注入没被还原干净"
+    CR_BAD=1
+fi
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do

@@ -1,5 +1,7 @@
 package com.dshbox.app.backup
 
+import com.deepseekharness.app.backup.CredentialProjection
+
 /**
  * 备份范围里的一项：**从哪读、往哪合、记成哪个 v5 范围**。
  *
@@ -74,7 +76,25 @@ enum class DshBackupScope(
         v5Scopes = setOf("application", "sessions", "settings", "plugins", "projects"),
     ) {
         override val members: List<DshBackupMember>
-            get() = listOf(DshBackupMember("dsh", ".dsh", "", "application"))
+            get() =
+                listOf(
+                    DshBackupMember("dsh", ".dsh", "", "application"),
+                    // 凭据文件**单独成一个成员**，而不是让它跟着 `.dsh` 那棵树走。
+                    //
+                    // 为什么必须分开：`CredentialFileBackupSource` 会对**它拿到的每一个
+                    // item** 做投影，所以它只能套在「根就是凭据文件」的源上。
+                    // 套在 `.dsh` 整棵树上会把投影施加到所有文件 —— 那是错的。
+                    //
+                    // 而 `.dsh` 那棵树里的原样副本由 `DshBackupExclusions.CREDENTIALS`
+                    // 排除掉。**两者缺一不可**：少了这个成员 → 归档里没有 provider 凭据；
+                    // 少了那条排除 → 原样泄漏（就是真机上发生的事）。
+                    DshBackupMember(
+                        "credentials",
+                        ".dsh/" + CredentialProjection.FILE,
+                        CredentialProjection.FILE,
+                        "settings",
+                    ),
+                )
     },
 
     SESSIONS(

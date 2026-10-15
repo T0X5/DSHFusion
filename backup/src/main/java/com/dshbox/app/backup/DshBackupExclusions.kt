@@ -1,5 +1,7 @@
 package com.dshbox.app.backup
 
+import com.deepseekharness.app.backup.CredentialProjection
+
 /**
  * 备份的排除清单：**哪些不进归档，哪些看着像资产却必须进**。
  *
@@ -79,12 +81,24 @@ object DshBackupExclusions {
      * `profiles / sessions / settings.yaml / storages / credentials` ——
      * `credentials` 就是 API Key 那一份。
      *
-     * 阶段 2.2 只做这一层**整文件**排除。另有两类**字段级**的凭据（写进了必须备份的文件里）
-     * 属于阶段 2.3：`settings.yaml` 里的模型凭据，以及桥接 token。
-     * 所以本类只声明「这整份不进归档」，不声称「归档里一定没有密钥」——
-     * 后者要等 2.3 做完并由它自己的测试作证。
+     * 🔴 **这条清单曾经是错的，而且错得很贵。**
+     *
+     * 原来写的是 `.dsh/credentials` —— 我照着 `Constants.kt` 里那个**逻辑名**
+     * （`profiles / sessions / settings.yaml / storages / credentials`）猜的路径。
+     * 而真机上 DSH 0.2.0-rc.2 的实际文件名是 **`.credentials.yaml`**。
+     * 于是这条排除**匹配不到任何东西**，用户的 API Key 与浏览器会话授权
+     * **原样进了归档**，而 127 条本机测试 + 308 项套件 + CI 全绿。
+     *
+     * 现在改成引用 `CredentialProjection.FILE`（那个逐字节导入的副本里定义的常量），
+     * **两处不可能再各写一份**。
+     *
+     * ⚠️ 这一条只负责「让 `.dsh` 那棵树**不要**把凭据文件原样带走」。
+     * 归档里仍然**会有**凭据 —— 但是**投影之后**的那一份（见
+     * `DshBackupExporter` 里的 `CredentialFileBackupSource` 与 `DshBackupScope.FULL`
+     * 里那个 `credentials` 成员）。两者必须同时成立：少了投影 → 没有 provider 凭据；
+     * 少了排除 → 原样泄漏。
      */
-    val CREDENTIALS: List<String> = listOf(".dsh/credentials")
+    val CREDENTIALS: List<String> = listOf(".dsh/" + CredentialProjection.FILE)
 
     /** [isExcluded] 用的全集。 */
     private val all: List<String> = REGENERATED + CREDENTIALS
