@@ -211,6 +211,95 @@ public class DshRestoreOrchestratorTest {
         DshRestoreOrchestrator.Phase.INSPECTED, run.phase());
   }
 
+  // ─────────────── 坏归档：要明确报错，且不破坏现有数据 ───────────────
+  //
+  // 这一段对应阶段 2 的验收标准「坏备份要明确报错且**不破坏现有数据**」。
+  // 先前我的编排测试里**一条坏归档的用例都没有** —— 而这是恢复路径上最可能发生的事
+  // （拷贝中断、空间不足、传输截断）。
+  //
+  // 三种坏法覆盖三种不同的检测层，缺一不可：
+  //   截断     → 读到一半就没了（容器长度字段）
+  //   不是容器 → 魔数/版本
+  //   翻一个字节 → 逐记录摘要
+
+  private File corrupt(File good, String kind) throws IOException {
+    File victim = new File(good.getParentFile(), kind + ".dshbak");
+    byte[] bytes = Files.readAllBytes(good.toPath());
+    if (kind.equals("truncated")) {
+      bytes = Arrays.copyOf(bytes, bytes.length / 2);
+    } else if (kind.equals("garbage")) {
+      bytes = "not a DSHADATA container at all".getBytes(StandardCharsets.UTF_8);
+    } else {
+      bytes[bytes.length / 2] ^= 0x5A;
+    }
+    Files.write(victim.toPath(), bytes);
+    return victim;
+  }
+
+  /**
+   * 三种坏法各跑一遍：**必须抛出具名错误码，且目标树一个字节都没变。**
+   *
+   * <p>「不破坏现有数据」这一半比「报错」更重要 —— 一个说得清楚但已经把数据写坏的恢复
+   * 比一个静默失败更糟。
+   */
+  @Test
+  public void corruptedArchivesAreRefusedWithANamedCodeAndChangeNothing() throws Exception {
+    File archive = exportArchive(makeSource(), "good.dshbak");
+    // 每种坏法**允许**哪些错误码。前两种是确定的；第三种不是 ——
+    // 翻掉的那个字节落在哪个结构上**取决于偏移**，而偏移取决于归档大小。
+    //
+    // ⚠️ 我第一版把第三种钉成了 `RECORD_CHECKSUM`（我在探针里看到的那个），
+    // 然后测试红了：这份归档比探针那份小几字节，于是翻转的字节落在了**页脚**里。
+    // **我又一次钉了「我以为的形态」而不是「必须成立的性质」**（第 15/20/32 条同族）。
+    // 真正要证明的性质有两条：① 它被**检测到**了；② 报出的是**这个容器自己的**
+    // 完整性错误码（而不是「没选中任何数据」之类的、来自别处的失败）。
+    Map<String, Set<String>> allowed =
+        Map.of(
+            "truncated", Set.of("ARCHIVE_TRUNCATED"),
+            "garbage", Set.of("ARCHIVE_VERSION"),
+            "flipped",
+                Set.of(
+                    "ARCHIVE_FOOTER", "ARCHIVE_MANIFEST", "RECORD_CHECKSUM", "RECORD_LIMIT",
+                    "ARCHIVE_TRUNCATED"));
+
+    for (Map.Entry<String, Set<String>> each : allowed.entrySet()) {
+      String kind = each.getKey();
+      File victim = corrupt(archive, kind);
+      File target = temporary.newFolder("target-" + kind);
+      write(new File(target, ".dsh/sessions/a.json"), "PRESENT-BEFORE");
+      Map<String, String> before = digestTree(target);
+
+      DshRestoreOrchestrator run = new DshRestoreOrchestrator();
+      IOException error =
+          assertThrows(
+              IOException.class,
+              () -> run.inspect(
+                  fs,
+                  victim,
+                  members(),
+                  Set.of("application"),
+                  "full",
+                  target,
+                  temporary.newFolder("task-" + kind),
+                  new BackupControl(null)));
+
+      // ① 必须是一个**能对照的固定错误码**，不是 null、也不是某句自然语言。
+      assertNotNull(kind + " 的错误码不能是 null —— 界面会把它原样显示给用户", error.getMessage());
+      assertTrue(
+          kind + " 的错误码不在允许集合里，实际「" + error.getMessage() + "」（允许 " + each.getValue() + "）",
+          each.getValue().contains(error.getMessage()));
+      assertTrue(
+          "错误码必须形如 ABC_DEF（能被用户照着查），实际「" + error.getMessage() + "」",
+          error.getMessage().matches("[A-Z][A-Z0-9_]+"));
+
+      // ② 目标树一个字节都没变。
+      assertEquals(kind + " 之后目标树必须一个字节都没变", before, digestTree(target));
+      // ③ 状态留在 FRESH —— 没检成就没有「可提交」的东西。
+      assertEquals(DshRestoreOrchestrator.Phase.FRESH, run.phase());
+      assertFalse(run.mayCommit());
+    }
+  }
+
   // ─────────────────────────── 状态机 ───────────────────────────
 
   @Test

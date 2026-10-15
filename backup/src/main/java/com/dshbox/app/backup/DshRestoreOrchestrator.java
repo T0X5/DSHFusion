@@ -201,9 +201,31 @@ public final class DshRestoreOrchestrator {
     //   ① 先写「null = 全部根」→ 三处 `NullPointerException`（上游直接解引用它）；
     //   ② 再改成「成员 id 的集合」→ `NO_RECOVERABLE_SCOPE`（它收的是**范围名**）。
     // 而正确的值**不能**是通配的 `"application"` —— 见 `selectedScopes` 的参数说明。
-    NativeRestorePlan built =
-        NativeRestorePlan.inspect(
-            fs, taskDirectory, archive, mapping, new LinkedHashSet<>(selectedScopes), control);
+    NativeRestorePlan built;
+    try {
+      built =
+          NativeRestorePlan.inspect(
+              fs, taskDirectory, archive, mapping, new LinkedHashSet<>(selectedScopes), control);
+    } catch (IOException unreadable) {
+      // 🔴 **上游对「归档被截断」抛的异常 message 是 null。**
+      //
+      // 实测（三种坏法各跑一遍）：
+      //   截断到一半   → message 是 **null**
+      //   整个不是容器 → `ARCHIVE_VERSION`
+      //   中间翻一个字节 → `RECORD_CHECKSUM`
+      //
+      // 而界面把 `error.message` 原样显示给用户 —— 于是**最可能发生的那种损坏**
+      // （拷贝中断、空间不足、传输截断）会显示成一句空话。
+      // 阶段 2 的验收标准写的是「坏备份要**明确报错**」，null 不是明确。
+      //
+      // 修在这里而不是上游：`NativeRestorePlan` 是逐字节导入的副本（改它就没法逐字节核验了），
+      // 而「给用户看一个能对照的错误码」本来就是适配层的活。
+      String code = unreadable.getMessage();
+      if (code != null && !code.isEmpty()) throw unreadable;
+      throw new IOException(
+          unreadable instanceof java.io.EOFException ? "ARCHIVE_TRUNCATED" : "ARCHIVE_UNREADABLE",
+          unreadable);
+    }
     List<String> groupNames = new ArrayList<>(built.groups.keySet());
     // `overwrite = false`：候选是**平行**的，落点上现有数据在这一步一个字节都不动。
     // 真正的合并/替换发生在 HostDataTransaction.prepare/commit。

@@ -143,8 +143,8 @@ jobs:
           # 119 是本机实测（tools/run-backup-jvm-tests.sh，17 个类），43 是 CI 实测。
           # 拼出来的 162 仍然是**推断**，所以它的第一次真跑必须能证伪它 ——
           # 若 CI 报的不是 162，先信 CI（docs/INCIDENTS.md 第 27 条）。
-          if total < 162:
-              problems.append(f":backup 只有 {total} 条测试，低于本轮预期总数 162")
+          if total < 163:
+              problems.append(f":backup 只有 {total} 条测试，低于本轮预期总数 163")
           # 2.4 的恢复核心是**会毁数据**的那条路径，所以单独钉住它的类。
           # 「总数够了」不代表「新那 8 条在里面」（第 26 条的同族）。
           restore = "com.deepseekharness.app.backup.NativeRestorePlanTest"
@@ -173,9 +173,9 @@ jobs:
                "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
               ("com.dshbox.app.backup.DshAutomaticBackupRunnerTest", 11,
                "自动备份的**顺序**守卫没跑 = 「导出失败时不会净损失旧备份」没有证据"),
-              ("com.dshbox.app.backup.DshRestoreOrchestratorTest", 13,
-               "恢复编排是本模块**会毁数据**的那条路径；「预检不碰数据」必须由摘要证明，"
-               "不能只写在注释里"),
+              ("com.dshbox.app.backup.DshRestoreOrchestratorTest", 14,
+               "恢复编排是本模块**会毁数据**的那条路径；「预检不碰数据」由摘要证明，"
+               "且**三种坏归档都必须有具名错误码**（验收标准写的是「明确报错」）"),
               ("com.dshbox.app.backup.DshBackupExporterTest", 14,
                "导出编排是本模块第三段会泄数据的路径；且「排除谓词的坐标系要拼前缀」"
                "少一步就**静默带走机器本地凭据**"),

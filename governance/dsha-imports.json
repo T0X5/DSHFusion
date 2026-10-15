@@ -793,7 +793,7 @@
       },
       {
         "local_path": "backup/src/main/java/com/dshbox/app/backup/DshRestoreOrchestrator.java",
-        "why": "恢复编排：`inspect`（只读预检）→ `prepare`（只读地建候选、重验目标）→ `commit`（换入）。它只做**顺序**，不做**逻辑** —— 落点在 `HostRestoreMapping`、平行候选与校验在 `NativeRestorePlan`、五相位标记与回切在 `HostRestoreTransaction`，每段都有各自的测试。写成 Java 是因为这是会毁数据的那条路径，只让 CI 编译它太贵。收纯数据（`HostRestoreMapping.Member` + `selectedScopes`），不 import Kotlin 类型。\n\n⚠️ `selectedScopes` 是**安全属性**：上游把 `selected` 当范围名集合，而 `\"application\"` 在它里面是**通配符** —— 图省事传它，会让「用户选了会话、却拿到一份全量归档」时把设置与插件也一起恢复进去。所以它只能来自用户选的范围。\n\n任务目录由编排自己建 UUID 子目录：上游校验目录名形状，而「你必须记得拼 UUID」的接口是注定会被用错的（我自己的测试第一次就 `TASK_NAME_NOT_UUID`）。",
+        "why": "恢复编排：`inspect`（只读预检）→ `prepare`（只读地建候选、重验目标）→ `commit`（换入）。它只做**顺序**，不做**逻辑** —— 落点在 `HostRestoreMapping`、平行候选与校验在 `NativeRestorePlan`、五相位标记与回切在 `HostRestoreTransaction`，每段都有各自的测试。写成 Java 是因为这是会毁数据的那条路径，只让 CI 编译它太贵。收纯数据（`HostRestoreMapping.Member` + `selectedScopes`），不 import Kotlin 类型。\n\n⚠️ `selectedScopes` 是**安全属性**：上游把 `selected` 当范围名集合，而 `\"application\"` 在它里面是**通配符** —— 图省事传它，会让「用户选了会话、却拿到一份全量归档」时把设置与插件也一起恢复进去。所以它只能来自用户选的范围。\n\n任务目录由编排自己建 UUID 子目录：上游校验目录名形状，而「你必须记得拼 UUID」的接口是注定会被用错的（我自己的测试第一次就 `TASK_NAME_NOT_UUID`）。\n\n**还有一处是上游的错误码不够明确**：实测三种坏法 —— 截断到一半抛出的异常 message 是 **null**（`garbage` 是 `ARCHIVE_VERSION`、翻一个字节是 `RECORD_CHECKSUM`/`ARCHIVE_FOOTER`）。而界面把 `error.message` 原样显示给用户，于是**最可能发生的那种损坏**（拷贝中断、空间不足、传输截断）会显示成一句空话。修在这里而不是上游：`NativeRestorePlan` 是逐字节导入的副本，改它就没法逐字节核验了；而「给用户看一个能对照的错误码」本来就是适配层的活。",
         "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshRestoreOrchestratorTest.java（本机真跑）；tools/verify-phase0.sh 的 5u 节"
       },
       {
