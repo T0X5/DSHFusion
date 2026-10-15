@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.function.Predicate;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -66,16 +67,15 @@ public class DshBackupExporterTest {
   private DshBackupExporter.Exported export(
       File home, List<DshBackupExporter.Member> members, File destination, String... excluded)
       throws IOException {
-    // ⚠️ 用 `endsWith` 而不是相等：相对路径的**具体形式**（有没有前导分隔符、
-    // 是不是从根往下拼）是上游的实现细节，不该由这条测试钉死 ——
-    // 第一版我写的是 `contains(relative)` 精确匹配，结果排除根本没生效，
-    // 而失败信息长得像「排除功能坏了」。真正要证明的是**性质**：
-    // 「名字以 credentials 结尾的那一项不会进归档」。
-    FileBackupSource.Policy policy =
-        (relative, node) -> {
+    // ⚠️ 用 `endsWith` 而不是相等：这里要证的是**性质** ——
+    // 「名字以 credentials 结尾的那一项的内容不会进归档」。
+    // 路径的完整形式（有没有前缀、前缀怎么拼）由下面那条专门的用例钉住。
+    // 谓词收的是 **user-data 相对**路径（与 DshBackupExclusions.isExcluded 同一套坐标系）。
+    Predicate<String> policy =
+        relative -> {
           policySaw.add(relative);
-          for (String e : excluded) if (relative.endsWith(e)) return "MACHINE_LOCAL_CREDENTIAL";
-          return "";
+          for (String e : excluded) if (relative.endsWith(e)) return true;
+          return false;
         };
     return DshBackupExporter.export(
         fs,
@@ -219,7 +219,7 @@ public class DshBackupExporterTest {
     //    少了这一条，下面那条在「策略压根没被调用」时**也是绿的** ——
     //    那就成了第 30 条那种没有输入空间的断言。
     assertTrue(
-        "排除回调必须真的被调用过，且看得到 credentials；实际看到 " + policySaw,
+        "排除谓词必须真的被调用过，且看得到 credentials；实际看到 " + policySaw,
         policySaw.stream().anyMatch(r -> r.endsWith("credentials")));
 
     // ③ 它仍然会留下一条**元数据**记录，且说清了为什么。这是有意的：
@@ -227,7 +227,7 @@ public class DshBackupExporterTest {
     Map<String, Object> excluded = recordFor(scan, "credentials");
     assertNotNull("被排除项必须留下一条可追溯的记录", excluded);
     assertEquals("EXCLUDED", excluded.get("kind"));
-    assertEquals("MACHINE_LOCAL_CREDENTIAL", excluded.get("reason"));
+    assertEquals("EXCLUDED_BY_POLICY", excluded.get("reason"));
     // ② 真正要证明的性质：**内容**一个字节都没进归档。
     assertFalse(
         "被排除的凭据的内容绝不能出现在归档里；带载荷的是 " + scan.withPayload,
@@ -235,6 +235,57 @@ public class DshBackupExporterTest {
     assertTrue("但同一棵树里的别的文件必须带载荷", scan.withPayload.contains("settings.yaml"));
     assertTrue("反向自证：这棵树里确实有那个文件", new File(home, ".dsh/credentials").isFile());
 
+  }
+
+  /**
+   * **坐标系拼接**：谓词收的是 user-data 相对路径，成员内相对路径要拼上前缀。
+   *
+   * <p>为什么单独一条：这两套坐标系差一个前缀，而少了拼接的后果是
+   * **排除清单一条都不命中、且不报任何错** —— 归档里安静地带上机器本地凭据，
+   * 而所有计数、摘要、完整性判定照常通过。
+   *
+   * <p>这条用例用**真实的一条 `.dsh` 成员**跑，而不是直接调 `join` ——
+   * 直接调 `join` 只能证明拼接函数对，证明不了「它真的被接在了链路上」。
+   * 首尾斜杠那几种形态另用 `join` 单测（那是纯字符串逻辑）。
+   */
+  @Test
+  public void exclusionsAreMatchedThroughTheMemberPrefix() throws Exception {
+    File home = makeHome();
+    File destination = new File(temporary.newFolder("Download"), "a.dshbak");
+    List<String> seen = new ArrayList<>();
+
+    // 谓词按 **user-data 相对**路径判断：`.dsh/credentials` 命中，`credentials` 不命中。
+    // 若链路上少了前缀拼接，它会收到裸的 `credentials`，于是**一条都不命中**。
+    DshBackupExporter.export(
+        fs,
+        home,
+        List.of(new DshBackupExporter.Member("dsh", ".dsh", "application", false)),
+        makeTask(),
+        destination,
+        provenance(),
+        relative -> {
+          seen.add(relative);
+          return relative.equals(".dsh/credentials");
+        },
+        false,
+        new BackupControl(null));
+
+    assertTrue("谓词必须收到 user-data 相对路径（带 .dsh/ 前缀）；实际 " + seen,
+        seen.contains(".dsh/credentials"));
+    assertFalse("不许收到裸的 credentials —— 那说明前缀拼接丢了", seen.contains("credentials"));
+    // 且它**真的起了作用**：凭据的内容不在归档里。
+    assertFalse(scan(destination).withPayload.contains("credentials"));
+  }
+
+  @Test
+  public void joinHandlesLeadingAndTrailingSlashes() {
+    assertEquals(".dsh/credentials", DshBackupExporter.join(".dsh", "credentials"));
+    assertEquals(".dsh/credentials", DshBackupExporter.join(".dsh/", "/credentials"));
+    assertEquals(".dsh", DshBackupExporter.join(".dsh", ""));
+    assertEquals("credentials", DshBackupExporter.join("", "credentials"));
+    assertEquals("", DshBackupExporter.join("", ""));
+    // 根自身：把整个 .dsh/credentials 选成一个成员时，它自己那条也必须能被排除。
+    assertEquals(".dsh/credentials", DshBackupExporter.join(".dsh/credentials", ""));
   }
 
   // ─────────────────────────── 负路径 ───────────────────────────

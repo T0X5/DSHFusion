@@ -16,6 +16,7 @@ import com.deepseekharness.app.util.Ids;
 import java.io.*;
 import java.security.MessageDigest;
 import java.util.*;
+import java.util.function.Predicate;
 
 /**
  * 把用户数据导出成一份 v5 归档。
@@ -31,8 +32,9 @@ import java.util.*;
  * 范围的词汇（{@code DshBackupScope}）与排除清单（{@code DshBackupExclusions}）
  * 都在 Kotlin 侧。若在这里 import 它们，本机就编不了、跑不了，这一层就退化回
  * 「只有 CI 能验」—— 而它恰恰是最该本机验的一层。
- * 所以这里只认**纯数据**（{@link Member}）与一个 {@link FileBackupSource.Policy}
- * 回调；Kotlin 侧负责把范围翻译成前者、把排除清单包成后者。
+ * 所以这里只认**纯数据**（{@link Member}）与一个
+ * {@link Predicate}（「这个 user-data 相对路径要不要排除」）；
+ * Kotlin 侧负责把范围翻译成前者、把排除清单包成后者。
  *
  * <h2>任务目录与产物为什么必须分开</h2>
  *
@@ -120,7 +122,7 @@ public final class DshBackupExporter {
       File taskDir,
       File destination,
       Map<String, Object> provenance,
-      FileBackupSource.Policy policy,
+      Predicate<String> excluded,
       boolean rescue,
       BackupControl control)
       throws IOException {
@@ -156,7 +158,9 @@ public final class DshBackupExporter {
         skipped.add(member.id);
         continue;
       }
-      sources.add(new FileBackupSource(fs, member.id, member.scope, root, member.external, policy));
+      sources.add(
+          new FileBackupSource(
+              fs, member.id, member.scope, root, member.external, policyFor(member, excluded)));
     }
     if (sources.isEmpty()) throw new IOException("NO_SELECTED_DATA");
 
@@ -168,6 +172,42 @@ public final class DshBackupExporter {
     fs.move(archive, target);
     long bytes = fs.stat(target).size;
     return new Exported(target, manifest, bytes, sha256(fs, target), skipped);
+  }
+
+  /**
+   * 把一个「排除谓词」适配成某个成员根的 {@link FileBackupSource.Policy}。
+   *
+   * <h2>为什么这里有一步前缀拼接，而它不是可有可无的</h2>
+   *
+   * 上游的 {@code Policy.exclusion(relative, node)} 给的 {@code relative} 是**相对这个成员根**
+   * 的 —— 成员根是 {@code .dsh} 时，凭据文件叫 {@code credentials}。
+   * 而 {@code DshBackupExclusions.isExcluded} 收的是**相对 user-data** 的 —— 同一个文件叫
+   * {@code .dsh/credentials}。**两套坐标系，差一个前缀。**
+   *
+   * 少了这一步拼接，排除清单**一条都不会命中**，而且不会报任何错：
+   * 归档里会安静地带上机器本地凭据，所有计数、所有摘要、所有完整性判定都照常通过。
+   * 所以拼接放在这里（本机真跑），由 {@code exclusionsAreMatchedThroughTheMemberPrefix}
+   * 那条用例钉住 —— 它也**先自证谓词真的被调用过**，否则「一条都没命中」与
+   * 「谓词压根没被调用」在结果上一样。
+   */
+  static FileBackupSource.Policy policyFor(Member member, Predicate<String> excluded) {
+    if (excluded == null) return null;
+    return (relative, node) ->
+        excluded.test(join(member.path, relative)) ? "EXCLUDED_BY_POLICY" : "";
+  }
+
+  /**
+   * 把成员根与成员内的相对路径拼成 user-data 相对路径。
+   *
+   * 根自身（{@code relative} 为空）得到的就是成员路径本身 —— 它有意的：
+   * 用户把整个 {@code .dsh/credentials} 选成一个成员时，那条也必须被排除。
+   */
+  static String join(String base, String relative) {
+    String head = base == null ? "" : base.replaceAll("^/+|/+$", "");
+    String tail = relative == null ? "" : relative.replaceAll("^/+|/+$", "");
+    if (head.isEmpty()) return tail;
+    if (tail.isEmpty()) return head;
+    return head + "/" + tail;
   }
 
   /** 任务目录名：**必须匹配上游的 UUID 形状**（它自己会校验）。 */
