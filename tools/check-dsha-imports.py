@@ -188,6 +188,12 @@ def check_not_imported_disjoint(doc: dict, taken_upstream: set) -> list:
     problems = []
     # 上游路径 → 本机路径的两种身份都要比：逐字节副本与改写适配。
     imported_upstream = set(taken_upstream)
+    # ⚠️ **合成的组合路径绕过了上面的集合比较。** `"A.java + B.java"` 与任何真实路径
+    # 都不相等 —— 于是一条把「已导入的 A」和「没导入的 B」绑在一起的条目，
+    # 能完美通过那条相交检查。实测发生过：AndroidBackupFileSystem 逐字节导入之后，
+    # 那条组合条目仍然把它列在 not_imported 里，而检查器一声不吭。
+    # 所以除了整串相等，还要逐个**组成部分**比一次。
+    imported_names = {path.rsplit("/", 1)[-1] for path in imported_upstream}
     section = doc.get("not_imported")
     if not isinstance(section, dict):
         return problems
@@ -203,6 +209,16 @@ def check_not_imported_disjoint(doc: dict, taken_upstream: set) -> list:
             problems.append(
                 f"{upstream_path} 同时在「已导入」（files/derived）与 not_imported 里 —— "
                 "登记文件在自相矛盾：它既说拿了、又说不拿")
+        else:
+            # 组合路径：逐段比。`reason` 里解释「为什么这几个一起没搬」是合理的，
+            # 但**不能把已经搬进来的那个也算进去**。
+            for part in (piece.strip() for piece in upstream_path.split("+")):
+                if part and (part in imported_upstream
+                             or part.rsplit("/", 1)[-1] in imported_names):
+                    problems.append(
+                        f"{upstream_path} 里的 {part.rsplit('/', 1)[-1]} 其实**已经在**"
+                        "「已导入」（files/derived）里了 —— 组合路径把已导入的和没导入的"
+                        "绑在一条里，于是它绕过了上面那条集合比较")
         if not str(entry.get("reason", "")).strip():
             problems.append(f"{upstream_path} 的 reason 为空 —— 「没搬」也要说清为什么")
     return problems
@@ -265,6 +281,18 @@ def run_not_imported_verifications(doc: dict) -> list:
             checked += 1
             if (ROOT / relative).exists():
                 problems.append(f"{name} 的 verify 说 {relative} 不存在，而它**在**")
+                continue
+            # ⚠️ 「不存在」有两种原因：① 它确实没被搬进来（我们想证的）；
+            # ② 我写错了路径，而那个路径本来就没人有（我们什么也没证）。
+            # 两者在结果上**长得一模一样** —— 所以要求父目录必须存在。
+            # 实测抓到过：我把 absent 写成了上游的 `app/src/...` 布局，
+            # 三条断言全绿，绿得毫无意义；而同一组里 present 那条当场红了。
+            parent = (ROOT / relative).parent
+            if not parent.is_dir():
+                problems.append(
+                    f"{name} 的 verify 说 {relative} 不存在 —— 但它的父目录 "
+                    f"{parent.relative_to(ROOT).as_posix()} 也不存在，"
+                    "所以这条断言什么都没证明（很可能路径写错了）")
 
         for relative in verify.get("present") or []:
             checked += 1

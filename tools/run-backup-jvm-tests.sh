@@ -64,14 +64,49 @@ rm -rf "$OUT" && mkdir -p "$OUT"
 
 # 用数组而不是 `$(find …)`：未加引号的命令替换会触发 SC2046，
 # 而那种写法在文件名带空格时会把一个路径拆成两个参数（这里不会，但不值得赌）。
-mapfile -t MAIN_SRC < <(find "$ROOT/backup/src/main" -name '*.java')
+mapfile -t MAIN_SRC_ALL < <(find "$ROOT/backup/src/main" -name '*.java')
+
+# ── 本机没有 android.jar，所以平台相关的源码在这里编不了 ─────────────────
+#
+# ⚠️ **排除必须是显式的、有数的、且与一张声明表对照的。**
+# 一个静默的 `-not -name ...` 会让「本机全绿」的覆盖面悄悄小于它宣称的覆盖面 ——
+# 那正是本项目反复吃亏的那个形态（第 6/13/24/26 条）。
+# 所以这里：① 按**依赖**（import 了 android./androidx.）而不是按文件名认；
+# ② 把认出来的那份与下面这张表**逐一对照**，多一个少一个都判失败。
+#
+# 被排除的那份**不是没人管**：它们的正文由 check-dsha-imports.py 逐字节核验，
+# 并由 governance/dsha-imports.json 里的 `must_contain`/`must_not_contain` 断言钉住
+# 「用的是什么平台 API」与「没有引入原生库」。编译正确性由 CI 负责。
+ANDROID_ONLY_DECLARED=(
+  "AndroidBackupFileSystem.java"
+)
+MAIN_SRC=()
+ANDROID_ONLY_FOUND=()
+for f in "${MAIN_SRC_ALL[@]}"; do
+  if grep -qE '^import (android|androidx)\.' "$f"; then
+    ANDROID_ONLY_FOUND+=("$(basename "$f")")
+  else
+    MAIN_SRC+=("$f")
+  fi
+done
+mapfile -t ANDROID_ONLY_FOUND < <(printf '%s\n' "${ANDROID_ONLY_FOUND[@]}" | sort)
+mapfile -t ANDROID_ONLY_DECLARED < <(printf '%s\n' "${ANDROID_ONLY_DECLARED[@]}" | sort)
+if [[ "${ANDROID_ONLY_FOUND[*]}" != "${ANDROID_ONLY_DECLARED[*]}" ]]; then
+  echo "ERROR: 本机编不了的源码集合与声明的不一致。" >&2
+  echo "  实测：${ANDROID_ONLY_FOUND[*]:-（空）}" >&2
+  echo "  声明：${ANDROID_ONLY_DECLARED[*]:-（空）}" >&2
+  echo "  新增了平台相关的源码，或者某个源码**新引入了** android 依赖。" >&2
+  echo "  请同步更新 ANDROID_ONLY_DECLARED，并给它补 verify 断言。" >&2
+  echo "  不允许让它静默地从本机编译里消失。" >&2
+  exit 2
+fi
 mapfile -t TEST_SRC < <(find "$ROOT/backup/src/test" -name '*.java')
 if [[ ${#MAIN_SRC[@]} -eq 0 || ${#TEST_SRC[@]} -eq 0 ]]; then
   echo "ERROR: 没找到源码（main=${#MAIN_SRC[@]} test=${#TEST_SRC[@]}）—— 编译一个空集合是假通过。" >&2
   exit 1
 fi
 
-echo "编译主源码（.java，${#MAIN_SRC[@]} 个）…"
+echo "编译主源码（.java，${#MAIN_SRC[@]} 个；另有 ${#ANDROID_ONLY_FOUND[@]} 个因 Android 平台依赖本机编不了：${ANDROID_ONLY_FOUND[*]:-无}）…"
 javac -nowarn -encoding UTF-8 -d "$OUT" -cp "$CP" "${MAIN_SRC[@]}"
 echo "编译测试源码（.java，${#TEST_SRC[@]} 个）…"
 javac -nowarn -encoding UTF-8 -d "$OUT" -cp "$CP:$OUT" "${TEST_SRC[@]}"

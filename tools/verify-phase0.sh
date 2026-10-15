@@ -448,6 +448,33 @@ cd "$AF_ORIG" || exit 1
 expect 2 "上游目录不存在时报用法错误（退出码 2）" \
     run_tool tools/check-divergence-anchors.py --upstream "$SCRATCH/definitely-not-here"
 
+# 本地克隆一个「干净检出」做夹具。
+#
+# ⚠️ 两个都必须有，缺一个这个夹具就会**时绿时红**：
+#
+# ① `--no-local`：只要 `.git/objects` 里存在**任何一个符号链接**，
+#    走「本地优化」路径的克隆就整条拒绝：
+#    `fatal: symlink '11/4fb...' exists, refusing to clone with --local`。
+#    本容器里 2380 个松散对象恰好是指向 `/.l2s/.l2s.tmp_obj_*` 的符号链接
+#    （文件系统层留下的）。`--no-local` 强制走**真实传输**（upload-pack），
+#    它就绕开了那条硬链接路径。
+#    ⚠️ `--no-hardlinks` **不够**：那个开关只把「硬链接」换成「拷贝」，
+#    而 `.` 这样的本地路径**仍然自动启用 `--local`**，拒绝逻辑照旧触发。
+#    我第一版就是写成 `--no-hardlinks`，然后实测仍然红。
+#    于是这条夹具**在某些对象状态下成功、在另一些下失败** ——
+#    而它红的时候，红的是夹具，不是被查的东西（第 25 条的同族）。
+# ② 不能把 stderr 丢进 /dev/null：原来是 `2>/dev/null`，于是上面那句
+#    `fatal: …` **一个字都看不到**，只留下一句「无法建立 main 克隆」。
+#    **一个失败却不说为什么的夹具，比没有夹具更贵** —— 它会让人去改对的东西。
+clone_fixture() {
+    local dest="$1" err
+    err="$(git clone -q --no-local . "$dest" 2>&1)" && return 0
+    printf '  [FAIL] %-52s\n' "本地克隆夹具失败（--no-local）"
+    printf '         --- git 说 ---\n'
+    printf '%s\n' "$err" | sed 's/^/         /' | head -6
+    return 1
+}
+
 section "4d. 阶段 1 导入器 import-upstream-base.py"
 
 if [ -d ../audit/DSHBox ]; then
@@ -457,7 +484,7 @@ if [ -d ../audit/DSHBox ]; then
     # 必须在专门的 main 克隆里测 —— 套件自身可能就跑在 phase-1 分支上。
     IMP_MAIN="$(mktemp -d)"
     rm -rf "$IMP_MAIN"
-    if git clone -q . "$IMP_MAIN" 2>/dev/null &&
+    if clone_fixture "$IMP_MAIN" &&
        git -C "$IMP_MAIN" switch -q main 2>/dev/null; then
         expect 1 "在 main 分支上拒绝执行（阶段 1 必须走 PR）" \
             bash -c "cd '$IMP_MAIN' && python3 tools/import-upstream-base.py --upstream '$IMP_UP'"
@@ -485,7 +512,7 @@ if [ -d ../audit/DSHBox ]; then
     # 把一个测试自身的缺陷伪装成环境故障。
     IMP_CLONE="$(mktemp -d)"
     rm -rf "$IMP_CLONE"
-    if git clone -q . "$IMP_CLONE" 2>/dev/null &&
+    if clone_fixture "$IMP_CLONE" &&
        { git -C "$IMP_CLONE" switch -q phase-1/import-dshbox-base 2>/dev/null ||
          git -C "$IMP_CLONE" switch -q -c phase-1/import-dshbox-base 2>/dev/null; }; then
 
@@ -2440,6 +2467,173 @@ if python3 tools/check-dsha-imports.py 2>&1 | grep -q 'not_imported 的 .* 条�
     ok "2.5 的「没搬」条目（AutomaticBackups / AutomaticBackupService / Pruner / VerifiedBackupCopy / VerifiedFilePublication）都带可执行验证声明"
 else
     fail "2.5 的 not_imported 验证声明不成立"
+    CR_BAD=1
+fi
+
+section "5r. 生产侧的 BackupFileSystem（阶段 2.6 的导出前置）"
+
+# 为什么单独开一节：这个类是本项目**第一个**「本机编不了」的源码。
+# 本机没有 android.jar，所以它不进 run-backup-jvm-tests.sh 的编译集 ——
+# 那一步已经用一张声明表把这个排除做成显式的（多一个少一个都退 2）。
+# 但「排除」只说明它**没被编译**，不说明它**是对的**。所以在这里补上
+# 能本机判定的那部分：它用的是平台 API，不是原生库、也不是上游应用内部子系统。
+ABS="$ROOT/backup/src/main/java/com/deepseekharness/app/backup/AndroidBackupFileSystem.java"
+if [[ -f "$ABS" ]]; then
+    # ① 正文逐字节（check-dsha-imports.py 已核）之外，钉住「用的是什么」。
+    expect 0 "生产侧 BackupFileSystem 用平台 API（Os.lstat / O_NOFOLLOW / ParcelFileDescriptor）" \
+        grep -q 'Os\.lstat' "$ABS"
+    expect 0 "…且打开描述符时带 O_NOFOLLOW（不跟随符号链接）" \
+        grep -q 'OsConstants\.O_NOFOLLOW' "$ABS"
+    expect 0 "…且打开后**复查**类型/设备/inode（防 TOCTOU）" \
+        grep -q 'SOURCE_CHANGED' "$ABS"
+
+    # ② 反向：不许引入原生库或上游应用内部子系统。
+    #    这一条与上面三条必须成对 —— 只查「有没有用对的 API」会允许
+    #    「顺手 loadLibrary 一个别的库」（第 20 条补记的同族）。
+    for bad in loadLibrary NativeStorage ConfigStore KeyVault CredentialRead HarnessController; do
+        if grep -q "$bad" "$ABS"; then
+            fail "AndroidBackupFileSystem 引入了 $bad —— 它应当是纯平台 API"
+            CR_BAD=1
+        else
+            ok "AndroidBackupFileSystem 没有引入 $bad"
+        fi
+    done
+
+    # ③ 它必须真的被声明为「本机编不了」，而不是碰巧没被扫到。
+    if grep -q '"AndroidBackupFileSystem.java"' "$ROOT/tools/run-backup-jvm-tests.sh"; then
+        ok "本机编译的排除表里声明了 AndroidBackupFileSystem.java"
+    else
+        fail "本机编译的排除表里没有 AndroidBackupFileSystem.java —— 它会被静默地不编译"
+        CR_BAD=1
+    fi
+else
+    fail "找不到生产侧的 AndroidBackupFileSystem.java（导出路径的前置）"
+    CR_BAD=1
+fi
+
+# ④ 注入：证明上面那条「排除表对照」真的会红。
+#    形态是我真实担心的那个 —— 新增一个平台相关的源码而不更新声明表。
+FAKE="$ROOT/backup/src/main/java/com/deepseekharness/app/backup/ZzFakePlatform.java"
+printf 'package com.deepseekharness.app.backup;\nimport android.os.Build;\nclass ZzFakePlatform {}\n' > "$FAKE"
+if bash "$ROOT/tools/run-backup-jvm-tests.sh" >/dev/null 2>&1; then
+    fail "新增一个平台相关的源码之后，本机编译没有报「排除集合与声明不一致」"
+    CR_BAD=1
+else
+    ok "新增平台相关源码而不更新声明表 → 本机编译退 2（排除不会静默扩大）"
+fi
+rm -f "$FAKE"
+if bash "$ROOT/tools/run-backup-jvm-tests.sh" >/dev/null 2>&1; then
+    ok "移除注入后本机编译重新通过"
+else
+    fail "移除注入后本机编译仍未通过 —— 注入没被还原干净"
+    CR_BAD=1
+fi
+
+# ⑤ 注入：证明 check-dsha-imports.py 新加的「absent 父目录必须存在」会红。
+IMP_BAK="$(mktemp)"
+cp "$ROOT/governance/dsha-imports.json" "$IMP_BAK"
+python3 - <<'PYI'
+import json, pathlib
+p = pathlib.Path("governance/dsha-imports.json")
+d = json.loads(p.read_text(encoding="utf-8"))
+for e in d["not_imported"]["items"]:
+    if "+" in e["upstream_path"]:
+        e["verify"]["absent"] = [
+            "app/src/main/java/com/deepseekharness/app/backup/AndroidTreeFileSystem.java"]
+        break
+p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PYI
+if python3 "$ROOT/tools/check-dsha-imports.py" >/dev/null 2>&1; then
+    fail "absent 指向一个父目录都不存在的路径，导入核验没有变红 —— 那条断言什么都没证明"
+    CR_BAD=1
+else
+    ok "absent 的父目录不存在 → 导入核验判失败（「因为错的原因通过」被挡住）"
+fi
+
+# ⑥ 注入：证明「组合路径不能把已导入的算进去」会红。
+python3 - <<'PYI'
+import json, pathlib
+p = pathlib.Path("governance/dsha-imports.json")
+d = json.loads(p.read_text(encoding="utf-8"))
+for e in d["not_imported"]["items"]:
+    if "+" in e["upstream_path"]:
+        e["upstream_path"] = (
+            "app/src/main/java/com/deepseekharness/app/backup/"
+            "AndroidBackupFileSystem.java + AndroidTreeFileSystem.java + NativeStorage.java")
+        break
+p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PYI
+if python3 "$ROOT/tools/check-dsha-imports.py" >/dev/null 2>&1; then
+    fail "组合路径里塞了已导入的文件名，导入核验没有变红 —— 合成路径绕过了相交检查"
+    CR_BAD=1
+else
+    ok "组合路径里含已导入的文件名 → 导入核验判失败（合成路径不再绕过相交检查）"
+fi
+cp "$IMP_BAK" "$ROOT/governance/dsha-imports.json"
+rm -f "$IMP_BAK"
+if python3 "$ROOT/tools/check-dsha-imports.py" >/dev/null 2>&1; then
+    ok "复原后导入核验重新通过"
+else
+    fail "复原后导入核验仍未通过 —— 注入没被还原干净"
+    CR_BAD=1
+fi
+
+section "5s. AGENTS.md 的指令预算（它被静默截断过三次）"
+
+# 为什么这条必须存在：harness 对 `AGENTS.md` 有一个**硬字节上限 65536**，
+# 超了不是报错，而是**静默截断尾部** —— 被截掉的正是最后那两节
+# （「编码约定」与「已知陷阱」）。
+# 我为此付出了三次：每次都是「加了一段很有用的话，本地全绿，而文件悄悄少了一节」。
+# 所以把预算变成一条会红的断言，并且**正反两面都查**：
+#   ① 不超预算；② 尾部两节都还在（截断的第一个症状就是它们消失）。
+AGENTS="$ROOT/AGENTS.md"
+if [ -f "$AGENTS" ]; then
+    AG_BYTES=$(wc -c < "$AGENTS")
+    if [ "$AG_BYTES" -le 65536 ]; then
+        ok "AGENTS.md 在指令预算内（${AG_BYTES} / 65536 字节，余 $((65536 - AG_BYTES))）"
+    else
+        fail "AGENTS.md 超指令预算（${AG_BYTES} / 65536）—— 它会被静默截断尾部，请先压缩再提交"
+        CR_BAD=1
+    fi
+
+    # ② 尾部两节必须在。这一条**独立于**上面的字节数：
+    #    截断是按字节发生的，而「多少节被截掉」取决于文件当下的排版 ——
+    #    只查字节数会允许「刚好卡在限额上、尾部已被啃掉」。
+    for sec_name in "## 编码约定" "## 已知陷阱" "## 硬约束（改代码前必读）"; do
+        if grep -q "^${sec_name}$" "$AGENTS"; then
+            ok "AGENTS.md 的「${sec_name}」一节还在（没被截断）"
+        else
+            fail "AGENTS.md 里找不到「${sec_name}」—— 很可能被指令预算截断了"
+            CR_BAD=1
+        fi
+    done
+
+    # ③ 注入：证明 ① 真的会红。
+    #    形态就是真实发生过的 —— 把文件撑过 65536。
+    AG_BAK="$(mktemp)"
+    cp "$AGENTS" "$AG_BAK"
+    python3 -c "
+import pathlib
+p = pathlib.Path('$AGENTS')
+p.write_text(p.read_text(encoding='utf-8') + '\n' + '填充' * 900 + '\n', encoding='utf-8')
+"
+    AG_INJ=$(wc -c < "$AGENTS")
+    if [ "$AG_INJ" -le 65536 ]; then
+        fail "注入没把 AGENTS.md 撑过预算（只有 ${AG_INJ} 字节）—— 这条注入本身是无效的"
+        CR_BAD=1
+    else
+        ok "注入把 AGENTS.md 撑到 ${AG_INJ} 字节（超过 65536）—— ① 的目标状态可达"
+    fi
+    cp "$AG_BAK" "$AGENTS"
+    rm -f "$AG_BAK"
+    if [ "$(wc -c < "$AGENTS")" -le 65536 ]; then
+        ok "复原后 AGENTS.md 重新回到预算内"
+    else
+        fail "复原后 AGENTS.md 仍在预算外 —— 注入没被还原干净"
+        CR_BAD=1
+    fi
+else
+    fail "找不到 AGENTS.md"
     CR_BAD=1
 fi
 
