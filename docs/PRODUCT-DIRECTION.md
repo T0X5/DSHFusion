@@ -75,6 +75,10 @@
 3. **方向是自己的** —— 至少有一件**两个上游都没有**的能力，且它由用户的需求驱动。
    可检查：`docs/FEATURES-OWNS.md` 里逐条列「这件东西为什么不是抄的」。
 
+<!-- future: docs/FEATURES-OWNS.md -->
+<!-- future: tools/measure-ownership.py -->
+<!-- future: governance/ownership.json -->
+
 **「有多少是自己的」必须是一个能看着涨的数字，而不是感觉。**
 所以新增 `tools/measure-ownership.py`：按目录统计「上游原样 / 上游副本 / 自写」，
 输出到 `governance/ownership.json`，并在 CI 里断言**自写占比不许下降**。

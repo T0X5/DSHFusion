@@ -2805,10 +2805,21 @@ if [ -f "$AGENTS" ]; then
     #    形态就是真实发生过的 —— 把文件撑过 65536。
     AG_BAK="$(mktemp)"
     cp "$AGENTS" "$AG_BAK"
+    # ⚠️ **填充量必须按当前大小算，不能写死。**
+    #
+    # 原来写的是 `'填充' * 900`（固定 5400 字节）。2026-10-16 把事故表搬出 AGENTS.md 之后
+    # 文件从 65620 降到 46620 —— 注入加完只有 52022，**够不到 65536**，
+    # 于是这条注入**自己失效了**（而套件当场把它报了出来，这正是它该做的事）。
+    #
+    # 这是「注入静默失效」那一族的第 **6** 次（第 16/18/31/38 条 + §39 补记）。
+    # 每一次的机理都不同，所以这次不再靠「记得同步改数字」——
+    # **让它自己算**：读到多少就补到「超过预算 200 字节」为止。
     python3 -c "
 import pathlib
 p = pathlib.Path('$AGENTS')
-p.write_text(p.read_text(encoding='utf-8') + '\n' + '填充' * 900 + '\n', encoding='utf-8')
+text = p.read_text(encoding='utf-8')
+need = max(1, 65536 - len(text.encode('utf-8')) + 200)
+p.write_text(text + '\n' + '填' * (need // 3 + 1) + '\n', encoding='utf-8')
 "
     AG_INJ=$(wc -c < "$AGENTS")
     if [ "$AG_INJ" -le 65536 ]; then
