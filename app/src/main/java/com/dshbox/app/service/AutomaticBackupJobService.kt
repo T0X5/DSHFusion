@@ -66,7 +66,9 @@ class AutomaticBackupJobService : JobService() {
                 Log.i(TAG, outcome.describe())
             } catch (error: Exception) {
                 // 不吞：Logcat 里会留下这一行，而下一个周期还会再试。
-                Log.w(TAG, "自动备份失败", error)
+                // 日志用英文：它不是界面文案，而 i18n 门禁会（正确地）把 app/src/main 里
+                // 引号内的中文判为违规。日志混进六语翻译没有意义。
+                Log.w(TAG, "automatic backup failed", error)
             }
             // needsReschedule = false：这一轮的活已经干完（成功或失败都算干完），
             // 下一个周期由 `setPeriodic` 自己带来。
@@ -156,7 +158,7 @@ class AutomaticBackupJobService : JobService() {
                     }
                     .getOrDefault(JobScheduler.RESULT_FAILURE)
             if (result != JobScheduler.RESULT_SUCCESS) {
-                Log.w(TAG, "登记自动备份任务失败：$result")
+                Log.w(TAG, "failed to schedule the automatic backup heartbeat: $result")
             }
         }
     }

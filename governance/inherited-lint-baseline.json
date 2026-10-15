@@ -65,28 +65,6 @@
         "functional_impact": "无（实测脚本可正常执行）"
       },
       {
-        "file": "tools/i18n_check.sh",
-        "line": 183,
-        "column": 45,
-        "code": "SC1087",
-        "level": "error",
-        "summary": "正则里的 `$CJK[` 看起来像数组下标，建议写成 `${CJK}[`",
-        "inherited_from": "DSHBox@266290a6d16f",
-        "functional_impact": "无。已实测：`$CJK[` 与 `${CJK}[` 两种写法行为完全一致，shellcheck 是要求加花括号消歧义，不是报告行为错误。",
-        "false_positive": true
-      },
-      {
-        "file": "tools/i18n_check.sh",
-        "line": 187,
-        "column": 73,
-        "code": "SC1087",
-        "level": "error",
-        "summary": "同上，正则里的 `$CJK[` 触发",
-        "inherited_from": "DSHBox@266290a6d16f",
-        "functional_impact": "无。i18n_check.sh 实测退出码 0。",
-        "false_positive": true
-      },
-      {
         "file": "tools/pack_runtime.sh",
         "line": 31,
         "column": 1,

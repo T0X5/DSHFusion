@@ -404,6 +404,23 @@
       "reapply": "在 `DshApp.onCreate` 的布局迁移那段之后，追加 `if (AutomaticBackupSettingsStore.enabled(this)) { AutomaticBackupJobService.schedule(this) }`。",
       "conflict_risk": "低 —— 追加在 `onCreate` 的尾部；上游若也在这里加逻辑，两边是并行的追加。",
       "note": "⚠️ **诚实边界**：`stop` 模式需要的「沙箱停止时刻」目前**只有界面上的停止动作会记**；通知栏的停止走 `SandboxService` 内部路径，**没有记**。所以从通知栏停止之后，`stop` 模式不会到期。这是**已知缺口**，不是「大概能用」。"
+    },
+    {
+      "id": "DIV-0023",
+      "title": "`tools/i18n_check.sh` 的第 4 项扫描改用 Python（原实现**在本机是零覆盖**）",
+      "upstream": "dshbox",
+      "type": "patch",
+      "phase": 2,
+      "target_files": [
+        "tools/i18n_check.sh",
+        "governance/inherited-lint-baseline.json"
+      ],
+      "change": "第 4 项「源码硬编码 CJK 扫描」原本是 bash + `grep -P '\\\"[^\\\"]*[\\x{4e00}-\\x{9fff}][^\\\"]*\\\"'`。**本机的 grep 对 `\\x{4e00}` 报 `character code point value in \\x{} or \\o{} is too large`**，于是 `grep -nP` 一行都匹配不到、整段**每次都报 ✓** —— 它只在 CI 那份 grep 上有效。\n\n实测代价：2.6 的胶水层里两行中文日志**本机全绿、CI 第 9 步红**。\n\n已改成 Python（正则语义各处一致），并加一道守卫：**一个 .kt 都没扫到时判失败** ——「没扫到任何东西」与「扫了且干净」在退出码上原本完全一样。\n白名单与判定规则一个字都没改。顺带清掉 `inherited-lint-baseline.json` 里两条指向被删代码的过期 SC1087。",
+      "rationale": "这是本项目反复吃亏的那个形态：**门禁的覆盖面小于它宣称的覆盖面，而它的「通过」看起来完全一样。** 前几例是「只匹配 tar.zst 却号称防大资产」、「Gradle 对通过的测试沉默」，这一例更隐蔽 —— **同一条命令在不同环境下覆盖面不同**。",
+      "detection": "`tools/verify-phase0.sh` 的 5t 节 `expect 0` 跑 i18n 门禁；另有一条注入（塞一行中文日志）证明第 4 项会红。",
+      "reapply": "用 `tools/i18n_check.sh` 里的 Python 段落替换原来的 bash+grep-P 扫描，并保留「零文件即失败」的守卫。",
+      "conflict_risk": "中 —— 上游若也改这一段，两边会冲突；但上游那份在本机本来就是坏的，所以冲突时以我们这份为准，并复核白名单。",
+      "note": "⚠️ 白名单（4 个文件）是按**文件**放的，所以「同一文件里新写的中文日志」不会被拦。这是上游的既有设计，本次不改 —— 但要记住它：往白名单文件里加中文日志不会被任何门禁拦住。"
     }
   ]
 }

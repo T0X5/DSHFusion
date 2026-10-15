@@ -143,50 +143,74 @@ else
 fi
 
 echo "== [4/4] 源码硬编码 CJK 扫描（引号内） =="
-CJK='[\x{4e00}-\x{9fff}]'
-HITS=0
+# ⚠️ **这一段原本是 bash + `grep -P` 实现的，而那条扫描在本机是零覆盖。**
+# 实测：本机的 grep 对 `\x{4e00}` 报
+# `character code point value in \x{} or \o{} is too large`，
+# 于是 `grep -nP` 一行都匹配不到、整段**每次都报 ✓**。
+# 它只在 CI 那份 grep 上有效 —— 于是 2.6 的胶水层里两行中文日志
+# 本地全绿、CI 第 9 步红。**这正是本项目反复吃亏的形态：
+# 门禁的覆盖面小于它宣称的覆盖面，而它的「通过」看起来完全一样。**
+#
+# 改用 Python：正则语义在各处一致，本机和 CI 都能真跑。
+# 白名单与判定规则**一个字都没改**（见下面的 WHITELIST 与注释）。
+python3 - "$ROOT" <<'PYI18N'
+import pathlib, re, sys
+
+root = pathlib.Path(sys.argv[1])
+scanned = [
+    "app/src/main",
+    "sandbox-manager/src/main",
+    "common/src/main",
+    "terminal-session/src/main",
+    "bridge/src/main",
+    "terminal-emulator/src/main",
+    "terminal-view/src/main",
+]
 # 白名单：这些文件里的中文字符串字面量属设计保留，不是界面文案，因此不随界面翻译：
-#   - ui/theme/AppLocale.kt：语言「自称」native name（如 "English"/"中文"/"Français"）；
+#   - ui/theme/AppLocale.kt：语言「自称」native name；
 #   - runtime/AptSourceProvisioner.kt、runtime/OnlineRuntimeImportManager.kt、
-#     service/SandboxService.kt：字符串是**写往 guest 的内容**（apt 源文件首行注释、生成的
-#     包管理器包装与 dsh 垫片脚本注释）以及与 npm/guest 英文原始输出混排的运行日志，
-#     均按设计保持中文；界面文案仍须走资源文件（本检查对其余文件照常生效）。
-# 条目按完整相对路径匹配（grep 输出为绝对路径，故用后缀匹配），避免误伤同名前缀文件。
-WHITELIST=(
-  "app/src/main/java/com/dshbox/app/ui/theme/AppLocale.kt"
-  "app/src/main/java/com/dshbox/app/runtime/AptSourceProvisioner.kt"
-  "app/src/main/java/com/dshbox/app/runtime/OnlineRuntimeImportManager.kt"
-  "app/src/main/java/com/dshbox/app/service/SandboxService.kt"
+#     service/SandboxService.kt：字符串是**写往 guest 的内容**或与 guest 英文输出混排的日志。
+whitelist = [
+    "app/src/main/java/com/dshbox/app/ui/theme/AppLocale.kt",
+    "app/src/main/java/com/dshbox/app/runtime/AptSourceProvisioner.kt",
+    "app/src/main/java/com/dshbox/app/runtime/OnlineRuntimeImportManager.kt",
+    "app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+]
+cjk = re.compile(r"[\u4e00-\u9fff]")
+hits = 0
+scanned_files = []
+for rel in scanned:
+    base = root / rel
+    if not base.is_dir():
+        continue
+    for path in sorted(base.rglob("*.kt")):
+        repo_rel = path.relative_to(root).as_posix()
+        if repo_rel in whitelist:
+            continue
+        scanned_files.append(repo_rel)
+        for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").split("\n"), 1):
+            # 先去掉行注释尾巴，再跳过块注释行 —— 与原来的 bash 版同一条规则。
+            code = line.split("//")[0]
+            stripped = code.strip()
+            if stripped == "" or stripped.startswith("/*") or stripped.startswith("*"):
+                continue
+            for literal in re.findall(r'"([^"]*)"', stripped):
+                if cjk.search(literal):
+                    print(f"  ✗ 命中: {repo_rel}:{number}: {line.strip()[:120]}")
+                    hits += 1
+                    break
+# 守卫：**一个文件都没扫到**必须判失败。
+# 这一段的原版在本机是零覆盖却报 ✓ —— 「没扫到任何东西」与「扫了且干净」
+# 在退出码上完全一样。所以这里显式区分它们。
+if not scanned_files:
+    print("  ✗ 一个 .kt 都没扫到 —— 这条检查没有覆盖面，不能算通过")
+    sys.exit(2)
+print(
+    f"扫描了 {len(scanned)} 个源码根、{len(scanned_files)} 个 .kt 文件；命中 {hits} 处。"
 )
-for src_dir in \
-  "$ROOT/app/src/main" \
-  "$ROOT/sandbox-manager/src/main" \
-  "$ROOT/common/src/main" \
-  "$ROOT/terminal-session/src/main" \
-  "$ROOT/bridge/src/main" \
-  "$ROOT/terminal-emulator/src/main" \
-  "$ROOT/terminal-view/src/main"; do
-  [ -d "$src_dir" ] || continue
-  # grep -n 输出带 "绝对路径:行号:" 前缀；先剥离前缀再判注释，
-  #否则行首 "/" 会被注释分支误判（修复）。
-  while IFS= read -r line; do
-    SKIP=0
-    for w in "${WHITELIST[@]}"; do
-      if [[ "$line" == *"$w":* ]]; then SKIP=1; break; fi
-    done
-    [ "$SKIP" -eq 1 ] && continue
-    t="${line%%//*}"                    # 去掉 // 注释尾巴
-    t="$(printf '%s' "$t" | sed 's/^[^:]*:[0-9]*://')"
-    t="$(printf '%s' "$t" | sed 's/^[[:space:]]*//')"
-    # KDoc/块注释行：空、"/*…"、以 * 开头
-    case "$t" in ""|/\**|\**) continue ;; esac
-    if printf '%s' "$t" | grep -qP "\"[^\"]*$CJK[^\"]*\""; then
-      echo "  ✗ 命中: ${src_dir#$ROOT/}: ${line}"
-      HITS=$((HITS+1))
-    fi
-  done < <(find "$src_dir" -name "*.kt" -type f -exec grep -nP "\"[^\"]*$CJK[^\"]*\"" {} + 2>/dev/null)
-done
-if [ "$HITS" -eq 0 ]; then echo "  ✓ 无硬编码中文（字符串字面量）"; else FAIL=1; fi
+sys.exit(1 if hits else 0)
+PYI18N
+if [ $? -eq 0 ]; then echo "  ✓ 无硬编码中文（字符串字面量）"; else FAIL=1; fi
 
 if [ "$FAIL" -eq 0 ]; then
   echo "i18n_check: 全部通过 ✔"

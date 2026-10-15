@@ -1634,6 +1634,43 @@ def handle_div_0019(entry) -> tuple[str, str]:
 
 
 
+def handle_div_0023(entry) -> tuple[str, str]:
+    """`i18n_check.sh` 第 4 项改用 Python（DIV-0023，阶段 2.6）。
+
+    判据是**「那条扫描在本机真的会跑」**，而不只是「脚本里有这一段」——
+    原版在本机是零覆盖却报 ✓，所以「照抄一份 bash」也能过一条天真的断言。
+    """
+    problems = []
+    script = ROOT / "tools" / "i18n_check.sh"
+    if not script.exists():
+        return PENDING, "tools/i18n_check.sh 尚未导入"
+    text = read(script)
+
+    if "PYI18N" not in text:
+        problems.append("第 4 项没有换成 Python 实现（找不到 PYI18N 段）")
+    # ⚠️ **剥注释再查。** 这是同一个坑的**第四次**（第 35 条与两次补记）：
+    # 我解释「原版用的是 grep -P」的那句注释，把这条「不许再有 grep -P」的检查触发了。
+    # 规律一次比一次清楚：**凡是我在注释里点出被禁的那个东西的名字，检查就会被自己命中。**
+    # 所以这里不靠我记得措辞，靠剥注释。
+    import re as _re
+
+    code = _re.sub(r"/\*.*?\*/", "", text, flags=_re.S)
+    code = _re.sub(r"(?m)^\s*#.*$", "", code)
+    if _re.search(r"grep\s+-\w*P", code):
+        problems.append(
+            "脚本里仍有 `grep -P` 的中文扫描 —— 本机对它报 "
+            "`code point value too large`，那条扫描会是零覆盖")
+    if "scanned_files" not in text:
+        problems.append("没有「零文件即失败」的守卫 —— 没扫到东西与扫了且干净会同样报 ✓")
+    if "AppLocale.kt" not in text:
+        problems.append("白名单被删掉了（那 4 个文件里的中文是设计保留）")
+
+    if problems:
+        return FAILED, "；".join(problems)
+    return OK, "i18n 第 4 项是 Python 实现，带零文件守卫，白名单仍在"
+
+
+
 def handle_div_0022(entry) -> tuple[str, str]:
     """`DshApp.onCreate` 里重登记自动备份心跳（DIV-0022，阶段 2.6）。
 
@@ -1825,6 +1862,7 @@ HANDLERS = {
     "DIV-0020": handle_div_0020,
     "DIV-0021": handle_div_0021,
     "DIV-0022": handle_div_0022,
+    "DIV-0023": handle_div_0023,
 }
 
 
