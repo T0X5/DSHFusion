@@ -598,6 +598,34 @@ Set<String> allowed = Set.of("portable.dshbak", "verified.json", "operation.json
 **一个目录 + 四个具名成员**，我们的是**单文件** `DSHDATA` 容器。所以直接抄不是
 「命名对不上」，是**连输入都没有**（`fs.list(file)` 对一个文件会抛）。
 
+### 2.5 之后的整体盘点（2026-10-15）—— 一个从第一天起就在的缺口
+
+**`:backup` 模块在 `app` 的依赖里根本不存在。**
+
+实测：`app/build.gradle.kts` 的 `implementation(project(...))` 列表是
+common / bridge / sandbox-manager / terminal-session / terminal-view /
+plugin-manager / pilot:dshbox-adapter —— **没有 `:backup`**；
+`settings.gradle.kts` 有 `include(":backup")`（所以 CI 能单独编译并跑它的测试），
+但**没有任何模块依赖它，也就没有任何一行产品代码调用它**。
+
+这不是这轮引入的疏忽 —— 从 2.1 建模块那天起就是这样。当时的理由是成立的：
+2.1–2.4b-② 逐项都还是「格式 + 判定 + 纯逻辑」，在接上界面之前接进 app
+只会制造一批「看起来有入口、实际什么都不做」的半成品。CI 的绿也始终是
+`:backup` 自己的（Gradle 的 `testDebugUnitTest` 对所有模块逐个跑，不依赖有没有人依赖）。
+
+**但它的后果现在必须如实说出来**：
+
+1. **阶段 2 的全部成果，至今没有任何一行在真机上执行过** —— 不止是「没有界面入口」，
+   是连依赖边都没接。APK 里没有这些类的字节码。
+2. 「2.5 未做」的**调度胶水**（`JobService` + 设置界面）必须长在 `app` 里，
+   而它一写就必然引入 `app → :backup` 依赖。所以依赖边和胶水是同一件事的两半。
+3. 真机验证的路径因此是：**接依赖 → 导出/恢复的界面入口 → 自动备份的设置界面**，
+   而不是先做自动备份。
+
+⇒ **下一轮从「把 `:backup` 接进 `app` 并做出导出/恢复的最小界面」开始**，
+那一项完成之前，阶段 2 的验收标准「restorable on another device」不满足，
+也不声称满足。
+
 ## 阶段 3 — 设备能力
 
 | 顺序 | 项目 | 来源 | 冲突分析与方向 |
