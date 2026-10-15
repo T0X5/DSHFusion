@@ -172,8 +172,10 @@ public final class DshRestoreOrchestrator {
     if (members.isEmpty()) throw new IOException("NO_MEMBERS");
     if (selectedScopes == null || selectedScopes.isEmpty())
       throw new IOException("NO_SELECTED_SCOPE");
-    File homeDir = userData.getAbsoluteFile();
-    File taskRoot = taskDir.getAbsoluteFile();
+    // 与导出编排同一条理由：交给 `BackupFileSystem` 的路径必须**规范化**，
+    // 否则 Android 的 `/data/user/0` 符号链接会让它抛 `PARENT_LINK`。
+    File homeDir = DshHostPaths.canonical(userData);
+    File taskRoot = DshHostPaths.canonical(taskDir);
     if (!taskRoot.isDirectory()) throw new IOException("TASK_DIRECTORY_MISSING");
     if (isInside(homeDir, taskRoot)) throw new IOException("TASK_INSIDE_SOURCE");
     if (!archive.isFile()) throw new IOException("ARCHIVE_MISSING");
@@ -350,13 +352,8 @@ public final class DshRestoreOrchestrator {
     return full;
   }
 
-  static boolean isInside(File ancestor, File candidate) {
-    File a = ancestor.getAbsoluteFile();
-    File c = candidate.getAbsoluteFile();
-    while (c != null) {
-      if (c.equals(a)) return true;
-      c = c.getParentFile();
-    }
-    return false;
+  /** 包含关系判定。**委托给 `DshHostPaths`**（两边都规范化）—— 见那里的类注释。 */
+  static boolean isInside(File ancestor, File candidate) throws IOException {
+    return DshHostPaths.isInside(ancestor, candidate);
   }
 }

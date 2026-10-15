@@ -152,6 +152,12 @@ public final class DshAutomaticBackupRunner {
     if (fs == null || userData == null || archives == null || taskRoot == null || settings == null)
       throw new IOException("AUTOMATIC_ARGUMENTS");
     if (archiveName == null || archiveName.isEmpty()) throw new IOException("AUTOMATIC_ARCHIVE_NAME");
+    // 规范化：`readArchive` 会用 `fs.read` 打开归档，而那条路径同样逐级
+    // `O_NOFOLLOW` 走父目录 —— 不规范化就会 `PARENT_LINK`。
+    // 而 `readArchive` 把 IOException 当成「读不了」返回 null，
+    // 于是**保留策略会以为所有归档都读不了 → 永不清理**（一个静默的后果）。
+    archives = DshHostPaths.canonical(archives);
+    taskRoot = DshHostPaths.canonical(taskRoot);
     if (!archives.isDirectory()) throw new IOException("ARCHIVE_DIRECTORY_MISSING");
     if (!taskRoot.isDirectory()) throw new IOException("TASK_DIRECTORY_MISSING");
 
@@ -271,7 +277,7 @@ public final class DshAutomaticBackupRunner {
    * 两种情况都**不该**参与「保留最新 N 份」的计数，否则它会把一份好的挤掉。
    */
   static DshAutomaticBackupRetention.Archive readArchive(BackupFileSystem fs, File file) {
-    try (InputStream input = fs.read(file, fs.stat(file))) {
+    try (InputStream input = fs.read(DshHostPaths.canonical(file), fs.stat(file))) {
       Map<String, Object> manifest =
           BackupArchive.read(
               input,

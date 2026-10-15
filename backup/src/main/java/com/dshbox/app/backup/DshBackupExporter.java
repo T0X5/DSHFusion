@@ -127,9 +127,14 @@ public final class DshBackupExporter {
       BackupControl control)
       throws IOException {
     if (members == null || members.isEmpty()) throw new IOException("NO_SELECTED_DATA");
-    File home = userDataDir.getAbsoluteFile();
-    File task = taskDir.getAbsoluteFile();
-    File target = destination.getAbsoluteFile();
+    // ⚠️ **规范化，不是 `getAbsoluteFile()`。** 后者只保证绝对路径、**不解析符号链接**。
+    // 真机上第一次点导出就红了 `PARENT_LINK`：Android 的 `/data/user/0` 是指向
+    // `/data/data` 的符号链接，而 `cacheDir`/`filesDir` 返回的正是那条路径 ——
+    // `AndroidBackupFileSystem` 逐级用 `O_NOFOLLOW` 走父目录，见到链接就拒绝。
+    // 详见 `DshHostPaths` 的类注释。
+    File home = DshHostPaths.canonical(userDataDir);
+    File task = DshHostPaths.canonical(taskDir);
+    File target = DshHostPaths.canonical(destination);
 
     if (!task.isDirectory()) throw new IOException("TASK_DIRECTORY_MISSING");
     // 任务目录落在源之内 = 备份会把自己正在写的东西也读进去。
@@ -215,14 +220,15 @@ public final class DshBackupExporter {
     return UUID.randomUUID().toString();
   }
 
-  static boolean isInside(File ancestor, File candidate) {
-    File a = ancestor.getAbsoluteFile();
-    File c = candidate.getAbsoluteFile();
-    while (c != null) {
-      if (c.equals(a)) return true;
-      c = c.getParentFile();
-    }
-    return false;
+  /**
+   * 包含关系判定。**委托给 `DshHostPaths`** —— 它两边都规范化。
+   *
+   * <p>自己那份用 `getAbsoluteFile()` 的实现在符号链接下会**判错**：源是
+   * `/data/data/a`、任务目录是 `/data/user/0/a/task` 时，字符串比较会得出
+   * 「不在源之内」—— 于是 `TASK_INSIDE_SOURCE` 这条守卫静默失效。
+   */
+  static boolean isInside(File ancestor, File candidate) throws IOException {
+    return DshHostPaths.isInside(ancestor, candidate);
   }
 
   private static String sha256(BackupFileSystem fs, File file) throws IOException {

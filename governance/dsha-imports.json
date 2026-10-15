@@ -810,6 +810,16 @@
         "local_path": "backup/src/test/java/com/dshbox/app/backup/DshAutomaticBackupRunnerTest.java",
         "why": "上面那个的 11 条行为测试。两条最要紧：① `aFailedExportDeletesNothing` —— 造 5 份旧备份、让导出撞名失败、断言**一份不少**（这是「先导出后清理」的行为证据）；② `unreadableArchivesAreNeitherDeletedNorCountedButAreReported` —— 一份读不了的归档不许参与计数（否则它会把一份好的挤掉，那是静默的数据损失）。\n\n⚠️ 我在这份测试里**两次数错了自己造的数据**：`NOW` 常量的年份算错、以及把 4 份自动备份写成「2 旧 + 1 新」。两次红的都是我的算术，不是实现（第 27 条同族）。",
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真编译真运行，11 条）"
+      },
+      {
+        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshHostPaths.java",
+        "why": "交给 `BackupFileSystem` 的宿主路径必须先规范化（解析掉符号链接）。\n\n`AndroidBackupFileSystem`（逐字节导入自 DSHA）逐级用 `O_PATH | O_NOFOLLOW` 走父目录，并要求每级 `S_ISDIR` —— 父链里有**任何一级是符号链接**就抛 `PARENT_LINK`。而 Android 上 `/data/user/0` **就是指向 `/data/data` 的符号链接**，`Context.getCacheDir()`/`getFilesDir()` 返回的正是那条路径。\n\n**这是真机上第一次点导出就红了的 bug**（`导出失败：PARENT_LINK`），根因是导出/恢复编排用了 `getAbsoluteFile()` —— 它只保证绝对路径、不解析链接。`HostRestoreMapping` 用的是 `getCanonicalFile()`，所以它没踩到。\n\n顺带修掉一条**安全侧漏**：`isInside` 这类包含关系判定也必须两边规范化，否则「源是 `/data/data/a`、任务目录是 `/data/user/0/a/task`」会被判成「不在源之内」，`TASK_INSIDE_SOURCE` 那条守卫**静默失效**。",
+        "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshHostPathsTest.java（用真符号链接，5 条）"
+      },
+      {
+        "local_path": "backup/src/test/java/com/dshbox/app/backup/DshHostPathsTest.java",
+        "why": "上面那个的 5 条测试，**用真符号链接**（`Files.createSymbolicLink`）造夹具 ——本机的 `/tmp` 上任何一级都不是链接，所以不造夹具就复现不了这个 bug 的成因。\n\n每条都**先自证前提**：两条路径字符串不同、且确实指同一处。少了这一步，在一台「建不出符号链接」的机器上整套会**静默通过**。\n\n⚠️ 我在这份测试里**连续写错三次断言**，三次都是同一个病：\n① 断言「产物路径含 `/real/`」—— 而产物在**任务目录**下，不在源下面；\n② 断言「产物在任务目录下」—— 而 `Exported.archive` 是**移出去之后的目标文件**；\n③ 才改成让**目标本身**经符号链接表示（那才是可观测的）。\n**我在断言一个我没有先确认「它到底在哪」的路径。**",
+        "verified_by": "tools/run-backup-jvm-tests.sh（本机真编译真运行，5 条）"
       }
     ]
   }

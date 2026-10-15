@@ -2511,3 +2511,111 @@ clone_fixture() {
 - 这是同族问题第 **5** 次（第 16/18/31 条，以及这次）：**每一次的形态都不同**
   —— 字节本来就是空格 → 注入生效了检查器仍不红 → 打在了被内部调用污染的动作串上 →
   **锚点随被改文件一起漂移**。可靠的只有「让注入自证」，不是「记得检查一下」。
+
+
+## 39. **真机第一次点导出就红了** —— 而本机 121 条测试全过
+
+### 发生了什么
+
+用户在真机上装上 `d1df125` 的产物，进「设置 → 备份与恢复」选「全部」，
+点「导出到下载目录」：
+
+```
+导出失败：PARENT_LINK
+```
+
+**这是阶段 2 的第一个真机反馈，也是第一个真机发现的 bug。**
+本机 121 条 Java 测试、308 项套件、CI 24/24 步全绿 —— 一条都没抓到这个。
+
+### 根因
+
+`AndroidBackupFileSystem`（逐字节导入自 DSHA）打开文件时**逐级走父目录**，
+每级都用 `O_PATH | O_NOFOLLOW`，并要求那一级 `S_ISDIR`：
+
+```java
+next = Os.open("/proc/self/fd/" + handle.getFd() + "/" + parts[i],
+               i == parts.length - 1 ? flags : O_PATH | O_CLOEXEC | OsConstants.O_NOFOLLOW, ...);
+if (i < parts.length - 1 && !OsConstants.S_ISDIR(Os.fstat(next).st_mode)) {
+  Os.close(next);
+  throw new IOException("PARENT_LINK");
+}
+```
+
+这是**有意的安全设计**：不跟随符号链接，就不存在「被链接骗到别的目录去」。
+
+而 Android 上 **`/data/user/0` 就是指向 `/data/data` 的符号链接**，
+`Context.getCacheDir()` / `getFilesDir()` 返回的正是 `/data/user/0/<包名>/…`。
+
+我的导出编排写的是：
+
+```java
+File home = userDataDir.getAbsoluteFile();
+File task = taskDir.getAbsoluteFile();
+File target = destination.getAbsoluteFile();
+```
+
+**`getAbsoluteFile()` 只保证绝对路径，不解析符号链接。**
+于是那条 `/data/user/0/...` 被原样交下去，走到 `0` 那一级时就抛 `PARENT_LINK`。
+
+### 为什么本机一条测试都没抓到
+
+| 层 | 为什么瞎 |
+|---|---|
+| `JvmBackupFileSystem`（本机测试用的那份） | 它**不做** `O_NOFOLLOW` 走查，`/tmp` 上也没有符号链接级的父目录 —— 两条都缺 |
+| 本机文件系统 | 本机的临时目录根是一条笔直的路径，任何一级都不是符号链接 |
+| CI | 跑的是同一份 `JvmBackupFileSystem`，而且 `assembleDebug` 只构建、不执行导出 |
+
+**这是「本机通过」覆盖不到的一类：只有在「那条 `O_NOFOLLOW` 走查 + 有符号链接的父链」同时成立时才暴露。** 而两者都只在真机上同时成立。
+
+### 我漏在哪儿
+
+`HostRestoreMapping` 里我用的是 `userData.getCanonicalFile()` —— **对的那一个**。
+而导出与恢复两个编排用的是 `getAbsoluteFile()`。
+
+也就是说：**同一个仓库里，同一件事有两种写法，而我只在其中一个地方想对了。**
+更糟的是恢复编排也错 —— 用户在导出这一步就撞上了，所以还没走到恢复。
+
+### 修法：一个统一的入口，而不是各处顺手转一下
+
+新增 `DshHostPaths`：`canonical(File)` 与 `isInside(File, File)`（两边都规范化）。
+导出、恢复、自动备份三处全部改用它。
+
+**顺带修掉一条安全侧漏**：`isInside` 原来是两边 `getAbsoluteFile()` 之后比字符串。
+源是 `/data/data/a`、任务目录是 `/data/user/0/a/task` 时，它会判成「不在里面」——
+于是 `TASK_INSIDE_SOURCE`（「任务目录不许落在源之内」）**静默失效**。
+那条守卫挡的是「工具读到自己正在写的东西」，静默失效的代价是数据不一致。
+
+### 一个连带后果
+
+自动备份的 `readArchive` 会用 `fs.read` 打开旧归档，那条路径同样逐级 `O_NOFOLLOW`。
+不规范化就会 `PARENT_LINK` —— 而 `readArchive` 把任何 IOException 当成「读不了」
+返回 `null`，于是**保留策略会以为所有归档都读不了 → 永不清理**。
+不会报错，只会让用户的存储慢慢涨。
+
+### 验证
+
+`DshHostPathsTest`（5 条）用**真符号链接**（`Files.createSymbolicLink`）造夹具：
+
+- 前提自证：两条路径字符串不同、且确实指同一处（否则「没建成链接」时也会绿）；
+- 规范化必须解析掉链接；
+- `isInside` 必须看穿链接（含反向：真在外面时不许判成里面）；
+- 导出经过链接的源与目标 → **产物路径里不许留下链接那一级**；
+- 任务目录经链接落在源之内 → 必须仍然抛 `TASK_INSIDE_SOURCE`。
+
+**把 `canonical` 换成 `getAbsoluteFile()` 之后，这 4 条全红** —— 其中导出那条直接打出
+`<临时目录根>/link/dl/a.dshbak`，也就是真机上 `/data/user/0/…` 的等价物。
+
+### 教训
+
+- **真机验证不是「最后一道确认」，它是一类本机结构性覆盖不到的输入的**唯一**来源。**
+  这一条与「本机没有 android.jar」是两回事：那里是**编译**不了，
+  这里是**能编译、能跑、能过测试，但输入形态不对**。
+- **写这段事故的时候我又被一条本机门禁绊了一下**：我在正文里引用了本机那次运行的真实
+  临时路径，而隐私审计把它判成「可能含本机痕迹」。**同一族第 5 次**
+  （第 35 条、两次补记、§18 那次）—— 规律还是那条：
+  **把「为什么」写得越具体，越容易踩到某个读同一棵树的检查。** 已改成占位而非真实路径。
+- **同一个仓库里对同一件事的两种写法，是「我漏了一处」的直接证据。**
+  `HostRestoreMapping` 用了 canonical、编排用了 absolute —— 当时若把两者并排放一眼就能发现。
+  可操作的做法：**当一处需要「某种处理」时，先 grep 一遍同类代码有没有另一种写法。**
+- 我先前写进文档的一句「本机 121 条全过、308 项全过、CI 全绿」在真机面前**一个字节都不值**。
+  这也是为什么目标里那句「没有实际执行的真机验证不得标记为成功」是对的。

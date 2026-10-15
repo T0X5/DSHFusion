@@ -171,6 +171,9 @@ jobs:
                "上游的事务测试没跑 = 提交/回切的严密性没有证据"),
               ("com.dshbox.app.backup.HostRestoreTransactionTest", 8,
                "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
+              ("com.dshbox.app.backup.DshHostPathsTest", 5,
+               "路径规范化没跑 = 真机上导出会以 PARENT_LINK 失败，而那是"
+               "「符号链接没被解析」的**唯一**症状"),
               ("com.dshbox.app.backup.DshAutomaticBackupRunnerTest", 11,
                "自动备份的**顺序**守卫没跑 = 「导出失败时不会净损失旧备份」没有证据"),
               ("com.dshbox.app.backup.DshRestoreOrchestratorTest", 14,
