@@ -694,6 +694,51 @@ def main() -> int:
                 "也会在下载完成后失败（prepareAndroidSide 硬失败）。" + hint
             )
 
+    # --- 断言 9：阶段 2 的类必须**真的在产物里** ---
+    #
+    # 为什么需要这一条：`settings.gradle.kts` 的 `include(":backup")` 已经足以让
+    # Gradle 单独编译那个模块并跑它的测试，而 `testDebugUnitTest` 对**所有**模块
+    # 逐个跑、不看有没有人依赖它。于是「138 条测试全绿」与「代码在 APK 里」
+    # 是两件事，而输出上完全一样 —— 从 2.1 到 2.5 一直是后者为假（DIV-0021）。
+    #
+    # 依赖声明在位（`apply-divergences.sh` 的 DIV-0021 已查）**不等于**产物里有这些类：
+    # R8/打包配置、`compileOnly`、构建变体都可能让声明落空。所以对**产物**再查一遍。
+    #
+    # debug 构建不混淆，类是编进 `classes*.dex` 的，**不是** zip 里的独立条目 ——
+    # 所以在 dex 字节里找类型描述符（`L<内部名>;`）。
+    # 找一个字符串是弱断言（可能是残留），所以钉的是**整条链**上的几个代表性类：
+    # 上游导入的容器 / 我们的适配层 / 本阶段新加的导出编排。
+    LATE_PHASE_CLASSES = [
+        "Lcom/deepseekharness/app/backup/BackupArchive;",
+        "Lcom/deepseekharness/app/backup/HostDataTransaction;",
+        "Lcom/dshbox/app/backup/HostRestoreMapping;",
+        "Lcom/dshbox/app/backup/DshBackupExporter;",
+        "Lcom/dshbox/app/backup/DshAutomaticBackupRetention;",
+    ]
+    with zipfile.ZipFile(path) as _z:
+        dex = [n for n in _z.namelist() if n.endswith(".dex")]
+        if not dex:
+            problems.append(
+                "产物里没有 classes*.dex —— 无法核验阶段 2 的类是否真的被打包。"
+                "注意：「找不到 dex」与「类不在 dex 里」是两件事，不能混。"
+            )
+        else:
+            blob = b"".join(_z.read(n) for n in dex)
+            absent = [c for c in LATE_PHASE_CLASSES if c.encode() not in blob]
+            if absent:
+                problems.append(
+                    "阶段 2 的类没有出现在产物的 "
+                    + "/".join(dex)
+                    + " 里："
+                    + "、".join(c[1:-1].replace("/", ".") for c in absent)
+                    + "。依赖声明在位不等于产物里有这些类 —— "
+                    "这正是 DIV-0021 之前四个阶段的真实状态（测试全绿而代码不在 APK 里）。"
+                )
+            else:
+                notes.append(
+                    f"阶段 2 的类在产物里（{len(dex)} 个 dex，抽查 {len(LATE_PHASE_CLASSES)} 个代表类）"
+                )
+
     for n in notes:
         print(f"备注：{n}")
 

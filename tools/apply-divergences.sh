@@ -1651,9 +1651,11 @@ def handle_div_0021(entry) -> tuple[str, str]:
          那正是 2.6 之前持续了四个阶段的真实状态；
       ④ 不许把它挂到 `testImplementation` 上（那同样进不了 APK）。
 
-    ⚠️ 诚实边界：本 handler 证明的是**依赖声明在位**，
-    证明不了「APK 里真的有那些类」—— 那要对**产物**解包核验，
-    属于 `check-apk-identity.py` 的领地（尚未加这一项）。
+    ⚠️ 诚实边界：本 handler 证明的是**依赖声明在位**。
+    「APK 里真的有那些类」由 `check-apk-identity.py` 的**断言 9** 负责
+    （在 dex 字节里找类型描述符，并用 `missing-phase2-classes` 夹具场景证明它会红）。
+    **两者不可互相替代** —— 声明可能落空（R8 / compileOnly / 构建变体），
+    而一个删掉了依赖的仓库仍然可能因为上一次构建的产物而看起来正常。
     """
     problems = []
 

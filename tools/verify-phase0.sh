@@ -1001,7 +1001,8 @@ expect 0 "合成 APK：身份正确时应通过" \
              python3 tools/check-apk-identity.py '$SCRATCH/good.apk'"
 
 for scen in upstream-id upstream-ver wrong-ns wrong-label bad-authority \
-            no-layers sidecar-only gz-stripped x64-layer arm64-layer; do
+            no-layers sidecar-only gz-stripped x64-layer arm64-layer \
+            missing-phase2-classes; do
     python3 tools/make-apk-identity-fixture.py "$SCRATCH/$scen.apk" "$scen" >/dev/null
 done
 
@@ -1060,6 +1061,11 @@ check_scenario gz-stripped   "但没有应用侧会查找的层本体"
 # 两个场景**必须成对**：只测 x64-layer 只能证明「它失败了」，
 # 证明不了失败的原因是架构 —— 它也可能碰巧被别的断言拦下。
 # arm64-layer 与 x64-layer 只差层里那 7 个包，它必须通过。
+# 断言 9 的负面方向：产物里**缺**阶段 2 的类。
+# 没有这一条，断言 9 就只是一条「现在绿着」的检查 ——
+# 而它要挡的正是「测试全绿、代码不在 APK 里」那件事（DIV-0021 之前四个阶段的真实状态）。
+check_scenario missing-phase2-classes "阶段 2 的类没有出现在产物的"
+
 check_scenario x64-layer     "dsh 层不是 arm64 架构的"
 
 expect 0 "合成 APK：层里是 arm64 的包时应通过" \
@@ -2562,6 +2568,39 @@ if [[ -f "$ABS" ]]; then
         CR_BAD=1
     else
         ok "include 与依赖边一致（不是「只编译不打包」）"
+    fi
+
+    # ②d 产物级：阶段 2 的类必须真的在 APK 里。
+    #     依赖声明在位（DIV-0021 已查）**不等于**产物里有这些类 ——
+    #     R8 / compileOnly / 构建变体都可能让声明落空。所以对**产物**再查一遍：
+    #     `check-apk-identity.py` 的断言 9 在 dex 字节里找类型描述符。
+    if grep -q 'LATE_PHASE_CLASSES' "$ROOT/tools/check-apk-identity.py"; then
+        ok "APK 身份核验里有断言 9（阶段 2 的类必须真的在产物里）"
+    else
+        fail "check-apk-identity.py 里没有断言 9 —— 「依赖声明在位」会被当成「代码在 APK 里」"
+        CR_BAD=1
+    fi
+
+    # ⚠️ 两处清单**必须一致**：检查器里一份、夹具里一份。各写一份就是
+    # 「测试夹具与源码各说各话」的温床（第 17/20 条）—— 而这次错的后果是
+    # 夹具永远造出「合格」的产物，断言 9 永远绿。
+    CHK_LIST=$(python3 - "$ROOT" <<'PYI'
+import re, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+def names(path):
+    text = (root / path).read_text(encoding="utf-8")
+    # 取 `L<内部名>;` 形式的字符串字面量（两处都用这个形式）
+    return sorted(set(re.findall(r"L(?:com)/[\w/]+;", text)))
+a = names("tools/check-apk-identity.py")
+b = names("tools/make-apk-identity-fixture.py")
+print("SAME" if a and a == b else f"DIFF {a} vs {b}")
+PYI
+)
+    if [ "$CHK_LIST" = "SAME" ]; then
+        ok "检查器与夹具的阶段 2 类清单一致（不是各写一份）"
+    else
+        fail "阶段 2 的类清单两处不一致：$CHK_LIST"
+        CR_BAD=1
     fi
 
     # ③ 它必须真的被声明为「本机编不了」，而不是碰巧没被扫到。

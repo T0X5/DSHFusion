@@ -194,6 +194,20 @@ def build_end_element(name_idx: int, ns_idx: int = NO_INDEX) -> bytes:
     return bytes(out)
 
 
+# 阶段 2 的类型描述符（dex 里的 `L<内部名>;` 形式）。
+#
+# ⚠️ 这一份**必须与 `tools/check-apk-identity.py` 里的那份一致** ——
+# 两处各写一份就是「测试夹具与源码各说各话」的温床（第 17/20 条）。
+# 所以 `tools/verify-phase0.sh` 有一条断言核验两处清单相同。
+PHASE2_DESCRIPTORS = (
+    b"Lcom/deepseekharness/app/backup/BackupArchive;\x00"
+    b"Lcom/deepseekharness/app/backup/HostDataTransaction;\x00"
+    b"Lcom/dshbox/app/backup/HostRestoreMapping;\x00"
+    b"Lcom/dshbox/app/backup/DshBackupExporter;\x00"
+    b"Lcom/dshbox/app/backup/DshAutomaticBackupRetention;\x00"
+)
+
+
 def build_axml(scenario: str) -> bytes:
     """拼出一份最小的 AndroidManifest.xml。"""
     if scenario == "upstream-id":
@@ -300,7 +314,7 @@ def main() -> int:
 
     known = {"good", "upstream-id", "upstream-ver", "wrong-ns", "wrong-label",
              "bad-authority", "no-layers", "sidecar-only", "gz-stripped",
-             "no-manifest", "x64-layer", "arm64-layer"}
+             "no-manifest", "x64-layer", "arm64-layer", "missing-phase2-classes"}
     if scenario not in known:
         print(f"未知场景 {scenario!r}；可用：{sorted(known)}", file=sys.stderr)
         return 2
@@ -324,8 +338,15 @@ def main() -> int:
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
         if scenario != "no-manifest":
             z.writestr("AndroidManifest.xml", build_axml(scenario))
-        # 塞一个无关文件，让 zip 结构更像真 APK（且 no-manifest 场景下非空）
-        z.writestr("classes.dex", b"dex\n035\x00" + b"\x00" * 64)
+        # `classes.dex`。
+        #
+        # ⚠️ 它不再是一个空壳：**断言 9 会在 dex 字节里找阶段 2 的类型描述符**。
+        # 夹具原本只写一个 dex 头 —— 那在断言 9 之后会让**每一个**场景都失败。
+        # 那不是断言 9 太严，是夹具失真：一个真的、能跑起来的产物本来就该含这些类。
+        # 所以夹具现在把描述符真的写进去，并另开一个 `missing-phase2-classes`
+        # 场景把它们**留空** —— 那才是用来证明断言 9 会红的那个方向。
+        descriptors = b"" if scenario == "missing-phase2-classes" else PHASE2_DESCRIPTORS
+        z.writestr("classes.dex", b"dex\n035\x00" + b"\x00" * 64 + descriptors)
 
         # 运行环境层：除三个「层有问题」的场景外，**每个场景都带上正确的层**。
         #
