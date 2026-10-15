@@ -374,6 +374,45 @@ public class DshBackupExporterTest {
         new String(Files.readAllBytes(destination.toPath()), StandardCharsets.UTF_8));
   }
 
+  /**
+   * **目标不能就是产物本身** —— 真机上第二版红的那个（`UNSAFE_MOVE`）。
+   *
+   * <p>上游 `move` 要求目标不存在，所以「把 destination 传成任务目录里的产物路径」
+   * 会以 `UNSAFE_MOVE` 失败 —— 而那个名字说的是「跨设备 / 父目录不对」，
+   * **指向的是错的方向**：我照着它去查文件系统，而真正的原因是调用方传错了参数。
+   *
+   * <p>所以这里把它变成一个说得出自己意思的码。这条用例同时是那条守卫的存在证明。
+   */
+  @Test
+  public void refusesADestinationThatIsTheArtifactItself() throws Exception {
+    File home = makeHome();
+    File task = makeTask();
+    // 目标在**任务目录之内** —— 于是它与 `HostSnapshot` 要写的那份产物是同一个路径。
+    File insideTask = new File(task, "a.dshbak");
+
+    IOException error =
+        assertThrows(
+            IOException.class,
+            () ->
+                DshBackupExporter.export(
+                    fs,
+                    home,
+                    List.of(
+                        new DshBackupExporter.Member("dsh", ".dsh", "application", false)),
+                    task,
+                    insideTask,
+                    provenance(),
+                    null,
+                    false,
+                    new BackupControl(null)));
+
+    assertEquals(
+        "目标等于产物时必须报这个码，而不是让上游以 UNSAFE_MOVE 失败 —— "
+            + "那个名字会把人引向文件系统，而真正的原因是调用方参数",
+        "DESTINATION_IS_ARTIFACT",
+        error.getMessage());
+  }
+
   @Test
   public void refusesAnArtifactNameThatCollidesWithTheTaskBookkeeping() throws Exception {
     File home = makeHome();

@@ -282,8 +282,22 @@ internal fun runExport(
 ): ExportOutcome {
     val taskRoot = File(cacheDir, TASK_ROOT_NAME)
     val task = File(taskRoot, UUID.randomUUID().toString())
+    // ⚠️ **出料目录必须与任务目录分开。**
+    //
+    // 真机上第一版把目标传成 `File(task, name)` —— 也就是 `HostSnapshot` 刚写出来的
+    // **同一个路径**。于是上游的 `fs.move(archive, target)` 变成「把文件移到它自己」，
+    // 而 `AndroidBackupFileSystem.move` 要求目标**不存在**：
+    //
+    //     if (... || !stat(target).type.equals("MISSING")) throw new IOException("UNSAFE_MOVE");
+    //
+    // 所以真机上看到的是 `导出失败：UNSAFE_MOVE`。
+    //
+    // 为什么不能直接「让 export 允许目标等于产物」：上游 `HostSnapshot.create` 有一条硬断言
+    // `archive.parentFile == ownedTask`，产物**必须**先落在任务目录里；而 `export` 的契约是
+    // 「把产物交到 destination」。两者的交集就是「destination 在任务目录之外」。
+    val out = File(File(cacheDir, OUT_ROOT_NAME), task.name)
     return try {
-        if (!task.mkdirs()) return ExportOutcome.Failed("TASK_DIRECTORY")
+        if (!task.mkdirs() || !out.mkdirs()) return ExportOutcome.Failed("TASK_DIRECTORY")
         val name = DshBackupExportBridge.archiveName(scope, stamp())
         val written =
             DshBackupExporter.export(
@@ -291,7 +305,7 @@ internal fun runExport(
                 userDataDir,
                 DshBackupExportBridge.members(scope),
                 task,
-                File(task, name),
+                File(out, name),
                 provenance(),
                 DshBackupExportBridge.exclusions(),
                 false,
@@ -310,7 +324,9 @@ internal fun runExport(
         // 「因为正确的原因被拒绝」和「因为别的原因被拒绝」混成一句。
         ExportOutcome.Failed(error.message ?: error.javaClass.simpleName)
     } finally {
+        // 两个目录都要清 —— 少清一个就会在 cache 里积一份几十 MB 的归档。
         if (task.exists()) task.deleteRecursively()
+        if (out.exists()) out.deleteRecursively()
     }
 }
 
@@ -336,6 +352,9 @@ private fun stamp(): String =
 
 /** 落在 `cacheDir` 下的任务根。放在这里而不是 `user-data` 里 —— 见 `runExport` 的注释。 */
 private const val TASK_ROOT_NAME = "backup-task"
+
+/** 出料根。**必须与任务根分开** —— 见 `runExport` 里那段关于 `UNSAFE_MOVE` 的注释。 */
+private const val OUT_ROOT_NAME = "backup-out"
 
 // 与 `app/build.gradle.kts` 的 versionName 应当一致；只写进归档清单供**读回时**参考，
 // 不参与任何判定，所以这里不做构建期注入（那会让本文件的编译依赖构建脚本）。

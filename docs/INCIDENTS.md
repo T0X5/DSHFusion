@@ -2619,3 +2619,72 @@ File target = destination.getAbsoluteFile();
   可操作的做法：**当一处需要「某种处理」时，先 grep 一遍同类代码有没有另一种写法。**
 - 我先前写进文档的一句「本机 121 条全过、308 项全过、CI 全绿」在真机面前**一个字节都不值**。
   这也是为什么目标里那句「没有实际执行的真机验证不得标记为成功」是对的。
+
+
+## 补记（第 39 条同一轮）：修完 `PARENT_LINK`，紧接着撞上 `UNSAFE_MOVE`
+
+### 发生了什么
+
+用户装上修 `PARENT_LINK` 的那一版，再点导出：
+
+```
+导出失败：UNSAFE_MOVE
+```
+
+**同一个按钮、同一个动作，两个不同的错误码 —— 而第二个是第一个修好之后才露出来的。**
+
+### 根因：我把「目标文件」传成了产物自己
+
+界面那一层原来是：
+
+```kotlin
+val task = File(taskRoot, UUID.randomUUID().toString())
+DshBackupExporter.export(..., task, File(task, name), ...)   // ← 目标在任务目录里
+```
+
+而 `DshBackupExporter` 内部：
+
+```java
+File archive = new File(task, name);      // 产物 —— 和上面那个**同一个路径**
+HostSnapshot.create(fs, sources, task, archive, ...);
+fs.move(archive, target);                 // ← 把文件移到它自己
+```
+
+`AndroidBackupFileSystem.move` 要求**目标不存在**：
+
+```java
+if (... || !stat(target).type.equals("MISSING")) throw new IOException("UNSAFE_MOVE");
+```
+
+于是「把文件移到它自己」→ 目标已存在 → `UNSAFE_MOVE`。
+
+### `UNSAFE_MOVE` 这个码把我引向了错的方向
+
+它的字面意思是「跨设备 / 父目录不对」，我照着它去查文件系统与设备号。
+而真正的原因是**调用方参数**：destination 与 archive 是同一个路径。
+
+这与第 22/28/33 条同族：**一个错误的措辞会让人停止怀疑真正的那一处。**
+
+所以除了修调用方，还给 `DshBackupExporter` 加了一条具名守卫：
+
+```java
+if (archive.equals(target)) throw new IOException("DESTINATION_IS_ARTIFACT");
+```
+
+### 一条被这条守卫顺带证出来的事
+
+撤掉那条守卫之后跑测试，**本机报的是一串路径**（`JvmBackupFileSystem` 抛的是
+`Files.move` 的异常，message 是路径），而**真机上报的是 `UNSAFE_MOVE`**。
+
+**同一个调用错，在两套 `BackupFileSystem` 下报出完全不同的东西。**
+所以调用方**根本没法依赖**那个错误 —— 这正是具名守卫的价值：
+它给出的码与「用哪套文件系统」无关。
+
+### 教训
+
+- **连续两个真机 bug，成因是同一句话：我没确认「这个路径到底是什么」。**
+  第 39 条是「路径里有没有符号链接」，这一条是「destination 与 archive 是不是同一个」。
+  两次都是**我在断言/传递一个我没有先确认其身份的东西**。
+- 而两次本机测试都全绿 —— 因为它们用的是**另一套** `BackupFileSystem`。
+  **`JvmBackupFileSystem` 是测试替身，它的行为与生产那份不同；凡是「靠它才通过」的结论，
+  在真机上都要重新问一遍。**

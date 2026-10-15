@@ -151,6 +151,11 @@ public final class DshBackupExporter {
     if (RESERVED.contains(name)) throw new IOException("RESERVED_ARTIFACT_NAME");
     File archive = new File(task, name);
     if (archive.exists()) throw new IOException("ARTIFACT_EXISTS");
+    // **目标不能就是产物本身。** 上游 `move` 要求目标不存在，所以那种调用会以
+    // `UNSAFE_MOVE` 失败 —— 而那个名字说的是「跨设备/父目录不对」，**指向的是错的方向**：
+    // 真机上我照着它去查文件系统，而真正的原因是调用方把 destination 传成了产物路径。
+    // 所以在这里把它变成一个说得出自己意思的码。
+    if (archive.equals(target)) throw new IOException("DESTINATION_IS_ARTIFACT");
 
     List<BackupSource> sources = new ArrayList<>();
     List<String> skipped = new ArrayList<>();
