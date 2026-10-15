@@ -372,6 +372,22 @@
       "reapply": "本条是新增行，不覆盖上游任何行。重新建立时需要：\n\n1. 版本目录加 SnakeYAML（版本必须 ≥2，且建议与 DSHA 一致）；\n2. `backup/build.gradle.kts` 加 `implementation(libs.snakeyaml)`；\n3. `app/proguard-rules.pro` 加 `-keep class org.yaml.snakeyaml.** { *; }`。\n\n`tools/apply-divergences.sh` 的 `handle_div_0020` 负责核验这三处。**注意**：凭据投影的源码本身**不**由该脚本重放（那是逐字节副本），只由 `check-dsha-imports.py` 按 sha256 守护。",
       "conflict_risk": "low —— 三处都是新增行。唯一可能冲突的是 `libs.versions.toml`（上游若自己引入 SnakeYAML）与 `proguard-rules.pro`（上游若加了同类规则）。",
       "note": "**阶段 2.3 的实质是「让归档里没有机器本地凭据」，而这件事必须由行为证明。** 因此本条的检验重心刻意放在**跑一遍**上，而不是「源码里有 `client-connection/` 这个字符串」。\n\n**未验证的部分如实记**：`app/proguard-rules.pro` 那条 keep 规则的**效果没有被验证** —— CI 只构建 debug（`assembleDebug`），release 混淆后的行为要等有人真的构建 release 并运行凭据投影才能说「可用」。规则本身是保险，不是已证明的修复。\n\n**另一件刻意没做的事**：没有改 `settings.yaml` 里模型凭据的**字段级**排除。DSHFusion 目前的模型凭据走 DSH 自己的凭据存储（与 `.credentials.yaml` 同一条路）；`settings.yaml` 里是否有需要单独排除的字段，要等确认过它的实际内容才能决定 —— **没有证据之前不动它**，比照 DIV-0019 的收窄登记。"
+    },
+    {
+      "id": "DIV-0021",
+      "title": "`app` 依赖 `:backup`（阶段 2.6：阶段 2 的代码第一次进入 APK）",
+      "upstream": "dshbox",
+      "type": "config",
+      "phase": 2,
+      "target_files": [
+        "app/build.gradle.kts"
+      ],
+      "change": "`app/build.gradle.kts` 的 dependencies 里新增 `implementation(project(\":backup\"))`。\n\n**这一行是阶段 2 从 2.1 到 2.5 一直缺的那条边。** 实测（2026-10-15）：`settings.gradle.kts` 有 `include(\":backup\")`，所以 CI 能单独编译它并跑它的测试；但 `app` 的 `implementation(project(...))` 列表里只有 common / bridge / sandbox-manager / terminal-session / terminal-view / plugin-manager / pilot:dshbox-adapter —— **没有任何模块依赖 `:backup`**。\n\n后果不是「少了个功能」，而是：**阶段 2 的全部成果此前没有一行在真机上执行过** —— APK 里没有这些类的字节码。而且这件事从 2.1 建模块那天起就是如此，而**没有任何检查会红**（Gradle 的 `testDebugUnitTest` 对所有模块逐个跑，不依赖有没有人依赖它）。\n\n当初不接依赖的理由（「在接上界面之前接进 app 只会制造一批看起来有入口、实际什么都不做的半成品」）在当时是成立的；但它的代价一直没有被记账。",
+      "rationale": "`:backup` 是阶段 2 的全部产出，而 2.6 的导出界面必须长在 `app` 里 —— 依赖边和界面是同一件事的两半。先接边，是因为它是**可被 CI 独立验证**的那一半：接上之后 `:backup` 就真的被编译进 APK，`assembleDebug` 会替我们回答「这些类在 Android 上编得过吗」——包括那个只用平台 API、本机没有 android.jar 所以一直没编过的 `AndroidBackupFileSystem`。",
+      "detection": "`tools/verify-phase0.sh` 的 5r 节断言这条依赖存在。",
+      "reapply": "在 `app/build.gradle.kts` 的 dependencies 块里加一行 `implementation(project(\":backup\"))`。",
+      "conflict_risk": "低 —— 新增一行依赖；上游若也往这里加依赖，是不冲突的追加。",
+      "note": "⚠️ **接上依赖不等于接上界面。** 这一条只让代码进 APK；导出/恢复的界面入口是 2.6 的下一段，做完之前阶段 2 的验收标准（restorable on another device）仍然不满足，也不声称满足。"
     }
   ]
 }

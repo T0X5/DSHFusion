@@ -109,6 +109,11 @@ dependencies {
     implementation(project(":plugin-manager"))
     // 手机助手适配层。核心层（interlock-relay-core）由它 api 传递，故此处不必再写一行。
     implementation(project(":pilot:dshbox-adapter"))
+    // 阶段 2.6（DIV-0021）：阶段 2 的全部产出（v5 备份格式 / 范围与排除 / 凭据投影 /
+    // 恢复核心 / 落点映射 / 提交回切 / 自动备份核心 / 导出编排）都在这个模块里。
+    // 在接上这一行之前，**它们一行都没有进入过 APK** —— 从 2.1 建模块起就是这样，
+    // 而没有任何检查会红（Gradle 的 testDebugUnitTest 对所有模块逐个跑，不看依赖）。
+    implementation(project(":backup"))
 
     implementation(libs.androidx.core.ktx)
     // 应用内语言切换（AppCompatDelegate.setApplicationLocales；

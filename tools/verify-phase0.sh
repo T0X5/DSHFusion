@@ -2545,6 +2545,25 @@ if [[ -f "$ABS" ]]; then
         CR_BAD=1
     fi
 
+    # ②c 依赖边：阶段 2 的产出必须真的会被编进 APK。
+    #     在 2.6 之前这条边不存在，而**没有任何检查会红** ——
+    #     `settings.gradle.kts` 有 include(":backup") 就足以让 CI 单独编译并跑它的测试，
+    #     于是「测试全绿」与「代码在 APK 里」是两件事（第 26 条的同族）。
+    if grep -q 'implementation(project(":backup"))' "$ROOT/app/build.gradle.kts"; then
+        ok "app 依赖 :backup（阶段 2 的代码真的会进 APK，DIV-0021）"
+    else
+        fail "app 没有依赖 :backup —— 阶段 2 的全部产出不会进入 APK，而测试仍然全绿"
+        CR_BAD=1
+    fi
+    # 反向：不许**只有** include 而没有依赖边（这就是 2.6 之前的真实状态）。
+    if grep -q 'include(":backup")' "$ROOT/settings.gradle.kts" &&
+       ! grep -q 'project(":backup")' "$ROOT/app/build.gradle.kts"; then
+        fail "settings 里有 include(\":backup\") 但没有任何模块依赖它 —— 「编译过了」不等于「进 APK 了」"
+        CR_BAD=1
+    else
+        ok "include 与依赖边一致（不是「只编译不打包」）"
+    fi
+
     # ③ 它必须真的被声明为「本机编不了」，而不是碰巧没被扫到。
     if grep -q '"AndroidBackupFileSystem.java"' "$ROOT/tools/run-backup-jvm-tests.sh"; then
         ok "本机编译的排除表里声明了 AndroidBackupFileSystem.java"

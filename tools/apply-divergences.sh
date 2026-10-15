@@ -1634,6 +1634,64 @@ def handle_div_0019(entry) -> tuple[str, str]:
 
 
 
+def handle_div_0021(entry) -> tuple[str, str]:
+    """`app` 依赖 `:backup`（DIV-0021，阶段 2.6）。
+
+    这一条偏离只有一行，但它挡住的是一件**静默**的事：
+
+    在接上它之前，`:backup` 的 124 条测试在 CI 里全过，而**那些类一个字节都没进 APK**
+    —— 因为 `settings.gradle.kts` 的 `include(":backup")` 足以让 Gradle 单独编译并测试它，
+    而 `testDebugUnitTest` 对**所有**模块逐个跑，不看有没有人依赖。
+    于是「测试全绿」和「代码在 APK 里」是两件不同的事，而输出上完全一样。
+
+    所以这里查**四件事**，缺一不可：
+      ① `app/build.gradle.kts` 里有 `implementation(project(":backup"))`；
+      ② `settings.gradle.kts` 里仍有 `include(":backup")`（否则①指向一个不存在的模块）；
+      ③ **反向**：不许出现「只有 include、没有依赖边」——
+         那正是 2.6 之前持续了四个阶段的真实状态；
+      ④ 不许把它挂到 `testImplementation` 上（那同样进不了 APK）。
+
+    ⚠️ 诚实边界：本 handler 证明的是**依赖声明在位**，
+    证明不了「APK 里真的有那些类」—— 那要对**产物**解包核验，
+    属于 `check-apk-identity.py` 的领地（尚未加这一项）。
+    """
+    problems = []
+
+    app = ROOT / "app" / "build.gradle.kts"
+    if not app.exists():
+        return PENDING, "app/build.gradle.kts 尚未导入"
+    app_text = read(app)
+
+    settings = ROOT / "settings.gradle.kts"
+    if not settings.exists():
+        return PENDING, "settings.gradle.kts 尚未导入"
+    settings_text = read(settings)
+
+    if 'implementation(project(":backup"))' not in app_text:
+        problems.append('app/build.gradle.kts 里没有 implementation(project(":backup"))')
+
+    if 'include(":backup")' not in settings_text:
+        problems.append('settings.gradle.kts 里没有 include(":backup")')
+
+    # ③ 反向：这正是 2.6 之前的真实状态。只查 ① 会让「依赖边被删掉、
+    #    但 include 还在」这种半残状态通过 —— 而它的后果与完全没接一样。
+    if 'include(":backup")' in settings_text and 'project(":backup")' not in app_text:
+        problems.append(
+            'settings 里有 include(":backup") 但 app 没有任何 project(":backup") 依赖 '
+            "—— 这是「只编译不打包」的半残状态，与完全没接的后果相同")
+
+    # ④ 挂到 testImplementation 上同样进不了 APK。
+    for line in app_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("testImplementation") and 'project(":backup")' in stripped:
+            problems.append(
+                'project(":backup") 出现在 testImplementation 里 —— 它进不了 APK，等于没接')
+
+    if problems:
+        return FAILED, "；".join(problems)
+    return OK, "app 依赖 :backup，且 include 与依赖边一致（不是「只编译不打包」）"
+
+
 def handle_div_0020(entry) -> tuple[str, str]:
     """`:backup` 的 SnakeYAML 依赖 + app 的 keep 规则（DIV-0020，阶段 2.3）。
 
@@ -1722,6 +1780,7 @@ HANDLERS = {
     "DIV-0018": handle_div_0018,
     "DIV-0019": handle_div_0019,
     "DIV-0020": handle_div_0020,
+    "DIV-0021": handle_div_0021,
 }
 
 
