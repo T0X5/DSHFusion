@@ -640,4 +640,24 @@
     <string name="home_node_missing">Слой Node.js не импортирован</string>
     <string name="home_node_missing_hint">Слой Linux готов. Импортируйте слой Node.js, чтобы запустить DSH.</string>
     <string name="home_node_missing_action">Импортировать среду онлайн</string>
+
+    <!-- 阶段 2.6：备份与恢复（导出界面） -->
+    <string name="backup_title">Резервное копирование</string>
+    <string name="backup_back">Назад</string>
+    <string name="backup_intro">Экспортируйте копию данных DSH в один файл архива. Архив никогда не содержит локальные учётные данные устройства.</string>
+    <string name="backup_scope_section">Что копировать</string>
+    <string name="backup_scope_full">Всё</string>
+    <string name="backup_scope_full_desc">Сеансы, настройки и плагины в одном архиве.</string>
+    <string name="backup_scope_sessions">Сеансы</string>
+    <string name="backup_scope_sessions_desc">Сеансы чата и реестр их вложений.</string>
+    <string name="backup_scope_settings">Настройки</string>
+    <string name="backup_scope_settings_desc">Только файл настроек DSH.</string>
+    <string name="backup_scope_plugins">Плагины</string>
+    <string name="backup_scope_plugins_desc">Установленные плагины и профили.</string>
+    <string name="backup_export_button">Экспорт в Загрузки</string>
+    <string name="backup_export_running">Экспорт…</string>
+    <string name="backup_export_ok">Экспортировано %1$s (%2$s, целостность %3$s)</string>
+    <string name="backup_export_skipped">Пропущено элементов: %1$d</string>
+    <string name="backup_export_failed">Не удалось экспортировать: %1$s</string>
+    <string name="backup_settings_entry">Резервное копирование</string>
 </resources>

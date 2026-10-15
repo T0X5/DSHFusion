@@ -630,4 +630,24 @@
     <string name="home_node_missing">Capa Node.js no importada</string>
     <string name="home_node_missing_hint">La capa Linux está lista. Importe la capa Node.js para iniciar DSH.</string>
     <string name="home_node_missing_action">Importar el entorno en línea</string>
+
+    <!-- 阶段 2.6：备份与恢复（导出界面） -->
+    <string name="backup_title">Copia de seguridad y restauración</string>
+    <string name="backup_back">Atrás</string>
+    <string name="backup_intro">Exporta una copia de tus datos de DSH como un único archivo. El archivo nunca contiene credenciales locales del dispositivo.</string>
+    <string name="backup_scope_section">Qué copiar</string>
+    <string name="backup_scope_full">Todo</string>
+    <string name="backup_scope_full_desc">Sesiones, ajustes y complementos en un solo archivo.</string>
+    <string name="backup_scope_sessions">Sesiones</string>
+    <string name="backup_scope_sessions_desc">Sesiones de chat y su registro de adjuntos.</string>
+    <string name="backup_scope_settings">Ajustes</string>
+    <string name="backup_scope_settings_desc">Solo el archivo de ajustes de DSH.</string>
+    <string name="backup_scope_plugins">Complementos</string>
+    <string name="backup_scope_plugins_desc">Complementos y perfiles instalados.</string>
+    <string name="backup_export_button">Exportar a Descargas</string>
+    <string name="backup_export_running">Exportando…</string>
+    <string name="backup_export_ok">Exportado %1$s (%2$s, integridad %3$s)</string>
+    <string name="backup_export_skipped">Se omitieron %1$d elementos</string>
+    <string name="backup_export_failed">Error al exportar: %1$s</string>
+    <string name="backup_settings_entry">Copia de seguridad y restauración</string>
 </resources>

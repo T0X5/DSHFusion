@@ -780,6 +780,16 @@
         "local_path": "backup/src/test/java/com/dshbox/app/backup/DshBackupExporterTest.java",
         "why": "上面那个的 14 条本机测试。两条最要紧的都**先自证前提成立**再断言性质：① 排除清单那一条先证明「回调真的被调用过且看得到 credentials」，否则 `assertFalse(内容不在归档里)` 在「策略压根没被调用」时**也是绿的**（第 30 条）；② 「路径出现在归档里」不等于「内容进了归档」—— 被排除项仍会留下一条`kind=EXCLUDED` 的元数据记录（没有载荷），这是有意的：「这次备份漏了什么」必须能从归档里读出来。我第一版就是断言「路径不许出现」，于是它把正确实现判失败了，而失败信息长得像「排除功能坏了」（第 32 条的同族）。\n\n另有两条钉**坐标系**：`Policy.exclusion` 给的是「相对成员根」的路径（`credentials`），而 `DshBackupExclusions.isExcluded` 收的是「相对 user-data」的（`.dsh/credentials`）。**两套坐标系差一个前缀，少了拼接则排除一条都不命中、且不报任何错** —— 归档里安静地带上机器本地凭据，所有计数与完整性判定照常通过。所以拼接放在本机可跑的 Java 层，并用「真实跑一条 `.dsh` 成员」的用例钉住（直接单测 `join` 只能证明拼接函数对，证明不了它真的接在了链路上）。",
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真编译真运行，14 条）"
+      },
+      {
+        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshBackupExportBridge.kt",
+        "why": "把 Kotlin 侧的范围与排除清单接到 Java 侧的导出编排上。`DshBackupExporter` **故意不认识** `DshBackupScope`/`DshBackupExclusions` —— 一旦被它 import，本机（没有 kotlinc）就编不了、跑不了，而它是最该本机验的一层。翻译只有三处决策，每处都可能静默出错：① `v5Scope` 直接取 `DshBackupMember.v5Scope`（不自己拼字符串）；② `external` 恒为 `false` —— 它决定容器的 integrity 字段，而**保留策略正是按那个字段决定删不删**；③ 谓词收的是 user-data 相对路径，**不许在这里提前拼成员前缀** —— 两边都拼一次会让排除清单一条都不命中且不报任何错。",
+        "verified_by": "tools/verify-phase0.sh 的 5r 节（5 条断言逐条钉住上面三处）"
+      },
+      {
+        "local_path": "app/src/main/java/com/dshbox/app/ui/settings/BackupScreen.kt",
+        "why": "导出界面（阶段 2.6 第 ④ 段）。三处刻意的选择：① 产物先写进 `cacheDir` 下的独占任务目录再交给 MediaStore —— 上游硬断言要求 `archive.parentFile` 等于任务目录，而任务目录又不许落在源之内；② 走 MediaStore 的下载集合（API 29+ 分区存储下**不需要任何权限**），`IS_PENDING` 起头、写完置 0，别的应用看不到半成品；③ `runExport` 与 Compose 无关，`ExportOutcome` 里**不许有** Composable 成员 —— 结果类型不该依赖「怎么显示」。该文件**不在 i18n 的硬编码扫描之外**：它引用的每个 `backup_*` 文案键在六份资源里都在，由 5t 节断言。",
+        "verified_by": "tools/verify-phase0.sh 的 5t 节（**13** 条断言 —— 这个数是数出来的，不是估的）+ tools/i18n_check.sh"
       }
     ]
   }

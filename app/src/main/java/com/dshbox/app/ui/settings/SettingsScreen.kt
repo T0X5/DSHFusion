@@ -100,6 +100,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val sandboxManager = (context.applicationContext as DshApp).container.sandboxManager
     var showDiagnostics by remember { mutableStateOf(false) }
+    var showBackup by remember { mutableStateOf(false) }
     var showBatteryDialog by remember { mutableStateOf(false) }
     // 在线导入运行环境包（base/node 退出 APK 的主链路）：0=隐藏 1=入口页 2=Linux层 3=node层。
     var onlineImportPage by remember { mutableStateOf(0) }
@@ -302,6 +303,15 @@ fun SettingsScreen(
         return
     }
 
+    // 备份与恢复（阶段 2.6 第 ④ 段）走同一套覆盖式挂载。
+    if (showBackup) {
+        BackupScreen(
+            onBack = { showBackup = false },
+            modifier = modifier,
+        )
+        return
+    }
+
     if (showDiagnostics) {
         DiagnosticsScreen(
             sandboxReady = sandboxRunning,
@@ -485,6 +495,10 @@ fun SettingsScreen(
         // 「诊断与日志」独立成卡：它是页面上最后一条裸行，包进卡片后
         // 设置页不再有脱离圆角描边的孤立入口。
         SettingsSection {
+            SettingsActionRow(
+                title = stringResource(R.string.backup_settings_entry),
+                onClick = { showBackup = true },
+            )
             SettingsActionRow(
                 title = stringResource(R.string.settings_diagnostics),
                 onClick = { showDiagnostics = true },

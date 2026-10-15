@@ -660,4 +660,24 @@
     <string name="home_node_missing">لم يتم استيراد طبقة Node.js</string>
     <string name="home_node_missing_hint">طبقة لينكس جاهزة. استورد طبقة Node.js لتشغيل DSH.</string>
     <string name="home_node_missing_action">استيراد بيئة التشغيل عبر الإنترنت</string>
+
+    <!-- 阶段 2.6：备份与恢复（导出界面） -->
+    <string name="backup_title">النسخ الاحتياطي والاستعادة</string>
+    <string name="backup_back">رجوع</string>
+    <string name="backup_intro">صدّر نسخة من بيانات DSH في ملف أرشيف واحد. لا يحتوي الأرشيف أبدًا على بيانات اعتماد خاصة بالجهاز.</string>
+    <string name="backup_scope_section">نطاق النسخ</string>
+    <string name="backup_scope_full">الكل</string>
+    <string name="backup_scope_full_desc">الجلسات والإعدادات والإضافات في أرشيف واحد.</string>
+    <string name="backup_scope_sessions">الجلسات</string>
+    <string name="backup_scope_sessions_desc">جلسات المحادثة وسجل مرفقاتها.</string>
+    <string name="backup_scope_settings">الإعدادات</string>
+    <string name="backup_scope_settings_desc">ملف إعدادات DSH فقط.</string>
+    <string name="backup_scope_plugins">الإضافات</string>
+    <string name="backup_scope_plugins_desc">الإضافات والملفات الشخصية المثبَّتة.</string>
+    <string name="backup_export_button">تصدير إلى التنزيلات</string>
+    <string name="backup_export_running">جارٍ التصدير…</string>
+    <string name="backup_export_ok">تم تصدير %1$s (%2$s، السلامة %3$s)</string>
+    <string name="backup_export_skipped">تم تخطي %1$d عنصرًا</string>
+    <string name="backup_export_failed">فشل التصدير: %1$s</string>
+    <string name="backup_settings_entry">النسخ الاحتياطي والاستعادة</string>
 </resources>

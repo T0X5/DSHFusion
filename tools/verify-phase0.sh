@@ -2603,6 +2603,31 @@ PYI
         CR_BAD=1
     fi
 
+    # ②e Kotlin 桥：三处决策都可能静默出错，逐条钉住。
+    BRIDGE="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExportBridge.kt"
+    if [[ -f "$BRIDGE" ]]; then
+        ok "范围 → 成员的 Kotlin 桥在位"
+        # v5Scope 必须取自 DshBackupMember，不许自己拼字符串
+        expect 0 "桥里的 v5 范围名取自 DshBackupMember.v5Scope（不自己拼）" \
+            grep -q 'member.v5Scope' "$BRIDGE"
+        # external 必须恒 false —— 它决定 integrity 字段，而保留策略按那个字段删文件
+        expect 0 "桥把 external 固定为 false（所有成员都在应用自己的 user-data 里）" \
+            grep -q 'member.v5Scope, false' "$BRIDGE"
+        # 反向那条要**有针对性**：裸的 `true)` 会匹配到别的东西，
+        # 而这里要证的就是「Member 的第四个参数不是 true」。
+        expect 1 "桥里没有把 Member 的 external 参数写成 true" \
+            grep -qE 'DshBackupExporter\.Member\([^)]*true\)' "$BRIDGE"
+        # 坐标系：不许在 Kotlin 侧提前拼前缀（两边都拼一次会让排除一条都不命中）
+        expect 1 "桥没有在 Kotlin 侧提前拼成员前缀（拼接归 Java 侧，那里有测试）" \
+            grep -qE 'member\.path *\+' "$BRIDGE"
+        # 文件名必须走 archiveName（那条「部分备份不能用全量名字」的不变式）
+        expect 0 "归档名走 DshBackupScope.archiveName（不自己拼前缀）" \
+            grep -q 'archiveName(stamp, ARCHIVE_EXTENSION)' "$BRIDGE"
+    else
+        fail "找不到范围 → 成员的 Kotlin 桥 DshBackupExportBridge.kt"
+        CR_BAD=1
+    fi
+
     # ③ 它必须真的被声明为「本机编不了」，而不是碰巧没被扫到。
     if grep -q '"AndroidBackupFileSystem.java"' "$ROOT/tools/run-backup-jvm-tests.sh"; then
         ok "本机编译的排除表里声明了 AndroidBackupFileSystem.java"
@@ -2739,6 +2764,128 @@ p.write_text(p.read_text(encoding='utf-8') + '\n' + '填充' * 900 + '\n', encod
 else
     fail "找不到 AGENTS.md"
     CR_BAD=1
+fi
+
+section "5t. 备份与恢复界面（阶段 2.6 第 ④ 段）"
+
+# i18n 门禁由 android.yml 跑，但**本机套件里一直没有** ——
+# 于是一条「加文案时忘了某个语言」的错只能等 CI（十几分钟）才发现。
+# 它本机跑只要一两秒，没有理由不在这里也跑一次。
+if [[ -f "$ROOT/tools/i18n_check.sh" ]]; then
+    expect 0 "i18n 门禁：六语文案键位/占位符/复数形态一致，且无硬编码中文" \
+        bash "$ROOT/tools/i18n_check.sh"
+else
+    fail "找不到 tools/i18n_check.sh"
+    CR_BAD=1
+fi
+
+SCREEN="$ROOT/app/src/main/java/com/dshbox/app/ui/settings/BackupScreen.kt"
+if [[ -f "$SCREEN" ]]; then
+    ok "导出界面 BackupScreen.kt 在位"
+
+    # ① 它必须真的被挂进设置页，否则是一个没人能打开的界面。
+    if grep -q 'BackupScreen(' "$ROOT/app/src/main/java/com/dshbox/app/ui/settings/SettingsScreen.kt"; then
+        ok "导出界面已挂进设置页（覆盖式，与 DshUpdateScreen 同一套写法）"
+    else
+        fail "BackupScreen 没有被任何地方挂载 —— 界面存在但打不开"
+        CR_BAD=1
+    fi
+
+    # ② 入口文案必须走资源，不许硬编码（第 4/4 项 CJK 扫描也会查，但那条只覆盖 .kt 的
+    #    引号内中文；英文硬编码它看不见）。
+    expect 0 "导出界面用 AndroidBackupFileSystem（不自己实现文件系统）" \
+        grep -q 'AndroidBackupFileSystem()' "$SCREEN"
+    expect 0 "导出界面走 Kotlin 桥取成员与排除清单（不自己拼范围）" \
+        grep -q 'DshBackupExportBridge.members' "$SCREEN"
+    expect 0 "导出界面走 Kotlin 桥取排除清单" \
+        grep -q 'DshBackupExportBridge.exclusions' "$SCREEN"
+
+    # ③ 任务目录必须在 user-data **之外**，否则上游会抛 TASK_INSIDE_SOURCE。
+    #    这里只能查「用的是 cacheDir」—— 真正的判定在本机 Java 测试里。
+    expect 0 "任务目录建在 cacheDir 下（不在 user-data 里）" \
+        grep -q 'File(cacheDir, TASK_ROOT_NAME)' "$SCREEN"
+
+    # ④ 产物必须**走 MediaStore**，不许用已废弃的公共目录 API ——
+    #    minSdk 29 起是分区存储，后者要么拿不到权限、要么要求整盘授权。
+    #    ⚠️ **第二次栽在同一个坑里**（第 35 条）：第一版我直接 grep 整个文件，
+    #    而这条断言被我**自己的 KDoc** 触发了 —— 我在注释里写「走 MediaStore
+    #    而不是 `Environment.getExternalStoragePublicDirectory`」，解释得越清楚越容易命中。
+    #    **检查的输入空间里不该有关于被查对象的散文。** 所以先剥注释再看。
+    if python3 - "$SCREEN" <<'PYI'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+# 先去掉块注释（KDoc）再去掉行注释，只留代码
+text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+text = re.sub(r"//[^\n]*", "", text)
+sys.exit(1 if "getExternalStoragePublicDirectory" in text else 0)
+PYI
+    then
+        ok "代码里没有用已废弃的 getExternalStoragePublicDirectory（注释里的提及不算）"
+    else
+        fail "代码里用了已废弃的 getExternalStoragePublicDirectory —— minSdk 29 起是分区存储，它拿不到写权限"
+        CR_BAD=1
+    fi
+    expect 0 "走 MediaStore 的下载集合" \
+        grep -q 'MediaStore.Downloads.EXTERNAL_CONTENT_URI' "$SCREEN"
+    # IS_PENDING：写完之前别的应用看不到半个文件。
+    expect 0 "写入用 IS_PENDING 起头（别处看不到半成品）" \
+        grep -q 'MediaStore.MediaColumns.IS_PENDING, 1' "$SCREEN"
+
+    # ⑤ 失败路径必须清掉任务目录 —— 半成品看起来像一份可用的备份。
+    expect 0 "无论成败都清掉任务目录" \
+        grep -q 'task.deleteRecursively()' "$SCREEN"
+
+    # ⑥ 结果的界面文案**不许**做成 sealed interface 的 Composable 成员：
+    #    `runExport` 是纯函数，结果类型不该反过来依赖 Compose。
+    #    ⚠️ 第一版我写的是 `grep -qE 'sealed interface ExportOutcome[\s\S]*@Composable'` ——
+    #    **那条断言永远绿**：grep 是按行匹配的，跨行模式一个字符都匹配不上，
+    #    于是它无论代码怎么写都退 1（= 通过）。第 30 条的原样复发。
+    #    改成真的把那段区块切出来再看。
+    if python3 - "$SCREEN" <<'PYI'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+start = text.index("sealed interface ExportOutcome")
+# 用花括号配平切出整个区块（而不是找下一个 `}` —— 里面还有嵌套的 data class）
+depth = 0
+for i in range(start, len(text)):
+    if text[i] == "{":
+        depth += 1
+    elif text[i] == "}":
+        depth -= 1
+        if depth == 0:
+            block = text[start : i + 1]
+            break
+else:
+    sys.exit(2)
+sys.exit(1 if "@Composable" in block else 0)
+PYI
+    then
+        ok "ExportOutcome 里没有 Composable 成员（结果类型不依赖 Compose）"
+    else
+        fail "ExportOutcome 里有 Composable 成员 —— 结果类型反过来依赖了 Compose，runExport 就不能在无 Compose 的地方断言了"
+        CR_BAD=1
+    fi
+else
+    fail "找不到导出界面 BackupScreen.kt"
+    CR_BAD=1
+fi
+
+# ⑦ 反向：界面上出现的每个 backup_* 文案键，六份资源里都必须有。
+#    这一条与 i18n 门禁**不重复**：门禁查的是六份之间一致，
+#    而它能允许「六份都没有某个键」—— 那样界面会在运行时抛。
+MISSING=""
+for key in $(grep -oE 'R\.string\.backup_[a-z_]+' "$SCREEN" 2>/dev/null | sed 's/R\.string\.//' | sort -u); do
+    for lang in values values-zh values-ar values-es values-fr values-ru; do
+        if ! grep -q "name=\"$key\"" "$ROOT/app/src/main/res/$lang/strings.xml"; then
+            MISSING="$MISSING $key($lang)"
+        fi
+    done
+done
+if [ -n "$MISSING" ]; then
+    fail "导出界面引用的文案键有缺失：$MISSING"
+    CR_BAD=1
+else
+    ok "导出界面引用的每个 backup_* 文案键在六份资源里都在"
 fi
 
 section "6. 上游仓库未被修改（只读审计承诺）"
