@@ -3271,6 +3271,81 @@ else
     CR_BAD=1
 fi
 
+section "5w. 交给文件系统的路径必须规范化（真机上红过两次）"
+
+# 🔴 真机上**同一个错误码红了两次**：`PARENT_LINK`。
+#
+# 第一次是导出（`userDataDir`/`taskDir`/`destination` 没规范化）；
+# 第二次是恢复（`userData`/`taskDir` 修了，**`archive` 漏了** —— 一个参数之隔）。
+#
+# 根因都是：Android 的 `/data/user/0` 是指向 `/data/data` 的符号链接，
+# 而 `AndroidBackupFileSystem` 逐级用 `O_NOFOLLOW` 走父目录、见链接即拒。
+# 所以**凡是交给 `BackupFileSystem` 的路径都必须先 `DshHostPaths.canonical()`**。
+#
+# 这条规则没法靠「记得」—— 两次都是「我修了想到的那几个参数」而不是「所有路径」。
+# 所以这里把它变成一条**结构性断言**：这两个编排类的**代码**里不许出现
+# `getAbsoluteFile()`（`getCanonicalFile()` 才是对的）。
+for ORCH in "$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExporter.java" \
+            "$ROOT/backup/src/main/java/com/dshbox/app/backup/DshRestoreOrchestrator.java"; do
+    NAME="$(basename "$ORCH")"
+    # ⚠️ 剥注释再查 —— 我在两个文件里都**写注释解释过**「不是 getAbsoluteFile()」，
+    # 不剥注释这条检查会被我自己的说明文字命中（同一族问题的第 7 次）。
+    if python3 - "$ORCH" <<'PYW'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+code = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+code = re.sub(r"(?m)^\s*//.*$", "", code)
+sys.exit(1 if "getAbsoluteFile()" in code else 0)
+PYW
+    then
+        ok "$NAME 的代码里没有 getAbsoluteFile()（路径都走 DshHostPaths）"
+    else
+        fail "$NAME 的代码里出现了 getAbsoluteFile() —— 它不解析符号链接，真机上会以 PARENT_LINK 失败"
+        CR_BAD=1
+    fi
+done
+
+# 三个入口参数都必须显式规范化（导出三个、恢复三个 —— 恢复的 archive 就是漏掉的那个）。
+for SPEC in "DshBackupExporter.java:canonical(userDataDir)" \
+            "DshBackupExporter.java:canonical(taskDir)" \
+            "DshBackupExporter.java:canonical(destination)" \
+            "DshRestoreOrchestrator.java:canonical(userData)" \
+            "DshRestoreOrchestrator.java:canonical(taskDir)" \
+            "DshRestoreOrchestrator.java:canonical(archive)"; do
+    F="${SPEC%%:*}"; PAT="${SPEC#*:}"
+    if grep -q "DshHostPaths.$PAT" "$ROOT/backup/src/main/java/com/dshbox/app/backup/$F"; then
+        ok "$F 规范化了 ${PAT#canonical(}"
+    else
+        fail "$F 没有规范化 ${PAT#canonical(} —— 真机上它会以 PARENT_LINK 失败"
+        CR_BAD=1
+    fi
+done
+
+# 注入：把恢复编排里的 archive 规范化撤掉（**真机上第二次红的那个原状**），上面必须变红。
+W_BAK="$(mktemp)"
+W_SRC="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshRestoreOrchestrator.java"
+cp "$W_SRC" "$W_BAK"
+W_BEFORE="$(sha256sum "$W_SRC" | cut -d' ' -f1)"
+sed -i 's|    File stagedArchive = DshHostPaths.canonical(archive);|    File stagedArchive = archive;|' "$W_SRC"
+W_AFTER="$(sha256sum "$W_SRC" | cut -d' ' -f1)"
+if [ "$W_BEFORE" = "$W_AFTER" ]; then
+    fail "注入**没有生效**（锚点没匹配上）—— 这条注入需要修，不是检查需要修"
+    CR_BAD=1
+elif grep -q 'DshHostPaths.canonical(archive)' "$W_SRC"; then
+    fail "撤掉 archive 的规范化之后，上面那条没有变红"
+    CR_BAD=1
+else
+    ok "注入：撤掉 archive 的规范化 → 会红（抓得住真机上第二次那个 PARENT_LINK）"
+fi
+cp "$W_BAK" "$W_SRC"
+rm -f "$W_BAK"
+if grep -q 'DshHostPaths.canonical(archive)' "$W_SRC"; then
+    ok "复原后 archive 重新规范化"
+else
+    fail "复原失败 —— 注入没被还原干净"
+    CR_BAD=1
+fi
+
 section "6. 上游仓库未被修改（只读审计承诺）"
 
 for d in "$ROOT/../audit/DSHA" "$ROOT/../audit/DSHBox"; do

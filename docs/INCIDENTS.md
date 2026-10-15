@@ -2783,3 +2783,74 @@ val CREDENTIALS: List<String> = listOf(".dsh/credentials")
   而这正是「没有真机验证不得标记为成功」那条硬约束要挡的事。
 - **同一个坑的第 6 次**：我在清单的 KDoc 里写了「现在改成引用 `CredentialProjection.FILE`」，
   于是注入之后那条 grep **仍然命中注释**、检查没红。剥注释才修好。
+
+
+## 补记（第 39 条同一族，第 2 次）：修好导出，恢复又红同一个 `PARENT_LINK`
+
+### 发生了什么
+
+用户修好导出、装上包、进「从归档恢复」→ 选归档 → **确认恢复**：
+
+```
+恢复失败：PARENT_LINK
+```
+
+**同一个错误码，第二次。** 而上一轮我明明修了它 —— 修的是**导出**那条路径。
+
+### 根因：同一个方法、同一类错误、**一个参数之隔**
+
+上一轮我把导出编排的三个参数都规范化了：
+
+```java
+File home = DshHostPaths.canonical(userDataDir);
+File task = DshHostPaths.canonical(taskDir);
+File target = DshHostPaths.canonical(destination);
+```
+
+而恢复编排里我只改了两个：
+
+```java
+File homeDir = DshHostPaths.canonical(userData);
+File taskRoot = DshHostPaths.canonical(taskDir);
+// archive —— **没动**
+...
+NativeRestorePlan.inspect(fs, taskDirectory, archive, mapping, …);   // ← 原样交出去
+```
+
+界面把归档暂存在 `cacheDir/restore-task/picked-xxx.dshbak`，而 `cacheDir` 是
+`/data/user/0/<包名>/cache`（含符号链接）→ `fs.read(archive, …)` 逐级
+`O_NOFOLLOW` 走父目录 → 走到 `0` 那一级就拒。
+
+### 我修的是「我想到了的那几个参数」，不是「所有交给 fs 的路径」
+
+这与第 39 条的教训是同一句话，只是这次它落在了**同一个方法的另一个参数**上：
+
+> 第 39 条：`HostRestoreMapping` 用了 canonical、编排用了 absolute —— **同一仓库里两种写法**。
+> 这一条：同一个 `inspect()` 里，两个参数 canonical、一个参数 absolute —— **同一个方法里两种写法**。
+
+**范围一次比一次小，而错误的形态一模一样。** 这说明「逐个参数修」这个方法本身是错的 ——
+它依赖于我每次都把所有参数想全，而我两次都没想全。
+
+### 修法：把规则变成结构性的
+
+除了补上 `archive`，新增套件 5w 节，把规则钉成两条：
+
+1. **这两个编排类的代码里不许出现 `getAbsoluteFile()`**（`getCanonicalFile()` 才是对的）；
+2. **六个入口参数逐个点名**（导出三个 + 恢复三个）都必须显式规范化 ——
+   少一个就红。
+
+并带一条注入：把 `archive` 的规范化撤掉（真机上第二次红的原状），必须变红。
+
+### 顺带修的一个文案 bug
+
+用户同一张截图里还有一处：范围说明显示成 `**不含凭据**` —— **Markdown 的星号被当成正文显示了**。
+Android 的 string 资源不解释 Markdown。我在中文里写了 `**`、其他五个语言里没写 ——
+这本身也是个不一致。已全部清掉。
+
+### 教训
+
+- **「修了一处」不等于「这一类修好了」。** 第 39 条之后我本可以写一条
+  「凡是交给 fs 的路径都要 canonical」的**结构性**检查 —— 我当时只修了参数。
+  代价是用户又跑了一轮真机、我又烧了一轮 CI。
+- **两次都是「我以为我想全了」。** 而唯一能替代「想全」的，是让机器每次现场判一遍 ——
+  这正是 5w 节做的事。

@@ -619,11 +619,11 @@
     <string name="backup_intro">把 DSH 数据导出成一份归档文件。归档里不会有机器本地凭据。</string>
     <string name="backup_scope_section">备份范围</string>
     <string name="backup_scope_full">全部</string>
-    <string name="backup_scope_full_desc">会话、设置、插件，以及**投影后的凭据**合成一份。换设备时用这一份。</string>
+    <string name="backup_scope_full_desc">会话、设置、插件，以及投影后的凭据合成一份。换设备时用这一份。</string>
     <string name="backup_scope_sessions">会话</string>
     <string name="backup_scope_sessions_desc">聊天会话、附件登记表，以及 WebUI 用来列出这些会话的注册表。</string>
     <string name="backup_scope_settings">设置</string>
-    <string name="backup_scope_settings_desc">只备份 DSH 的设置文件。**不含凭据** —— 凭据跟着「全部」走。</string>
+    <string name="backup_scope_settings_desc">只备份 DSH 的设置文件。不含凭据 —— 凭据跟着「全部」走。</string>
     <string name="backup_scope_plugins">插件</string>
     <string name="backup_scope_plugins_desc">已安装的插件与它们的配置档。</string>
     <string name="backup_export_button">导出到下载目录</string>

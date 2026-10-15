@@ -176,9 +176,21 @@ public final class DshRestoreOrchestrator {
     // 否则 Android 的 `/data/user/0` 符号链接会让它抛 `PARENT_LINK`。
     File homeDir = DshHostPaths.canonical(userData);
     File taskRoot = DshHostPaths.canonical(taskDir);
+    // ⚠️ **`archive` 也要规范化，我上一轮漏了它。**
+    //
+    // 上一轮我修的是导出路径（`userDataDir`/`taskDir`/`destination` 三个都规范化了），
+    // 而恢复路径里我只改了 `userData` 与 `taskDir` —— **一个参数之隔**，
+    // 于是真机上点「确认恢复」报的还是同一个 `PARENT_LINK`：
+    // 界面把归档暂存在 `cacheDir/restore-task/picked-xxx.dshbak`，
+    // 而 `cacheDir` 是 `/data/user/0/<包名>/cache`（含符号链接）。
+    // `fs.read(archive, …)` 逐级 `O_NOFOLLOW` 走父目录，走到 `0` 那一级就拒。
+    //
+    // **同一个方法、同一类错误、一个参数之隔。** 规律很清楚：
+    // 我修的是「我想到了的那几个参数」，不是「所有交给 fs 的路径」。
+    File stagedArchive = DshHostPaths.canonical(archive);
     if (!taskRoot.isDirectory()) throw new IOException("TASK_DIRECTORY_MISSING");
     if (isInside(homeDir, taskRoot)) throw new IOException("TASK_INSIDE_SOURCE");
-    if (!archive.isFile()) throw new IOException("ARCHIVE_MISSING");
+    if (!stagedArchive.isFile()) throw new IOException("ARCHIVE_MISSING");
 
     // **自己建 UUID 子目录**，而不是要求调用方给一个 UUID 名字的目录。
     //
@@ -207,7 +219,7 @@ public final class DshRestoreOrchestrator {
     try {
       built =
           NativeRestorePlan.inspect(
-              fs, taskDirectory, archive, mapping, new LinkedHashSet<>(selectedScopes), control);
+              fs, taskDirectory, stagedArchive, mapping, new LinkedHashSet<>(selectedScopes), control);
     } catch (IOException unreadable) {
       // 🔴 **上游对「归档被截断」抛的异常 message 是 null。**
       //
