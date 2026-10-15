@@ -800,6 +800,16 @@
         "local_path": "backup/src/test/java/com/dshbox/app/backup/DshRestoreOrchestratorTest.java",
         "why": "上面那个的行为测试。两条特别值得留：① `inspectAndPrepareDoNotTouchExistingData` 对目标树**逐文件取摘要**，在 inspect 与 prepare 之后各比一次，并在 commit 之后断言摘要**必须变了** —— 少了最后那半句，前两条会在「恢复其实什么都没做」时也绿；② `changedTargetBetweenInspectAndPrepareIsRefused` 证明上游的 `TARGET_CHANGED` 真的接在了链路上，少接一步，用户在这段时间里的改动会被静默覆盖。",
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真编译真运行，13 条）"
+      },
+      {
+        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRunner.java",
+        "why": "自动备份：到期判定 → 导出 → 保留策略。把三个各自有测试的东西接起来（`AutomaticBackupPolicy` 逐字节导入 / `DshBackupExporter` / `DshAutomaticBackupRetention`），**自己不重新实现其中任何一条**。\n\n**顺序是它存在的理由：先导出、后清理。** 反过来在导出失败时会**净损失**（旧的被删了、新的没生成）；先导出后清理，最坏只是多留一份旧备份。\n\n它还要**读每份归档的清单**（保留策略的判据是归档自己声明的 `operation`/`integrity`），所以必须容忍「某一份读不了」：读不了的**既不删也不计数**，如实报出来 —— 否则一份半截的归档会占掉「保留 3 份」里的一个位置，把一份好的挤掉。\n\n收纯数据，不 import Kotlin 类型（`archiveName` 由调用方按范围给 —— 那条「部分备份不能用全量名字」的不变式在 `DshBackupScope` 里，绕过去等于废掉它）。",
+        "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshAutomaticBackupRunnerTest.java（本机真跑）；tools/verify-phase0.sh 的 5u 节"
+      },
+      {
+        "local_path": "backup/src/test/java/com/dshbox/app/backup/DshAutomaticBackupRunnerTest.java",
+        "why": "上面那个的 11 条行为测试。两条最要紧：① `aFailedExportDeletesNothing` —— 造 5 份旧备份、让导出撞名失败、断言**一份不少**（这是「先导出后清理」的行为证据）；② `unreadableArchivesAreNeitherDeletedNorCountedButAreReported` —— 一份读不了的归档不许参与计数（否则它会把一份好的挤掉，那是静默的数据损失）。\n\n⚠️ 我在这份测试里**两次数错了自己造的数据**：`NOW` 常量的年份算错、以及把 4 份自动备份写成「2 旧 + 1 新」。两次红的都是我的算术，不是实现（第 27 条同族）。",
+        "verified_by": "tools/run-backup-jvm-tests.sh（本机真编译真运行，11 条）"
       }
     ]
   }

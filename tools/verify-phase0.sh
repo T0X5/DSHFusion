@@ -2463,17 +2463,76 @@ assert t.count(old) == 1, m
 p.write_text(t.replace(old, new), encoding="utf-8")
 PYR
 }
+# 每个方向**允许哪些测试类红**。
+#
+# ⚠️ 原来这里查的是「恰好 1 条红」。那条判据在 2.6 之后失效了 —— 因为
+# `DshAutomaticBackupRunnerTest` 也在守同一条规则（取消失效后，
+# 「手动/救援永不参与计数」那条也会红）。**红得多不是变松，是覆盖变多。**
+#
+# 但也不能退成「至少 1 条红」—— 那等于放弃了「红的是这条规则的守卫」这个判据。
+# 所以改成：**每一处红都必须在名单里，而且名单里每一条都真的红了。**
+# 这比数数更强：多出一个不在名单里的红，或者名单里有一条没红，都会判失败。
 RET_INJ_BAD=0
+RET_OUT="$(mktemp)"
+
+# ⚠️ **不要再 `RET_BAK="$(mktemp)"` 一次。** 上面 2446 行已经建好了那份**干净**备份；
+# 我第一版在这里又建了一个，于是 `cp "$RET_BAK" "$RET"` 变成把**一个空文件**拷回源码 ——
+# 而报错是「移除注入后本机编译仍未通过」，看起来像「还原没生效」，
+# 实际是「还原把文件清空了」。**两个同名变量指向两份不同的东西**（第 33 条同族）。
+
+# ⚠️ **兜底还原。** 这一节会在循环里改一个上游导入的文件，而循环里的还原
+# 只在正常走到那一行时才执行。实测发生过：某次注入让脚本在循环中途退出
+# （`set -u` 撞到一个未绑定的变量），`DshAutomaticBackupRetention.java` 就**带着变异留在了工作区**，
+# 而后面每一节看到的都是一个被改坏的仓库 —— 我为此白白困惑了好几轮。
+# 所以挂一个 EXIT trap：无论怎么退出，先把这个文件还原。
+trap 'cp "$RET_BAK" "$RET" 2>/dev/null; rm -f "$RET_OUT" "$RET_BAK"' EXIT
 for MODE in operation integrity keepzero tie; do
     RET_INJ "$MODE"
-    RUN=$(bash tools/run-backup-jvm-tests.sh 2>&1 | grep -oE 'Tests run: [0-9]+,  Failures: [0-9]+' | head -1)
-    case "$RUN" in
-        *"Failures: 1") : ;;
-        *) fail "注入 $MODE 之后没有恰好 1 条红（实际：${RUN:-没跑到}）—— 这条规则的守卫不成立"
-           RET_INJ_BAD=1 ;;
+    OUT=$(bash tools/run-backup-jvm-tests.sh 2>&1)
+    RUN=$(printf '%s' "$OUT" | grep -oE 'Tests run: [0-9]+,  Failures: [0-9]+' | head -1)
+    # 收集**红了的测试类**并把「每一处红都在名单里、名单里每条都红了」判掉。
+    #
+    # ⚠️ 这一段原本是用 bash 的 `sed` + `case` 写的，**单引号数成了奇数**
+    # （我的 Python 转义多吐出一个 `\(`），于是整个脚本 `bash -n` 就过不去了 ——
+    # 而我当时把「bash -n && echo 语法 OK」和运行放在同一条命令里，
+    # 短路让它一声不吭，我直到下一轮才发现。**判据越复杂，越该交给 Python。**
+    # 名单写成 `case` 而不是「变量名拼接 + eval」。两个原因：
+    # ① 静态检查器看不见 eval 里对变量的引用，会报四声 SC2034（"appears unused"）；
+    # ② eval 本身是本文件这一节里最脆的一段（见上面那段注释）。
+    #
+    # ⚠️ 我第一版这条注释是**以「井号 + 工具名」开头**的，于是那个工具把注释当成了
+    # **指令**去解析，报出 `SC1072 / SC1073` 两个语法错 —— 位置还指着这行注释本身。
+    # 检查器的指令语法与普通注释在同一行里长得一样，这是它们的固有歧义。
+    case "$MODE" in
+        operation) ALLOWED="DshAutomaticBackupRetentionTest DshAutomaticBackupRunnerTest" ;;
+        integrity | keepzero | tie) ALLOWED="DshAutomaticBackupRetentionTest" ;;
+        *) ALLOWED="" ;;
     esac
+    printf '%s' "$OUT" > "$RET_OUT"
+    if python3 - "$RET_OUT" "$ALLOWED" <<'PYJ'
+import pathlib, re, sys
+out = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+allowed = set(sys.argv[2].split())
+# 取**简单类名**：名单里写的是简单名，而 JUnit 打的是全限定名。
+# 我第一版拿两者直接比，于是四个方向**全都**报「名单不匹配」——
+# 而真实原因是格式不同，不是守卫不对（第 32 条同族：规则比意图窄/宽）。
+red = {n.rsplit(".", 1)[-1] for n in re.findall(r"^\d+\) [A-Za-z0-9_]+\((com\.[A-Za-z0-9_.]+)\)", out, re.M)}
+# 两向都要满足：不许有名单外的红（说明注入波及了别的东西），
+# 也不许名单里有没红的（说明那个守卫其实没守住）。
+ok = bool(red) and red <= allowed and allowed <= red
+if not ok:
+    print(f"red={sorted(red)} allowed={sorted(allowed)}", file=sys.stderr)
+sys.exit(0 if ok else 1)
+PYJ
+    then
+        :
+    else
+        fail "注入 $MODE 的红色守卫不对（${RUN:-没跑到}）—— 见上一行的 red/allowed"
+        RET_INJ_BAD=1
+    fi
     cp "$RET_BAK" "$RET"
 done
+rm -f "$RET_OUT"
 if [ "$RET_INJ_BAD" = "0" ]; then
     ok "保留策略四个方向都能变红（operation 过滤 / 完整性过滤 / keep 下限 / 平局次序）"
 else
@@ -2990,6 +3049,55 @@ if [ -n "$MISSING" ]; then
     CR_BAD=1
 else
     ok "导出界面引用的每个 backup_* 文案键在六份资源里都在"
+fi
+
+section "5u. 自动备份的顺序（阶段 2.6 第 ⑥ 段的核心）"
+
+# 「先导出、后清理」不是审美：反过来在导出失败时会**净损失**
+# （旧的被删了、新的没生成）。先导出后清理，最坏只是多留一份旧备份。
+#
+# 这条性质由 `DshAutomaticBackupRunnerTest.aFailedExportDeletesNothing` 在行为上证
+# （造 5 份旧备份 → 让导出撞名失败 → 断言一份不少）。这里再加一条**位置**断言：
+# 两次调用的先后必须在源码里就是对的 —— 行为断言只在「失败路径真的被触发」时才有意义，
+# 而位置断言在任何一次运行里都成立。
+#
+# ⚠️ **诚实边界：这条断言我做的注入是「把导出调用整个改名」**（位置变成 -1），
+# 那证明的是「它**能**红」，**不是**「它抓得住真正的重排序」。
+# 真正的重排序要同时搬动 `long bytes;` 的声明，我做的那次文本手术锚点没匹配上、
+# **文件根本没被改**（而当时的输出看起来像「注入生效了」）。
+# 语义那一半由上面那条行为测试覆盖 —— 若实现真反过来，它会红。
+# 两半合起来才完整，谁也不替代谁。
+RUNNER="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRunner.java"
+if [[ -f "$RUNNER" ]]; then
+    ok "自动备份运行器 DshAutomaticBackupRunner.java 在位"
+    if python3 - "$RUNNER" <<'PYI'
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+i_export = text.find("DshBackupExporter.export(")
+i_retention = text.find("DshAutomaticBackupRetention.select(")
+sys.exit(0 if 0 <= i_export < i_retention else 1)
+PYI
+    then
+        ok "先导出、后清理（源码里的先后就是对的）"
+    else
+        fail "导出与清理的先后不对（或找不到其中一处）—— 反过来的话，导出失败会净损失旧备份"
+        CR_BAD=1
+    fi
+    # 反向：清理只许碰 `expired`，不许自己拼一套「删最旧的」。
+    expect 0 "清理走保留策略的 expired 列表" \
+        grep -q 'retention.expired' "$RUNNER"
+    # 读不了的归档不许参与删除也不许计数。
+    expect 0 "读不了的归档返回 null 而不抛（不删、不计数、如实报）" \
+        grep -q 'catch (IOException unreadable)' "$RUNNER"
+    # 任务目录必须清干净（半成品留在 cache 里看起来像可用的备份）。
+    expect 0 "无论成败都清掉任务目录" \
+        grep -q 'deleteTree(task)' "$RUNNER"
+    # 文件名不许自己拼 —— 必须由调用方按范围给（那条「部分备份不能用全量名字」的不变式）。
+    expect 1 "没有在运行器里自己拼归档名前缀" \
+        grep -q 'DSHFusion-backup-' "$RUNNER"
+else
+    fail "找不到 DshAutomaticBackupRunner.java"
+    CR_BAD=1
 fi
 
 section "6. 上游仓库未被修改（只读审计承诺）"
