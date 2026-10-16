@@ -328,47 +328,6 @@ def handle_div_0008(entry) -> tuple[str, str]:
 
 
 
-NOTICE = """DSHFusion
-Copyright (C) 2026 DSHFusion authors
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
----
-
-**为什么本仓库是 GPL-3.0**（2026-10-16 决定）
-
-骨干是 DSHBox（GPL-3.0），本仓库是它的衍生作品。**作者决定把仓库从私有改为公开**
-（截至本文件写下时，可见性切换**尚未执行** —— 它是作者手动做的一步）。
-
-**公开 = 对外分发 ⇒ 必须按 GPL-3.0 分发。** 这不是新加的限制，而是
-**原来就存在的义务，只是在私有期间没有触发**。所以许可**提前**就位：
-切可见性之前把 LICENSE 改对，而不是之后。
-
-这条决定反转了先前的 `DIV-0009`（那时根 LICENSE 放的是「许可状态：私有自用」的说明，
-为的是不让 GitHub 对外声称一个本仓库没做出的承诺）。现在承诺变了，说明也该变。
-
-理由、义务与保留的上游原件见 [LICENSE-NOTES.md](LICENSE-NOTES.md) 与
-[governance/ATTRIBUTION.md](governance/ATTRIBUTION.md)。
-
-以下为 **GNU General Public License version 3** 全文
-（与 `governance/upstream-licenses/DSHBox/LICENSE` 保存的那份一致）：
-
-================================================================================
-
-"""
-
-
 def handle_div_0001(entry) -> tuple[str, str]:
     """applicationId 与版本线归我们自己。
 
@@ -1062,33 +1021,40 @@ def handle_div_0009(entry) -> tuple[str, str]:
         return FAILED, "根目录 LICENSE 不存在 —— 公开分发时这是致命的"
 
     text = read(root_license)
-    is_gpl = "GNU GENERAL PUBLIC LICENSE" in text
-    has_ours = "DSHFusion" in text[:600]
 
-    if is_gpl and has_ours:
-        return OK, "根 LICENSE 是 GPL-3.0 全文（含我们的版权声明），且上游原件仍在且哈希一致"
+    # 🔴 **判据就一条：根 LICENSE 与受保护原件逐字节相同。**
+    #
+    # 早先的写法是「通知头 + 原件」，于是通知头成了**第二处真相**
+    # （handler 里的字面量 vs 已提交的文件），漂移时没有任何断言会红。
+    # 实测还踩了第二个坑：**加了通知头之后 GitHub 的许可证识别把本仓库标成
+    # `Other / NOASSERTION`** —— 也就是说，为了让版权声明显眼，反而让
+    # 「本仓库是 GPL-3.0」这件事对外不可见了。
+    #
+    # 现在的设计是标准做法：`LICENSE` 是**未经改动**的 GPL-3.0 全文，
+    # 版权声明放 `LICENSE-NOTES.md`。于是判据只剩一条、也没有第二处真相。
+    if text == read(protected):
+        return OK, "根 LICENSE 与受保护的上游 GPL-3.0 原件逐字节相同"
 
     if CHECK_ONLY:
-        if not is_gpl:
+        if "GNU GENERAL PUBLIC LICENSE" not in text:
             return FAILED, (
                 "根 LICENSE 不含 GPL-3.0 全文 —— 本仓库公开分发，"
                 "这是「分发时没有许可」，必须先修（见 LICENSE-NOTES.md）"
             )
-        return FAILED, "根 LICENSE 里没有 DSHFusion 的版权声明（GPL-3.0 要求保留版权声明）"
+        return FAILED, (
+            "根 LICENSE 不是未经改动的 GPL-3.0 全文（与受保护原件有差异）—— "
+            "改动它会同时让 GitHub 的许可证识别退化成 `Other / NOASSERTION`；"
+            "我们的版权声明应放在 LICENSE-NOTES.md"
+        )
 
-    # 重放：用「通知头 + 受保护的上游原件」重建根 LICENSE。
-    # 上游一旦更新 LICENSE，合并会把它的 GPL 全文（没有我们的声明）带回来，这里能自动改回。
+    # 重放：直接用受保护的原件覆盖根 LICENSE
     original = text
-    body = NOTICE + read(protected)
-    write(root_license, body)
+    write(root_license, read(protected))
     files_changed.append(str(root_license))
-
-    after = read(root_license)
-    if "GNU GENERAL PUBLIC LICENSE" not in after or "DSHFusion" not in after[:600]:
+    if read(root_license) != read(protected):
         revert(root_license, original)
-        return FAILED, "重放写出的根 LICENSE 不含 GPL-3.0 全文或我们的版权声明"
-
-    return OK, "根 LICENSE 已重建为「通知头 + GPL-3.0 全文」，上游原件哈希一致"
+        return FAILED, "重放写出的根 LICENSE 与受保护原件不一致"
+    return OK, "根 LICENSE 已重建为未经改动的 GPL-3.0 全文"
 
 
 def handle_div_0013(entry) -> tuple[str, str]:

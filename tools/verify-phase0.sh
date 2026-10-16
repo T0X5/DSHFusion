@@ -1134,32 +1134,37 @@ expect 2 "失败路径：包里没有 AndroidManifest.xml" \
     bash -c "python3 tools/make-apk-identity-fixture.py '$SCRATCH/no-manifest.apk' no-manifest >/dev/null && \
              python3 tools/check-apk-identity.py '$SCRATCH/no-manifest.apk'"
 
-section "5e. 许可状态：根 LICENSE 是 GPL-3.0（公开分发），且上游原件没丢（DIV-0009）"
+section "5e. 许可状态：根 LICENSE 是未经改动的 GPL-3.0（公开分发）"
 
-# 🔴 **这一节的方向在 2026-10-16 反转过一次，反转本身就是它的价值所在。**
+# 🔴 **这一节的方向反转过一次，反转本身就是它的价值所在。**
 #
 # 原方向：根 LICENSE 放「许可状态：私有自用」的说明，**不**声称 GPL-3.0 ——
-# 因为当时仓库私有、不分发，而 GitHub 会据根 LICENSE 对外显示许可，
-# 那会是一个本仓库没做出的承诺（矛盾的是 GitHub 那一侧）。
+# 因为当时仓库私有、不分发，而 GitHub 会据根 LICENSE 对外显示许可。
 #
 # 现方向：仓库**公开 ⇒ 对外分发 ⇒ 骨干 DSHBox 是 GPL-3.0 ⇒ 衍生作品必须同样分发**。
 # 这条义务**原本就存在**，只是私有期间没有触发。
 #
-# **核验必须双向，缺一不可：**
-#   ① 根 LICENSE 含 GPL-3.0 全文 + 我们的版权声明  → 分发时许可必须在那里
-#   ② 受保护的上游原件仍在且哈希一致               → 许可证不许在换位置时消失
-# 只查 ① 会让「上游原件被顺手删掉」无人发现；只查 ② 会让「公开了却没有许可」无人发现。
+# ⚠️ 还踩过第二个坑：一开始把「版权声明通知头」**加在 GPL 正文前面**，
+# 结果 **GitHub 的许可证识别把本仓库标成 `Other / NOASSERTION`** ——
+# 也就是说，为了让版权声明显眼，反而让「本仓库是 GPL-3.0」对外不可见了。
+# 现在按标准做法：`LICENSE` 是未经改动的全文，版权声明放 `LICENSE-NOTES.md`。
+#
+# **判据因此只剩一条，而且它是可以逐字节核的**：
+#   根 LICENSE == governance/upstream-licenses/DSHBox/LICENSE（受保护原件）
+# 这一条同时覆盖了原先的两件事：许可在那里（①），且上游原件没被动过（②）。
 
-if grep -q 'GNU GENERAL PUBLIC LICENSE' LICENSE 2>/dev/null; then
-    ok "根 LICENSE 含 GPL-3.0 全文（公开分发必须有许可）"
+expect 0 "根 LICENSE 与受保护原件逐字节相同（判据只有这一条）" \
+    bash -c "cmp -s LICENSE governance/upstream-licenses/DSHBox/LICENSE"
+if cmp -s LICENSE governance/upstream-licenses/DSHBox/LICENSE; then
+    ok "LICENSE 含未经改动的 GPL-3.0 全文（公开分发必须有许可）"
 else
-    fail "根 LICENSE 不含 GPL-3.0 全文 —— 本仓库是公开分发，这是「分发时没有许可」"
+    fail "根 LICENSE 与受保护原件有差异 —— 改动 GPL 正文会让 GitHub 把本仓库标成 Other/NOASSERTION"
     CR_BAD=1
 fi
-if head -c 600 LICENSE | grep -q 'DSHFusion'; then
-    ok "根 LICENSE 含 DSHFusion 的版权声明"
+if [ -s LICENSE-NOTES.md ] && grep -q 'Copyright (C) 2026 DSHFusion' LICENSE-NOTES.md; then
+    ok "版权声明在 LICENSE-NOTES.md 里（而不是塞进 LICENSE 前面）"
 else
-    fail "根 LICENSE 缺少 DSHFusion 的版权声明（GPL-3.0 要求保留版权声明）"
+    fail "LICENSE-NOTES.md 里找不到 DSHFusion 的版权声明"
     CR_BAD=1
 fi
 expect 0 "受保护的上游 GPL 原件存在且哈希正确（换位置不等于删掉）" \
@@ -1167,37 +1172,13 @@ expect 0 "受保护的上游 GPL 原件存在且哈希正确（换位置不等�
 expect 0 "许可原件核验覆盖 5 个文件" \
     bash -c "python3 tools/check-license-hashes.py 2>&1 | grep -q '5 个文件'"
 
-# ⚠️ **「两处真相」的钉子**：重放时写入的通知头是 apply-divergences.sh 里的一个字面量，
-# 而仓库里已提交的 LICENSE 是它的实例。两者一旦漂移，重放就会产生无谓的 diff，
-# 而**其他任何断言都不会红**（两边单独看都「对」）。
-# 所以这里直接比：通知头 + 受保护原件 == 仓库里的 LICENSE，逐字节。
-if python3 - "$ROOT" <<'PYB'
-import pathlib, sys
-root = pathlib.Path(sys.argv[1])
-lic = (root / "LICENSE").read_text(encoding="utf-8")
-copy = (root / "governance/upstream-licenses/DSHBox/LICENSE").read_text(encoding="utf-8")
-# ⚠️ 必须切在**行首**：GPL 标题那行前面有 20 个缩进空格，
-# 用 index() 直接切会把这 20 个空格吞进通知头，于是「通知头 + 原件」
-# 比真实文件长 20 字节。**这个 bug 在 handler 里也犯过一次** ——
-# 是这条断言先把它抓出来的。
-i = lic.index("GNU GENERAL PUBLIC LICENSE")
-notice = lic[: lic.rfind("\n", 0, i) + 1]
-sys.exit(0 if lic == notice + copy else 1)
-PYB
-then
-    ok "根 LICENSE 逐字节等于「通知头 + 受保护原件」（两处真相没有漂移）"
-else
-    fail "根 LICENSE 不等于「通知头 + 受保护原件」—— apply-divergences.sh 里的 NOTICE 与已提交的 LICENSE 漂移了"
-    CR_BAD=1
-fi
-
-# 故障注入 ①：把受保护的原件删掉 → 必须失败。
-# 不注入就只是在测「happy path 能过」，测不到安全网。
 GPL_COPY="governance/upstream-licenses/DSHBox/LICENSE"
 GPL_BAK="$SCRATCH/GPL.bak"
 LIC_BAK="$SCRATCH/LICENSE.bak"
 cp "$GPL_COPY" "$GPL_BAK"
 cp LICENSE "$LIC_BAK"
+
+# 注入①：删掉受保护原件 → 必须失败（「许可证不许在换位置时消失」）
 rm "$GPL_COPY"
 out="$(bash tools/apply-divergences.sh --check 2>&1)" || true
 case "$out" in
@@ -1206,7 +1187,7 @@ case "$out" in
 esac
 cp "$GPL_BAK" "$GPL_COPY"
 
-# 故障注入 ②：改原件一个字节 → 哈希必须报错
+# 注入②：改原件一个字节 → 哈希必须报错
 printf 'x' >> "$GPL_COPY"
 out="$(bash tools/apply-divergences.sh --check 2>&1)" || true
 case "$out" in
@@ -1215,21 +1196,29 @@ case "$out" in
 esac
 cp "$GPL_BAK" "$GPL_COPY"
 
-# 故障注入 ③（**方向与反转前相反**）：把 GPL 从根目录拿走（模拟上游合并用它的 LICENSE
-# 覆盖了我们的，或者有人把许可删掉）→ --check 必须失败，且**非 --check 的重放必须能自动改回**。
+# 注入③（**这是真正会踩到的那个**）：把版权声明加回 LICENSE 前面
+# （模拟「有人觉得应该让版权声明显眼」）→ --check 必须失败，且重放必须能自动改回。
+# 它同时守住 GitHub 的许可证识别 —— 加了通知头 GitHub 就认不出 GPL-3.0 了。
+{ printf 'DSHFusion\nCopyright (C) 2026 DSHFusion authors\n\n'; cat "$GPL_BAK"; } > LICENSE
+out="$(bash tools/apply-divergences.sh --check 2>&1)" || true
+case "$out" in
+    *"DIV-0009"*"不是未经改动"*) ok "注入③：往 LICENSE 前面加通知头 → DIV-0009 拦下（守住 GitHub 的许可证识别）" ;;
+    *) fail "注入③：LICENSE 被加了通知头后 DIV-0009 没有拦下" ;;
+esac
+bash tools/apply-divergences.sh >/dev/null 2>&1 || true
+if cmp -s LICENSE "$GPL_BAK"; then
+    ok "注入③后重放：LICENSE 被自动改回未经改动的全文"
+else
+    fail "注入③后重放：LICENSE 没有自动改回"
+fi
+
+# 注入④：把 GPL 整个拿走（模拟上游合并覆盖，或有人误删许可）
 printf 'DSHFusion\n\n许可状态：私有自用。\n' > LICENSE
 out="$(bash tools/apply-divergences.sh --check 2>&1)" || true
 case "$out" in
-    *"DIV-0009"*"不含 GPL-3.0 全文"*) ok "注入③：根 LICENSE 丢了 GPL → DIV-0009 拦下" ;;
-    *) fail "注入③：根 LICENSE 丢掉 GPL 后 DIV-0009 没有拦下（这一条是「分发时没有许可」）" ;;
+    *"DIV-0009"*"不含 GPL-3.0 全文"*) ok "注入④：LICENSE 丢了 GPL → DIV-0009 拦下（「分发时没有许可」）" ;;
+    *) fail "注入④：LICENSE 丢掉 GPL 后 DIV-0009 没有拦下" ;;
 esac
-# 非 --check 模式下必须能自动重建
-bash tools/apply-divergences.sh >/dev/null 2>&1 || true
-if grep -q 'GNU GENERAL PUBLIC LICENSE' LICENSE && head -c 600 LICENSE | grep -q 'DSHFusion'; then
-    ok "注入③后重放：根 LICENSE 被自动重建为「通知头 + GPL-3.0 全文」"
-else
-    fail "注入③后重放：根 LICENSE 没有自动重建"
-fi
 cp "$LIC_BAK" LICENSE
 cp "$GPL_BAK" "$GPL_COPY"
 

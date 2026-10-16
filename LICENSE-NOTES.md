@@ -4,9 +4,59 @@
 > 改名是为了不让文件名继续宣称一个已经不成立的状态 —— 这类「名字与事实不符」
 > 在本仓库已经栽过好几次（README 的「阶段 0」、`not_imported` 里过期的理由）。
 
+## 版权声明
+
+```
+DSHFusion
+Copyright (C) 2026 DSHFusion authors
+```
+
+### 标准的 GPL 声明
+
+```
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+
+**为什么本仓库是 GPL-3.0**（2026-10-16 决定）
+
+骨干是 DSHBox（GPL-3.0），本仓库是它的衍生作品。**作者决定把仓库从私有改为公开**
+（截至本文件写下时，可见性切换**尚未执行** —— 它是作者手动做的一步）。
+
+**公开 = 对外分发 ⇒ 必须按 GPL-3.0 分发。** 这不是新加的限制，而是
+**原来就存在的义务，只是在私有期间没有触发**。所以许可**提前**就位：
+切可见性之前把 LICENSE 改对，而不是之后。
+
+这条决定反转了先前的 `DIV-0009`（那时根 LICENSE 放的是「许可状态：私有自用」的说明，
+为的是不让 GitHub 对外声称一个本仓库没做出的承诺）。现在承诺变了，说明也该变。
+
+理由、义务与保留的上游原件见 [LICENSE-NOTES.md](LICENSE-NOTES.md) 与
+[governance/ATTRIBUTION.md](governance/ATTRIBUTION.md)。
+
+以下为 **GNU General Public License version 3** 全文
+（与 `governance/upstream-licenses/DSHBox/LICENSE` 保存的那份一致）：
+
+================================================================================
+```
+
 ## 现在是什么
 
-**DSHFusion 的许可是 GPL-3.0。** 全文见根目录 [LICENSE](LICENSE)。
+**DSHFusion 的许可是 GPL-3.0。** 全文见根目录 [LICENSE](LICENSE) ——
+它是一份**未经改动的** GPL-3.0 全文（与 `governance/upstream-licenses/DSHBox/LICENSE`
+逐字节相同）。我们的版权声明在本文档里，**不放**在 LICENSE 前面 ——
+因为那样会让 GitHub 的许可证识别把本仓库标成 `Other / NOASSERTION`（实测过）。
 
 > ⚠️ **状态如实说明**：作者已决定把仓库从私有改为公开，
 > 但**截至本文档写下时，可见性切换尚未执行**（那是作者手动做的一步）。

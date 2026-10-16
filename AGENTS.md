@@ -497,13 +497,13 @@ Kotlin 未动仍 43 ⇒ **108**。两个类**分别钉** 5 / 7 —— 只钉总�
 > [governance/upstream-licenses/DSHBox/LICENSE](governance/upstream-licenses/DSHBox/LICENSE)，
 > 受 `governance/upstream-license-hashes.json` 的 SHA-256 保护。
 >
-> `handle_div_0009` 现在是**双向**核验：
-> **①** 根 LICENSE **必须**含 GPL-3.0 全文（分发时它必须在那里）；
-> **②** 那份上游副本**必须**仍在、且哈希一致（**许可证不许在换位置的过程中消失**）。
+> `handle_div_0009` 现在**只有一条判据**：
+> **根 LICENSE 与 `governance/upstream-licenses/DSHBox/LICENSE` 逐字节相同。**
 > 只查其中一条都是不够的 —— 第 ① 条防止「分发时没有许可」，
 > 第 ② 条防止「上游原件被顺手删掉」。
 >
-> 三种故障注入：**删副本** / **改副本一个字节** / **把 GPL 从根目录拿走** —— 全部必须被拦下。
+> 四种故障注入：**删副本** / **改副本一个字节** / **往 LICENSE 前面加通知头** / **把 GPL 整个拿走**
+> —— 全部必须被拦下。第三种是真正会踩到的那个：**加了通知头，GitHub 就把本仓库标成 `Other / NOASSERTION`**。
 
 ## 目录结构
 
