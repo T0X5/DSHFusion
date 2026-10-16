@@ -21,7 +21,7 @@ Project: DSHBox — https://github.com/WSK-build/DSHBox
 - 第三方组件清单：`upstream-licenses/DSHBox/THIRD_PARTY_NOTICES.md`
 
 **义务**：GPL-3.0 的源码提供、许可证随附、修改标注与同许可义务**在分发时**触发。
-私有自用阶段不触发（见 [../LICENSE-PENDING.md](../LICENSE-PENDING.md)）。
+私有自用阶段不触发（见 [../LICENSE-NOTES.md](../LICENSE-NOTES.md)）。
 无论是否分发，**版权声明与许可原文必须保留**。
 
 **商标约束**：不得使用 `DSHBox` 名称、`brand_icon.png`、`ic_pilot_brand.png`、

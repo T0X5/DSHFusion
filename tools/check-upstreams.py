@@ -25,7 +25,7 @@ LICENSE_HASHES = ROOT / "governance" / "upstream-license-hashes.json"
 
 REQUIRED_DOCS = [
     "AGENTS.md",
-    "LICENSE-PENDING.md",
+    "LICENSE-NOTES.md",
     "governance/ATTRIBUTION.md",
     "governance/upstreams.json",
     "governance/divergences.json",

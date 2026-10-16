@@ -89,6 +89,12 @@ ALLOW = [
 
     # —— Kotlin 语法误匹配 ——
     re.compile(r"this@"),                           # this@Label 被当成邮箱
+    # GPL-3.0 的标准免责声明用词（"MERCHANTABILITY or FITNESS FOR A PARTICULAR
+    # PURPOSE"）。它是**法律用语**，不是设备序列号 —— 但它有 15 个大写字母，
+    # 会被「设备序列号样式」的启发式命中。
+    # 出现的场合：`tools/apply-divergences.sh` 里 DIV-0009 重放用的通知头字面量
+    # （它必须与仓库根的 LICENSE 逐字节一致，所以不能改写它）。
+    re.compile(r"\bMERCHANTABILITY\b"),
 
     # —— 上游（Termux）自带内容：非我方数据，公开发布 ——
     re.compile(r"/Users/fornwall"),                 # Termux 作者机器路径（Android Studio 模板注释）

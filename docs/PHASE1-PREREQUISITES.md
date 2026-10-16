@@ -497,3 +497,7 @@ DSHFusion 的 `.gitignore` 写的是 `runtime/` 与 `dist/`，**没有前导斜�
    的一句「来自 termux-packages 构建」，无版本号或校验和可核对。
 6. **DSHBox 的 `@Test` 基线 1058 是本地计数结果**，其 README 声称 1203，
    差额 145 未解释。阶段 1 应以**实际跑出来的数字**为准，而不是任何文档里的数字。
+
+<!-- ignore-ref: LICENSE-PENDING.md -->
+<!-- 上面提到的是**旧文件名**（本仓库许可状态从「私有自用」改为 GPL-3.0 时改的名）。
+     旧名故意不再存在，新名是 LICENSE-NOTES.md —— 历史陈述不该被改写。 -->

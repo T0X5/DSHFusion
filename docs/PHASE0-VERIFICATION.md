@@ -479,3 +479,7 @@ APK 身份核验通过 ✔
    这是可接受的取舍：宁可多一个 issue，也不要误把评论发到无关 issue 上。
 10. **两个工作流都未在真实 GitHub 上验证过 `concurrency` 与 Issue 写入的实际行为。**
     本机无法模拟 GitHub 的 API 侧行为。
+
+<!-- ignore-ref: LICENSE-PENDING.md -->
+<!-- 上面提到的是**旧文件名**（本仓库许可状态从「私有自用」改为 GPL-3.0 时改的名）。
+     旧名故意不再存在，新名是 LICENSE-NOTES.md —— 历史陈述不该被改写。 -->

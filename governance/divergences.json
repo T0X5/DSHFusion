@@ -140,18 +140,19 @@
     },
     {
       "id": "DIV-0009",
-      "title": "根目录 LICENSE 不再放 GPL-3.0 全文，改为许可状态说明",
+      "title": "根 LICENSE 是 GPL-3.0 全文（2026-10-16 起公开分发），且上游原件受哈希保护",
       "upstream": "dshbox",
       "type": "removal",
       "phase": 1,
       "target_files": [
         "LICENSE"
       ],
-      "change": "根目录 LICENSE 由上游的 GPL-3.0 全文替换为 DSHFusion 的许可状态说明（私有自用、未授予许可），并指向 governance/upstream-licenses/DSHBox/LICENSE。",
-      "rationale": "上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，而 LICENSE-PENDING.md 写的是「暂不设许可，私有自用」—— 两者矛盾，且矛盾的是 GitHub 那一侧：它对外声称了一个本仓库并未做出的许可承诺。现在改成明确的状态说明，名实相符。",
+      "change": "**2026-10-16 反转了这条的原始方向。**\n\n原方向（阶段 1）：根 LICENSE 放「许可状态：私有自用，未授予许可」的说明，不声称 GPL-3.0 —— 因为当时仓库私有、不分发，而 GitHub 会据根 LICENSE 对外显示许可，那会是一个本仓库没做出的承诺。\n\n现方向（公开后）：**根 LICENSE 就是 GPL-3.0 全文**。仓库从私有改为公开 = 对外分发 ⇒ 骨干 DSHBox 是 GPL-3.0 ⇒ 衍生作品必须同样以 GPL-3.0 分发。**这条义务原本就存在，只是私有期间没有触发。**",
+      "rationale": "起因是 GitHub Actions 分钟数用尽（私有仓库计费，公开仓库免费），但**这不是计费决定而是许可决定**：公开即分发，分发即触发 GPL-3.0。于是「不让 GitHub 显示 GPL-3.0」这个原始动机整个消失了 —— 现在正是要它显示。",
       "safety": "**GPL-3.0 全文没有被删除，只是换了位置。** 它按原样保存在 governance/upstream-licenses/DSHBox/LICENSE，SHA-256 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986，由 governance/upstream-license-hashes.json 记录并在 CI 中核验。handle_div_0009 会**正向核验**该副本仍然存在且哈希一致 —— 只检查「根目录不再是 GPL」是不够的，那等于允许许可证被换掉后凭空消失。",
-      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0009 校验：根 LICENSE 含 DSHFusion 标记且不再是 GPL 全文，同时上游 GPL 副本存在且哈希正确。",
-      "conflict_risk": "low"
+      "reapply": "`tools/apply-divergences.sh` 的 handle_div_0009：**双向**核验 —— ① 根 LICENSE 含 GPL-3.0 全文；② `governance/upstream-licenses/DSHBox/LICENSE` 仍在且哈希一致。",
+      "conflict_risk": "low",
+      "note": "⚠️ **上游 GPL 原件没有被删**：它按原样保存在 `governance/upstream-licenses/`。「换位置」不等于「可以消失」，所以第 ② 条核验是真正的安全网。\n\n三种注入：删副本 / 改副本一个字节 / 把 GPL 从根目录拿走 —— 全部必须被拦下。"
     },
     {
       "id": "DIV-0010",

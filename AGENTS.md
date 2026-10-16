@@ -40,7 +40,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 （建会话 → 导出 → 新建一个 → 恢复 → 完全重启 DSH → 它消失了）。
 明细见 [docs/INCIDENTS.md](docs/INCIDENTS.md) 末尾的验收表。
 
-**真机一共抓出 6 个 bug（事故第 39–44 条），而本机 176 条 + 335 项 + CI 全绿时
+**真机一共抓出 6 个 bug（事故第 39–44 条），而本机 176 条 + 337 项 + CI 全绿时
 一个都没抓到。** 下一个阶段的计划见 [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md)。
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
@@ -465,23 +465,42 @@ Kotlin 未动仍 43 ⇒ **108**。两个类**分别钉** 5 / 7 —— 只钉总�
 
 ## 许可状态
 
-DSHFusion 当前**暂不设置许可证，私有自用**（见根目录 [LICENSE](LICENSE) 与
-[LICENSE-PENDING.md](LICENSE-PENDING.md)）。
+**DSHFusion 以 GPL-3.0 分发。** 全文见根目录 [LICENSE](LICENSE)；
+理由、义务与「公开之前做过的检查」见 [LICENSE-NOTES.md](LICENSE-NOTES.md)。
 
-这不是"随便用"的意思 —— 而是说：本仓库**没有对外分发**，因此 GPL-3.0 的分发义务
-尚未触发；但**一旦决定公开或分发，必须重新评估**，因为骨干 DSHBox 是 GPL-3.0。
+| 组成部分 | 许可 | 含义 |
+|---|---|---|
+| 骨干（DSHBox） | **GPL-3.0** | 本仓库是它的**衍生作品** ⇒ 分发时整体必须是 GPL-3.0 |
+| 选择性吸收（DSHA） | MIT | 与 GPL-3.0 兼容，可并入 |
+| `terminal-emulator` / `terminal-view` | Apache-2.0 | 与 GPL-3.0 兼容（**与 GPLv2 不兼容**，别降版） |
 
-**根 `LICENSE` 放的是状态说明，不是 GPL-3.0 全文**（DIV-0009）。
-原因：上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，
-而本仓库并未做出那个承诺 —— 矛盾的是 GitHub 那一侧。
+### 2026-10-16：从「私有自用」改为「公开 + GPL-3.0」
 
-> ⚠️ **GPL-3.0 原文没有被删除，只是换了位置**：它按原样保存在
+**起因**：GitHub Actions 分钟数用尽（2000/2000，仓库是私有 ⇒ 计费），
+而公开仓库的 Actions 免费。
+
+**但这不是一个计费决定，是一个许可决定**：
+
+> **公开 = 对外分发 ⇒ GPL-3.0 的义务被触发。**
+
+这条义务**原本就存在**（骨干是 GPL-3.0），只是在私有期间**没有触发**。
+
+这**反转了 `DIV-0009`**。那时根 LICENSE 放的是「许可状态：私有自用，未授予许可」的说明 ——
+理由是上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，
+而本仓库当时并未做出那个承诺，**矛盾的是 GitHub 那一侧**。
+现在承诺变了，说明也跟着变 —— 于是根 LICENSE **就是** GPL-3.0 全文。
+
+> ⚠️ **上游 GPL-3.0 原文没有被删，也没有被改**：它按原样保存在
 > [governance/upstream-licenses/DSHBox/LICENSE](governance/upstream-licenses/DSHBox/LICENSE)，
 > 受 `governance/upstream-license-hashes.json` 的 SHA-256 保护。
-> `handle_div_0009` 会**正向核验**这份副本仍然存在且哈希一致 ——
-> 只检查「根目录不再是 GPL」是不够的，那等于允许许可证在换位置时凭空消失。
-> 这条安全网做过三种故障注入（删副本 / 改副本一个字节 / 把 GPL 全文塞回根目录），
-> 全部正确拦截。
+>
+> `handle_div_0009` 现在是**双向**核验：
+> **①** 根 LICENSE **必须**含 GPL-3.0 全文（分发时它必须在那里）；
+> **②** 那份上游副本**必须**仍在、且哈希一致（**许可证不许在换位置的过程中消失**）。
+> 只查其中一条都是不够的 —— 第 ① 条防止「分发时没有许可」，
+> 第 ② 条防止「上游原件被顺手删掉」。
+>
+> 三种故障注入：**删副本** / **改副本一个字节** / **把 GPL 从根目录拿走** —— 全部必须被拦下。
 
 ## 目录结构
 
@@ -489,7 +508,7 @@ DSHFusion 当前**暂不设置许可证，私有自用**（见根目录 [LICENSE
 dshfusion/
 ├── AGENTS.md                    ← 你在这里（唯一权威规范）
 ├── README.md                    对外入口
-├── LICENSE-PENDING.md           许可待定说明
+├── LICENSE-NOTES.md           许可说明（为什么是 GPL-3.0、义务、公开前检查）
 ├── governance/
 │   ├── upstreams.json           双上游清单（URL、锁定提交、许可、同步策略）
 │   ├── divergences.json         对上游的每一处偏离登记
