@@ -82,3 +82,68 @@
 **第一件事**：把 DSHA 的 8 个内建插件 + DSHBox 的 `dsh-mobile-adapt`/`mobile-pilot`
 逐个读一遍**入口文件**，填出第一批条目（预计 8–12 条）——
 **因为「两套移动端适配」已经是已知的第一个真实条目，它能把表格的形状试出来。**
+
+---
+
+# 台账 · 第一批（2026-10-16）
+
+> **依据**：逐个读两边的**入口声明**（`package.json` 的 `description` 与目录规模），
+> 不是读 README 的功能列表。
+>
+> ⚠️ **证据等级整批都是「只读过代码/上游声称」** —— 我**没有执行过其中任何一条能力**。
+> 按硬约束 4，这一批**不能**被当成「已验证」。它的用途是**把表格形状试出来**，
+> 以及给 3.2–3.4 一个可用的骨架。
+
+## DSHA 的 8 个内建插件（`app/src/main/assets/builtin-plugins/`）
+
+| 插件 | 体积 | 它声明的能力（原文摘要） |
+|---|---|---|
+| `dsh-device-shell-guide` | 27K | 受保护的设备命令 —— **通过 root、Shizuku 或 ADB** |
+| `dsh-computer-use-android` | 27K | **Android Computer Use** —— 经认证的 DSHA 设备桥 |
+| `dsh-tool-vscreen` | 31K | **虚拟显示（vscreen）自动化工具** |
+| `dsh-status-overlay` | 35K | 把 agent 输出**流到手机顶部悬浮条** |
+| `dsh-task-notifier` | 19K | agent 完成一轮时**通知用户**（经 3090 桥） |
+| `dsh-destructive-guard` | 87K | **破坏性容器命令（`rm` 之类）总是需要确认** |
+| `dsh-auto-review` | 19K | 官方实验性 Auto review（**默认不选**） |
+| `dsh-web-mobile` | **1.7M** | 尽可能让 DSH **适配竖屏等移动端** |
+
+## 台账
+
+| `id` | DSHA | DSHBox | **前提** | **证据等级** |
+|---|---|---|---|---|
+| `device.shell.command` | `dsh-device-shell-guide`(27K) | `pilot/dshbox-adapter`（Shizuku） | **root / Shizuku / ADB**（三选一） | 只读过代码 |
+| `device.computer-use` | `dsh-computer-use-android`(27K) | **待查** | 设备桥已认证 | 只读过代码 |
+| `device.vdisplay` | `dsh-tool-vscreen`(31K) | **待查** | 待查 | 只读过代码 |
+| `ui.overlay.status` | `dsh-status-overlay`(35K) | **待查** | 悬浮窗权限 | 只读过代码 |
+| `ui.notify.turn-end` | `dsh-task-notifier`(19K) | **待查** | 通知权限 | 只读过代码 |
+| `safety.destructive-guard` | `dsh-destructive-guard`(87K) | **待查** | 无 | 只读过代码 |
+| `ui.mobile-adaptation` | `dsh-web-mobile`(**1.7M**) | `dsh-mobile-adapt`(107K) + `mobile-pilot`(354K) | 无 | 🔴 **两边都有，且不是同一套**（已核实） |
+| `agent.auto-review` | `dsh-auto-review`(19K) | **待查** | 无 | 只读过代码 |
+
+## 这一批已经能看出的三件事
+
+### 1. `device.shell.command` 是**两边都有**，而且前提也一致
+
+DSHA 走 `dsh-device-shell-guide`（root/Shizuku/ADB 三选一），
+DSHBox 走 `pilot/dshbox-adapter`（Shizuku）。**这是 3.2 授权模型最该先处理的一条** ——
+因为它同时是「两边都有」和「前提有三档」的那一条。
+
+### 2. `ui.mobile-adaptation` 是唯一一条**已核实「不是同一套」**的
+
+其余「待查」的条目里，很可能还有同样的情形 ——
+**「名字像」不等于「同一套」**，这正是 3.1 要判的东西（见第二节判据）。
+
+### 3. DSHA 的 8 个里有 **5 个是「对设备做事的 UI/安全」能力**
+
+`overlay` / `notifier` / `vscreen` / `computer-use` / `destructive-guard` ——
+它们整体构成一套「**让 agent 在手机上被看见、被约束**」的层。
+**这恰好与用户要的「统一设备能力层」同题** —— 而且 DSHBox 那边是 **`mobile-pilot`**（354K）
+在扮演类似角色。**这两套的关系是下一批最该查的。**
+
+## 下一批要做的（明确、可执行）
+
+1. **把每个「待查」填上**：去 DSHBox 那边找对应物（`plugin-manager/dshbox-plugins/assets/plugins/`
+   与 `pilot/`），**读入口文件**，判「同一套 / 不是同一套 / 没有」
+2. **`device.shell.command` 单独深读**：它的三档前提（root/Shizuku/ADB）是 3.2 授权模型的直接输入
+3. **`mobile-pilot` vs DSHA 那 5 个 UI/安全插件**：判它们是不是在解决同一个问题
+4. 每条**补上「证据等级」的升级路径**（要做什么才算「本机跑过」/「真机验证过」）
