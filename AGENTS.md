@@ -27,7 +27,13 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 ## 这个仓库当前处于什么阶段
 
-**阶段 1 与阶段 2 均已完成，并已合并进 `main`（2026-10-16）。**
+**阶段 1 已完成、阶段 2 的「备份恢复」已完成，均已合并进 `main`（2026-10-16）。**
+
+> ⚠️ **阶段 2 的定义是「备份恢复 + 受管更新」，而「受管更新」先前没有做、也没有归属** ——
+> 它掉在了两份计划之间（FUSION-PLAN 的 2.x 只列到 2.6，而「环境更新」被写成「阶段 3 的事」，
+> 但阶段 3 已改成统一设备能力层）。现定为 **阶段 2.8**，
+> 审计与计划见 [docs/PHASE2.8-MANAGED-UPDATE.md](docs/PHASE2.8-MANAGED-UPDATE.md)。
+> **在 2.8 完成之前，本文件不再写「阶段 2 已完成」。**
 
 **阶段 2 的验收标准五条全部在真机上满足** —— 包括最后那条「可换台设备恢复」
 （建会话 → 导出 → 新建一个 → 恢复 → 完全重启 DSH → 它消失了）。
@@ -220,7 +226,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 > **不是「恢复在真机上不会毁数据」**。后者要等 2.4b 有了界面入口。
 
 **阶段 2.4b-① 已实现（2026-10-14，同一分支）**：**恢复的落点** ——
-[`HostRestoreMapping.java`](backup/src/main/java/com/dshbox/app/backup/HostRestoreMapping.java)，
+[`HostRestoreMapping.java`](backup/src/main/java/com/dshfusion/app/backup/HostRestoreMapping.java)，
 把归档的逻辑根映射到本机 `user-data/.dsh`。三条要点：
 
 1. **审计推翻了「复用 DSHA 的落点实现」这个默认假设，而且最强的理由与 `android.*` 无关。**
@@ -236,7 +242,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 > ✅ **阶段 2.4b-① 已通过真实 CI**（run [38651955250](https://github.com/T0X5/DSHFusion/actions/runs/38651955250)，
 > commit `0aea1dd`）：**24/24 步全绿**，`:backup` **96 条测试 / 13 个测试类**
 > （2.4a 是 85 / 12；多的 11 条正是 `HostRestoreMappingTest`，CI 日志里逐类打印为
-> `11 com.dshbox.app.backup.HostRestoreMappingTest`），产物 `dshapp-debug-apk` 128,789,923 字节。
+> `11 com.dshfusion.app.backup.HostRestoreMappingTest`），产物 `dshapp-debug-apk` 128,789,923 字节。
 > Contracts 4/4 全绿。
 >
 > **这次计数断言又是「确认」而不是「证伪」** —— 我在 `android.yml` 里写的是 **96**
@@ -265,7 +271,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 **现在的落点**：`HostDataTransaction`（315 行）+ `TransactionMarkers`（34 行）
 + `Ids`（13 行）**逐字节导入**；上游的 `HostDataTransactionTest`（202 行 / 5 条，
 含一条**真杀子进程**的）**适配后导入**；我们自写一层
-[`HostRestoreTransaction.java`](backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java)
+[`HostRestoreTransaction.java`](backup/src/main/java/com/dshfusion/app/backup/HostRestoreTransaction.java)
 做词汇映射。
 
 **两边的词汇恰好同构**，所以适配层很薄：
@@ -326,7 +332,7 @@ Kotlin 未动仍 43 ⇒ **108**。两个类**分别钉** 5 / 7 —— 只钉总�
   `ScheduledBackupOwner` 82 行 / 只有 `java.lang`）+ 它们的测试（4 + 5 条，含 DST
   与时钟回拨、跨线程拒绝）。`ScheduledBackupOwner` 是**线程受限的单飞票据所有者**，
   参数用**引用相等** —— 它回答的是「现在这个 job id 是不是我这次提交的那个」。
-- **保留策略必须自写**（[`DshAutomaticBackupRetention.java`](backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRetention.java)）：
+- **保留策略必须自写**（[`DshAutomaticBackupRetention.java`](backup/src/main/java/com/dshfusion/app/backup/DshAutomaticBackupRetention.java)）：
   上游 pruner 的判据建立在「自动备份是**一个目录 + 四个具名成员**」上，而我们是
   **单文件** `DSHDATA` 容器 —— 直接抄不是「命名对不上」，是**连输入都没有**，
   后果是**静默的空操作**（用户以为保留 3 份，磁盘无限增长）。
@@ -531,7 +537,7 @@ dshfusion/
 │   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区项数见运行输出）
 ├── backup/                      阶段 2.1–2.4b②：v5 格式与预检 + 范围与排除 + 凭据投影 + 恢复核心 + 落点映射 + 提交与回切（见其 README）
 │   └── src/main/java/com/deepseekharness/app/**  DSHA 原样导入（MIT，勿改正文）
-│   └── src/main/java/com/dshbox/app/backup/**    本仓库自写（Java，为能本机真跑）
+│   └── src/main/java/com/dshfusion/app/backup/**    本仓库自写（Java，为能本机真跑）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）
@@ -543,12 +549,12 @@ dshfusion/
 
 | 项目 | 值 | 说明 |
 |---|---|---|
-| 应用标识 | `com.dshfusion.app` | **独立于** `com.dsh.client` 与 `com.dshbox.app`，可与两者并存安装 |
+| 应用标识 | `com.dshfusion.app` | **独立于** `com.dsh.client` 与 `com.dshfusion.app`，可与两者并存安装 |
 | 应用名 | DSHFusion | |
 | 版本号 | `versionCode = 1` / `versionName = 0.1.0` | 独立版本线，不复用上游的 8 / 1.4.0 |
 | 签名 | 独立自建密钥库（DIV-0017） | 固定身份，密钥库走 Actions Secret，**不入库**；不要求、也不使用任何上游发布证书 |
 
-> **阶段 1 刻意不做全量包名重命名。** DSHBox 内部有 721 处 `com.dshbox.app`
+> **阶段 1 刻意不做全量包名重命名。** DSHBox 内部有 721 处 `com.dshfusion.app`
 > 引用，一次性重命名会产生巨大的 diff 并让后续每次上游同步都冲突。
 > 阶段 1 只改 `applicationId`、应用名、版本号与签名 —— 这些是"并存安装"必需的。
 > 完整重命名列为阶段 4 的独立任务。见 [docs/FUSION-PLAN.md](docs/FUSION-PLAN.md)。
