@@ -9,8 +9,41 @@ permissions:
 on:
   push:
     branches: [ main, develop ]
+    # 🔴 **只为「不可能影响构建」的改动跳过。**
+    #
+    # 这条与下面的 concurrency 都是 2026-10-16 加了 —— 起因是本仓库的
+    # GitHub Actions 分钟数**用尽（2000/2000）**，而仓库是**私有**的（要计费）。
+    #
+    # 我（agent）那天的做法贡献了很大一块：9 个提交里 5 个是纯文档/治理，
+    # 却每个都跑了一遍完整 Android CI；而且每个提交还**同时**触发两次
+    # （PR #37 的 synchronize + 一个临时 ci-trigger PR）。
+    #
+    # 只忽略这两类，因为它们**从不参与编译**：
+    #   - `docs/**`    —— 文档
+    #   - `**/*.md`    —— 任意位置的 Markdown（含根 README / AGENTS）
+    #
+    # ⚠️ **刻意不忽略 `governance/**`**：它里面的 `upstreams.json` 是
+    # `tools/build-dsh-layer.sh` 的版本来源，改了它运行环境层就会变 ——
+    # 那是构建输入，不是文档。
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
     branches: [ main, develop ]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+
+# 🔴 **这一条是本轮真正省钱的那一条。**
+#
+# 没有它时：往同一个 PR 连推 5 次 = **5 个完整 Android CI 并发跑**，
+# 前 4 个的结果在推第 5 次时已经没有意义，但它们照样把分钟数烧掉了。
+# 有了它：新的一次会**取消**同一个 ref 上还在跑的那一次。
+#
+# `contracts.yml` 早就有这一条；`android.yml`（那个 15–25 分钟的）一直没有。
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:

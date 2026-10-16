@@ -3229,7 +3229,11 @@ fi
 XD_BAK="$(mktemp)"
 cp "$README" "$XD_BAK"
 XD_BEFORE="$(sha256sum "$README" | cut -d' ' -f1)"
-sed -i 's|bash tools/verify-phase0.sh               # 阶段验证套件（325 项，含失败路径与故障注入）|bash tools/verify-phase0.sh               # 阶段验证套件（113 项，含失败路径与故障注入）|' "$README"
+# ⚠️ **锚点不许写死那个数字。** 它每加一项断言就变一次，写死之后 `sed` 匹配不上
+# → 注入静默落空 → 套件报「注入没有生效」。**实测发生过**：把 README 的
+# 「325 项」改成「335 项」之后，这一段就坏了（而它报的结论是对的、原因也是对的）。
+# 所以这里匹配**任意数字**，只把数字换成 113。
+sed -i -E 's|(# 阶段验证套件（)[0-9]+( 项，含失败路径与故障注入）)|\1113\2|' "$README"
 XD_AFTER="$(sha256sum "$README" | cut -d' ' -f1)"
 if [ "$XD_BEFORE" = "$XD_AFTER" ]; then
     fail "注入**没有生效**（锚点没匹配上）—— 这条注入需要修，不是检查需要修"
@@ -3260,10 +3264,12 @@ else
 fi
 cp "$XD_BAK" "$README"
 rm -f "$XD_BAK"
-if grep -q '阶段验证套件（325 项' "$README"; then
-    ok "复原后 README 重新是正确的项数"
+# 复原后：项数必须**重新等于实测值** —— 同样不许写死数字（每加一项就会误报）
+INJ_NUM="$(sed -nE 's|.*阶段验证套件（([0-9]+) 项.*|\1|p' "$README" | head -1)"
+if [ -n "$INJ_NUM" ] && [ "$INJ_NUM" != "113" ]; then
+    ok "复原后 README 重新是正确的项数（$INJ_NUM）"
 else
-    fail "复原失败 —— 注入没被还原干净"
+    fail "复原失败 —— 注入没被还原干净（当前是 '$INJ_NUM'）"
     CR_BAD=1
 fi
 
