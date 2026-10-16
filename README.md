@@ -6,20 +6,30 @@
 
 ---
 
-## ⚠️ 当前状态：阶段 0（骨架）
+## 当前状态：阶段 1 与阶段 2 已完成
 
-**这个仓库目前还不是一个可构建的 Android 项目。**
+**这是一个可构建、可安装、真机上跑得起来的 Android 项目。**
 
-现在只有项目规范、双上游清单和 CI。上游源码尚未导入。
-在阶段 1 完成之前，不要在这里跑 Gradle 然后报告"构建失败"——那是预期状态。
+阶段 1 与阶段 2 均已合入 `main`（2026-10-16）。阶段 2 的数据安全验收标准
+**五条全部在真机上满足**，包括「可换台设备恢复」。
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| **0** | 骨架：规范、双上游清单、CI | ✅ 本次 |
-| **1** | 骨干落地：可构建、可装、可跑的最小版本 | ⬜ 待做 |
-| **2** | 数据安全：备份恢复 + 受管更新 | ⬜ |
-| **3** | 设备能力：设备桥 / LAN / ADB 无线 | ⬜ |
-| **4** | 深度优化：proroot、包名重构、高级功能 | ⬜ |
+| **0** | 骨架：规范、双上游清单、CI | ✅ 完成 |
+| **1** | 骨干落地：可构建、可装、可跑的极小版本 | ✅ **已完成（真机验证）** |
+| **2** | 数据安全：备份恢复 + 受管更新 | ✅ **已完成（真机验证）** |
+| **3** | 设备能力：设备桥 / LAN / ADB 无线 | 🔨 进行中 —— 已重新定义为**统一设备能力层** |
+| **4** | 深度优化：proroot、包名重构、高级功能 | ⬜ 待做 |
+
+### 关于阶段 3 的重要更正
+
+**上游从「母体」变成「来源」。** 目标不是「跟得上上游」，
+而是**做出一件两个上游都没有的东西**。
+
+阶段 3 的第二件定为**统一设备能力层**（DSHBox 的无障碍助手与 DSHA 的设备桥合为一套
+能力分级、可授权、可撤销、可审计的统一层）；身份收回（全量包名重命名）提前到现在。
+依据、可检查标准与阶段计划见
+[docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md)——**不要重新推翻**。
 
 ---
 
@@ -33,10 +43,20 @@
 | [docs/UPSTREAM-SYNC.md](docs/UPSTREAM-SYNC.md) | 双上游长期同步流程 |
 | [tools/README.md](tools/README.md) | 每个工具的用途、用法与退出码 |
 | [docs/PHASE0-VERIFICATION.md](docs/PHASE0-VERIFICATION.md) | 阶段 0 验证报告（命令、输出、退出码） |
+| [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md) | 🔴 **产品方向**：为什么上游是来源、要做什么、怎么检查 |
+| [docs/INCIDENTS.md](docs/INCIDENTS.md) | 44 条事故与真机验证记录（附录 B 是索引表） |
 | [docs/PHASE1-PREREQUISITES.md](docs/PHASE1-PREREQUISITES.md) | 阶段 1 前置审计：运行时资产 · 许可证 · 数据迁移 |
 | [docs/INSTALL-ON-DEVICE.md](docs/INSTALL-ON-DEVICE.md) | 真机安装步骤（手动执行） |
 | [governance/ATTRIBUTION.md](governance/ATTRIBUTION.md) | 署名与许可义务 |
 | [LICENSE-PENDING.md](LICENSE-PENDING.md) | 许可状态说明（为何暂不设许可证） |
+
+### 可核验性（不靠「我说完成了」）
+
+- `python3 tools/verify-phase0.sh` —— **325 项**，每项负面路径都带故障注入，注入失效会自己报红
+- `bash tools/run-backup-jvm-tests.sh` —— 本机真编译真跑 `:backup` 的 Java 侧
+- 24 处对上游的偏离全部登记于 `governance/divergences.json`，可由 `apply-divergences.sh` 重放
+- DSHA 导入的 30 个文件逐字节溯源，正文 sha256 受 `check-dsha-imports.py` 保护
+- 真机证据逐环独立：进程 uid → 端口 owner → 浏览器连接 → token 被接受 → 备份/恢复端到端
 
 ---
 
@@ -64,7 +84,7 @@ DSHA 并非劣质项目——它的功能面更宽（备份 v5、LAN、ADB 无�
 python3 tools/check-upstreams.py          # 治理契约检查
 python3 tools/check-references.py         # 引用完整性（断链、不存在的路径）
 python3 tools/check-license-hashes.py     # 上游许可原件哈希核验
-bash tools/verify-phase0.sh               # 阶段验证套件（工作区 113 项，含失败路径）
+bash tools/verify-phase0.sh               # 阶段验证套件（325 项，含失败路径与故障注入）
 tools/sync-upstream.sh dshbox --fetch     # 拉取上游 + 生成变更摘要
 tools/apply-divergences.sh --check        # 检查已登记偏离的施加状态
 ```

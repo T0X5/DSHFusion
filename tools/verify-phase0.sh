@@ -3166,6 +3166,104 @@ PYI
     fi
 fi
 
+section "5x. 顶层文档不许停留在过期状态（README 就这样骗过人）"
+
+# 🔴 2026-10-16：阶段 1 与阶段 2 都已合进 main、真机验收五条全过，
+# 而 **README.md 仍是阶段 0 的原文** —— 「当前状态：阶段 0（骨架）」「上游源码尚未导入」
+# 「verify-phase0.sh 工作区 113 项」（实际 325）。
+#
+# 我上一轮做了整体检查、查了 AGENTS.md 与 PRODUCT-DIRECTION.md 的过期陈述，
+# **唯独没查 README** —— 而 README 恰好在 GitHub 仓库首页，是别人第一眼看到的东西。
+#
+# 教训：**「我检查了文档一致性」这句话的范围，比它听起来小得多。**
+# 当时我只想到「两份实现文档」，没想到「首页」。
+#
+# 所以这里把它变成一条断言：README 与 AGENTS.md 的**状态声明**必须与事实一致。
+
+README="$ROOT/README.md"
+
+# ① 不许再出现「当前状态：阶段 0」
+if grep -q '当前状态：阶段 0' "$README"; then
+    fail "README 还写着「当前状态：阶段 0」—— 阶段 1 与 2 都已完成并合进 main 了"
+    CR_BAD=1
+else
+    ok "README 没有停留在「当前状态：阶段 0」"
+fi
+
+# ② 必须明确说出当前状态（否则等于没有状态声明）。
+#    用**数组**而不是空格分隔的串：这些句子本身带空格（「阶段 1 与阶段 2 已完成」），
+#    写成字符串列表会被 shellcheck 正确地判成 SC2043「这个循环只会跑一次」——
+#    而它说得对，那确实不是个列表。数组则没有歧义，将来加条目也不用改写法。
+REQUIRED_CLAIMS=(
+    "阶段 1 与阶段 2 已完成"
+)
+for want in "${REQUIRED_CLAIMS[@]}"; do
+    if grep -q "$want" "$README"; then
+        ok "README 声明了当前状态「$want」"
+    else
+        fail "README 没有声明「$want」—— 状态段可能又被改掉了"
+        CR_BAD=1
+    fi
+done
+
+# ③ 已导入的源码不许再说「尚未导入」
+if grep -q '上游源码尚未导入' "$README"; then
+    fail "README 还说「上游源码尚未导入」—— 实际已导入 765 个文件"
+    CR_BAD=1
+else
+    ok "README 没有再说「上游源码尚未导入」"
+fi
+
+# ④ AGENTS.md 不许再说「main 未动」
+if grep -q 'main 未动' "$AGENTS"; then
+    fail "AGENTS.md 还说「main 未动」—— 阶段 1 与 2 都已合入 main"
+    CR_BAD=1
+else
+    ok "AGENTS.md 没有再说「main 未动」"
+fi
+
+# ⑤ 数字类过期陈述：README 里写的套件项数必须等于实测值
+XD_BAK="$(mktemp)"
+cp "$README" "$XD_BAK"
+XD_BEFORE="$(sha256sum "$README" | cut -d' ' -f1)"
+sed -i 's|bash tools/verify-phase0.sh               # 阶段验证套件（325 项，含失败路径与故障注入）|bash tools/verify-phase0.sh               # 阶段验证套件（113 项，含失败路径与故障注入）|' "$README"
+XD_AFTER="$(sha256sum "$README" | cut -d' ' -f1)"
+if [ "$XD_BEFORE" = "$XD_AFTER" ]; then
+    fail "注入**没有生效**（锚点没匹配上）—— 这条注入需要修，不是检查需要修"
+    CR_BAD=1
+elif grep -q '阶段验证套件（113 项' "$README"; then
+    # 检查它会不会被抓到：套件项数这一条要真的去比
+    if python3 - "$README" "$ROOT/tools/verify-phase0.sh" <<'PYX'
+import pathlib, re, subprocess, sys
+readme = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+m = re.search(r"阶段验证套件（(\d+) 项", readme)
+if not m:
+    sys.exit(0)          # 没写数字，这一条不管
+claimed = int(m.group(1))
+# 实测值：跑一次套件、读它的合计行
+out = subprocess.run(["bash", sys.argv[2]], capture_output=True, text=True).stdout
+m2 = re.search(r"合计[:：]\s*(\d+) 项", out)
+sys.exit(1 if m2 and claimed != int(m2.group(1)) else 0)
+PYX
+    then
+        fail "README 写的套件项数与实测不符 —— 这种数字会骗人（写的时候是对的，改了代码就变了）"
+        CR_BAD=1
+    else
+        ok "README 的套件项数与实测不一致被抓到了"
+    fi
+else
+    fail "注入没有落到预期位置"
+    CR_BAD=1
+fi
+cp "$XD_BAK" "$README"
+rm -f "$XD_BAK"
+if grep -q '阶段验证套件（325 项' "$README"; then
+    ok "复原后 README 重新是正确的项数"
+else
+    fail "复原失败 —— 注入没被还原干净"
+    CR_BAD=1
+fi
+
 section "5v. 凭据被就地投影（真机泄漏过 API Key，这一节是那次事故的守卫）"
 
 # 🔴 这一节存在的理由：**真机上导出的归档里，用户的 API Key 与浏览器会话授权是明文。**
