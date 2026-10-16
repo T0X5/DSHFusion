@@ -3265,6 +3265,43 @@ else
     ok "AGENTS.md 没有再说「main 未动」"
 fi
 
+# ⑤ 上面前四条是**逐个手写**的，而手写的覆盖面只等于「我想到的那几句」——
+# 实测漏掉了 5 处（README 的阶段表还写着阶段 2「已完成」、FUSION-PLAN 说「未验证」、
+# INSTALL-ON-DEVICE 说「阶段 2 唯一还没做的那件事」、INCIDENTS 的验收表还留着那个错报的 ✅）。
+# **所以改成表驱动**：加一处过期陈述时，把它加进这张表，而不是加一段 if。
+#
+# 每一项 = 「文件 | 不许出现的原文 | 现在的事实」。
+STALE_TABLE=(
+    "README.md|包名重构、高级功能 | ⬜ 待做|包名重构已在阶段 3.0 完成"
+    "README.md|数据安全：备份恢复 + 受管更新 | ✅ **已完成|受管更新见阶段 2.8，尚未完成"
+    "README.md|阶段验证套件（325 项|套件项数已增长，写死的数字会骗人"
+    "docs/FUSION-PLAN.md|能否读回会话」未验证|真机已完成完整往返（见 device-acceptance）"
+    "docs/FUSION-PLAN.md|这一层**一项都还没做**|恢复编排已完成并真机跑通"
+    "docs/INSTALL-ON-DEVICE.md|阶段 2 唯一还没做的那件事|已于 2026-10-16 完成"
+    "docs/INCIDENTS.md|更新失败自动回滚 | ✅|那条 ✅ 是错报的 —— 见阶段 2.8"
+)
+# ⚠️ **比对前先剥掉删除线段落。**
+#
+# `~~过期的话~~` 是**明确标注过的历史**，本仓库有意保留它（改历史比留旧话更糟）。
+# 第一版检查没做这个区分，于是把我自己划掉的三处当成「仍写着」报了出来 ——
+# 又是「检查的输入空间包含关于被查对象的散文」那一族，**第 7 次**。
+for row in "${STALE_TABLE[@]}"; do
+    IFS='|' read -r file stale fact <<<"$row"
+    if [ -f "$ROOT/$file" ] && \
+       python3 -c "
+import pathlib, re, sys
+t = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')
+t = re.sub(r'~~.*?~~', '', t, flags=re.S)   # 删除线 = 历史，不算
+sys.exit(0 if sys.argv[2] in t else 1)
+" "$ROOT/$file" "$stale"; then
+        fail "$file 仍写着「$stale」—— $fact"
+        CR_BAD=1
+    else
+        ok "$file 没有过期陈述「${stale:0:28}…」"
+    fi
+done
+
+
 # ⑤ 数字类过期陈述：README 里写的套件项数必须等于实测值
 XD_BAK="$(mktemp)"
 cp "$README" "$XD_BAK"
