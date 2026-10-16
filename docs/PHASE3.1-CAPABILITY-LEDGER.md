@@ -214,3 +214,63 @@ device.computer-use    DSHA 有，DSHBox 没有
 3. **`mobile-pilot` vs DSHA 那 5 个**：判「同一问题、不同实现」还是「不同问题」
 4. **`agent.auto-review` 在 DSHBox 侧的对应物**（仍是「待查」）
 5. 给每条写**证据等级的升级路径**（要做什么才算「本机跑过」/「真机验证过」）
+
+---
+
+# 台账 · 第三批（2026-10-16）：两条 DSHA 独有能力的前提
+
+> 做法：读 `register-builtin-plugins.py`（注册机制）+ 两个插件的 `package.json`
+> （**依赖声明就是前提声明**）+ 它们的 `cordis.patch.yml`(机制)。
+
+## 3.1 的结论：**它们不是独立能力 —— 都骑在 DSHA 的设备桥上**
+
+| 能力 | DSHA 的实现 | 它声明的机制 | **前置依赖** |
+|---|---|---|---|
+| `device.vdisplay` | `dsh-tool-vscreen` | `dsh.bundle.patch: ./cordis.patch.yml` | **`@deepseek-ai/dsh-mcp-client` 0.2.0-rc.2** |
+| `device.computer-use` | `dsh-computer-use-android` | 同上 | **`@deepseek-ai/dsh-computer-use`** 0.2.0-rc.2<br>+ `@deepseek-ai/dsh-mcp-client` 0.2.0-rc.2<br>+ **「经认证的 DSHA 设备桥」**（写在它的 `description` 里） |
+
+**两条都是 Cordis bundle patch（`dsh.bundle.patch`）** —— 也就是说它们是
+**对 DSH 组合的补丁**，不是独立进程。这一点直接决定了 3.3（统一入口）能不能复用它们。
+
+## 三条对 3.2/3.4 直接有用的发现
+
+### ① `device.computer-use` 是**官方能力的 Android 绑定**，不是自研
+
+它 peer 依赖 **`@deepseek-ai/dsh-computer-use`**（官方的 DSH 包，npm 上就有），
+而自己的 `description` 只说「**through the authenticated DSHA device bridge**」。
+
+**含义**：这件能力的「智能部分」是官方的，**DSHA 补的是「怎么落到 Android 上」** ——
+而它选择的方式是**它自己的设备桥**。
+
+### ② 两条都依赖同一个东西：**DSHA 的设备桥**
+
+所以「吸收 DSHA 精华」在 `computer-use` / `vdisplay` 上**不能只要这两个插件** ——
+**要么连它的设备桥一起吃进来，要么先有我们自己的桥。** 这是 3.1 给 3.3 的最硬的一条输入。
+
+### ③ `dsh-tool-vscreen` 在 DSHA 里**需要专门的 workaround**
+
+`register-builtin-plugins.py` 里有一整个 `migrate_vscreen_workaround()`（含正则匹配
+`dsh-tool-vscreen` 在 profile 里的写法、备份原文件、改写、留 `.dsha-vscreen-original-<sha>`）。
+
+**含义**：**这条能力在 DSHA 自己那边也不稳** —— 它需要一次迁移来修组合文件。
+⚠️ **这不是「DSHA 做得不好」，而是「虚拟显示这类能力天然依赖平台细节」** ——
+3.4（安全边界）要考虑它是**默认关**的那一类。
+
+## 注册机制（两侧对照，3.3 的输入）
+
+| | DSHA | DSHBox |
+|---|---|---|
+| 清单位置 | `register-builtin-plugins.py` 的 `DEFAULT_BUILTINS` | `mobile-pilot` 的 `plugin/package.json` |
+| 实体位置 | rootfs 里的 `/root/dsha-*`（`link:` 依赖） | `plugin-manager/dshbox-plugins/assets/plugins/` |
+| 启用方式 | 写进 profile 的 `bundles` | 写进 `dependencies`（`link:`） |
+
+**两边都是「写进组合」** —— 机制形似，**但清单的位置与格式不同**。
+`DEFAULT_BUILTINS` 里的名字**就是默认注册的那一批**（DSHA 的 8 个）。
+
+## 仍未查（下一批）
+
+1. 两条的 `cordis.patch.yml` **具体补了什么**（现在只知道「补了组合」）
+2. `device.computer-use` 的「已认证设备桥」**认证的是什么**（token？3090 那条？）
+3. `mobile-pilot` vs DSHA 那 5 个：**是不是在解决同一个问题**（上一批遗留）
+4. `agent.auto-review` 在 DSHBox 侧的对应物（第一批遗留）
+5. 每条能力的**证据升级路径**
