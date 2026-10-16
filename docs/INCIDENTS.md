@@ -2858,7 +2858,7 @@ Android 的 string 资源不解释 Markdown。我在中文里写了 `**`、其�
 
 ---
 
-## 附录 B：事故索引表（42 条）
+## 附录 B：事故索引表（44 条）
 
 这张表原来在 `AGENTS.md` 里，**五次把那个文件撑过 65536 字节的指令预算而被静默截断**（截掉的正是「编码约定」与「已知陷阱」两节）。
 
@@ -2908,4 +2908,134 @@ Android 的 string 资源不解释 Markdown。我在中文里写了 `**`、其�
 | 40 | **修完 `PARENT_LINK`，紧接着撞上 `UNSAFE_MOVE`** —— 同一个按钮两个码 | 导出失败：`UNSAFE_MOVE` | 界面把「目标文件」传成了**任务目录里的产物自己**，而 `move` 要求目标不存在。**而那个码的字面意思是「跨设备/父目录不对」，把我引向了文件系统** | —（2.6） | 加具名守卫 `DESTINATION_IS_ARTIFACT`。顺带证出：撤掉守卫后**本机报一串路径、真机报 `UNSAFE_MOVE`** —— 调用方根本没法依赖它。与 39 同因：**我没确认「这个路径到底是什么」**。§39 补记 |
 | 41 | 🔴 **真机导出的归档里，用户的 API Key 是明文** —— 而每一条门禁都绿 | 归档里有 `sk-…` 与浏览器会话授权 | ① 「凭据投影」那个装饰器**生产路径上没人用**（只被它自己的单测引用）；② 排除清单写 `.dsh/credentials`，而真机文件名是 `.credentials.yaml`（我照 `Constants.kt` 的**逻辑名**猜的） | —（2.6） | **「测试通过」与「功能被调用」是两件事。** 已修：清单引用常量 + FULL 加单独凭据成员 + **按路径**自动套投影 + 凭据源豁免排除；新增端到端测试（**「只出现一次」是关键**）与套件 5v 节。§41 |
 | 42 | **修好导出，恢复又红同一个 `PARENT_LINK`** —— 同一个方法、一个参数之隔 | 恢复失败：`PARENT_LINK` | 导出三个参数都规范化了，恢复只改了两个（`userData`/`taskDir`），**`archive` 漏了** —— 而归档暂存在 `cacheDir`（同样含符号链接） | —（2.6） | **「修了一处」≠「这一类修好了」。** 已加套件 5w 节：**两个编排类的代码里不许出现 `getAbsoluteFile()`** + 六个入口参数逐个点名 + 注入。另修：Markdown 的 `**` 被当正文显示。§39 补记 |
+| 43 | 修好凭据泄漏，恢复又红 `OVERLAPPING_TARGETS` —— **我自己改出来的** | 恢复失败：`OVERLAPPING_TARGETS` | 为让上游那个只认单文件的投影装饰器能套上，我把凭据做成**独立的根**；而 `.dsh/.credentials.yaml` **以 `.dsh/` 开头**，上游用**路径前缀**判目标重叠 | —（2.7） | **不是参数没传对，是结构不成立。** 改成**一个根 + 树内部按路径投影**（`DshCredentialsSource`）；顺带删掉那条自相矛盾的排除条目、新增 `OVERLAPPING_MEMBERS` 导出时守卫。§43 |
+| 44 | 🔴 **「已恢复：1」而会话还在** —— `merge` 被写死成 `true` | 「已恢复：1」但新建的会话没消失 | `merge=true` 的语义是**先把现有整棵树拷进候选再覆盖** → 归档里没有的一律保留，**全量恢复永远删不掉任何东西**；而 `HostRestoreMapping` 把它写死成 `true` | —（2.7） | **「已恢复」和「东西还在」可以同时为真。** 按「根是不是整个 home」推导 `merge`。**为什么 14 条测试没抓到：它们的目标一律是空目录，而空目录上「合并」与「替换」结果完全一样** —— 这不是写错，是**测试场景缺了一个维度**。§44 |
 
+
+
+## 43. 修好凭据泄漏，恢复又红 `OVERLAPPING_TARGETS` —— 我自己改出来的
+
+### 发生了什么
+
+用户装好修 `PARENT_LINK` 的版本，点「确认恢复」：
+
+```
+恢复失败：OVERLAPPING_TARGETS
+```
+
+**而这是我上一轮修凭据泄漏时改出来的。**
+
+### 根因：两个根不能嵌套
+
+为了让上游那个投影装饰器（`CredentialFileBackupSource`）能套上 —— 它只认
+「源里只有一个文件、路径为空」—— 我把凭据文件做成了**独立的根**：
+
+```
+roots = [ {dsh → .dsh}, {credentials → .dsh/.credentials.yaml} ]
+```
+
+而 `.dsh/.credentials.yaml` **以 `.dsh/` 开头**。上游 `HostDataTransaction` 用
+**路径前缀**判目标重叠：
+
+```java
+for (String seen : uniqueTargets)
+  if (path.equals(seen) || path.startsWith(seen + File.separator)
+      || seen.startsWith(path + File.separator)) throw new IOException("OVERLAPPING_TARGETS");
+```
+
+**那个拒绝是对的**：两个根各自独立走「五相位标记 + 换入」，
+目标互相嵌套时无法保证「要么都换成、要么都不换」。
+
+**不是参数没传对，是结构不成立。**
+
+### 修法：一个根 + 树内部按路径投影
+
+新增 `DshCredentialsSource`：包在**整棵 `.dsh` 树**外面，只对路径等于
+`CredentialProjection.FILE` 的那一个 item 动手，其余**原样透传**。
+
+顺带三处连带改动：FULL 范围回到一个成员；**删掉排除清单里的凭据条目**
+（它曾经错两次：路径猜错导致真机泄漏，改对后又与「投影后保留」矛盾 ——
+**排除 = 不备份**，而用户要的是「投影后备份」）；导出时新增 `OVERLAPPING_MEMBERS` 守卫。
+
+### 教训
+
+**「修好了一处」不等于「这一类修好了」。** 第 39 条之后我本可以写一条结构性检查，
+却只修了参数。而这次的形态更进一步：**同一个方法里，两个参数对、一个参数错。**
+
+---
+
+## 44. 🔴 「已恢复：1」而会话还在 —— `merge` 被写死成 `true`
+
+### 发生了什么
+
+用户按清单做端到端恢复：
+
+1. 建会话 `测试C会话`
+2. 导出（**C 不在归档里** —— 事后 `grep` 核过：归档有 `测试A`/`测试B`/`你好`，没有 `测试C会话`）
+3. 恢复 → 界面报 **「已恢复：1」**
+4. **完全重启 DSH 之后，C 还在**
+
+### 根因：全量恢复做的是「合并」而不是「替换」
+
+`NativeRestorePlan` 里 `merge=true` 的语义是：
+
+```java
+if (target.merge && target.read != null && !fs.stat(target.read).type.equals("MISSING"))
+  copyTree(target.read, fs.child(candidate, root.getKey()), control, 0, copied);
+```
+
+**先把现有的整棵树拷进候选，再把归档覆盖上去。**
+于是候选 = 「你现在的 `.dsh`」+「归档的内容」——
+**归档里没有的文件一律保留，全量恢复永远删不掉任何东西。**
+
+而 `HostRestoreMapping` 里写的是：
+
+```java
+return new NativeRestorePlan.Target(path, path, true, member.id, "", null);
+//                                        ^^^^ 写死
+```
+
+**「已恢复：1」是对的，「C 还在」也是对的。两者同时成立。**
+
+### 修法
+
+```java
+boolean wholeHome = member.path.equals(GROUP_NAME);   // ".dsh"
+return new NativeRestorePlan.Target(path, path, !wholeHome, member.id, "", null);
+```
+
+- 根是**整个 home** → **替换**（把这个家恢复成那份归档的样子）
+- 根是 home 里的**子树** → **合并**（只换这一部分、别动其它）
+
+### 为什么 14 条恢复测试一条都没抓到
+
+**因为它们的目标一律是空目录。** 而**空目录上「合并」与「替换」结果完全一样** ——
+两者只有在**目标非空**时才分道扬镳。
+
+> **「在空目标上测替换」是测不出「替换」的。**
+
+这不是「我写错了」，而是**测试场景缺了一个维度**（目标的初始状态），
+而那 14 条测试**全都在这个维度上取了同一个值**。
+
+这比第 39–43 条更值得记：那几条只要我更小心就能避免，
+**这一条需要我意识到「我的测试在哪个维度上只取了一个值」。**
+
+### 新增守卫（注入实测两条都红）
+
+1. `aWholeHomeRestoreReplacesTheTreeInsteadOfMergingIntoIt` —— 端到端复现用户的实验。
+2. `wholeHomeRootsReplaceAndSubtreeRootsMerge` —— 钉住 `merge` 的推导规则。
+
+---
+
+## 阶段 2 的真机验收：五条全部满足（2026-10-16）
+
+| 验收标准 | 结论 | 证据 |
+|---|---|---|
+| 恢复前预检 + 恢复后逐文件校验 | ✅ | 真机导出/恢复跑通；`COMMIT_VERIFICATION` 有专门测试证明会红 |
+| 坏备份明确报错、不破坏现有数据 | ✅ | 三种坏法各一个具名错误码（本机 + 归档结构核验） |
+| 更新失败自动回滚 | ✅ | 上游真杀子进程的测试 + `FAILED_RETAINED` |
+| 归档里没有机器本地凭据 | ✅ | **真机核过**：`client-connection`/`browser-session` 各 0 次，provider 的 ref 保留，凭据文件只出现一次 |
+| **可换台设备恢复** | ✅ | **真机核过**：建会话 → 导出 → 新建 `应被删除` → 恢复 → **完全重启 DSH** → 它消失了 |
+
+**走到这一步，真机一共抓出 6 个 bug（第 39–44 条），而本机 174 条测试 + 325 项套件
++ CI 24/24 全绿时一个都没抓到。**

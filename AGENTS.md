@@ -21,8 +21,14 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 
 ## 这个仓库当前处于什么阶段
 
-**阶段 1 完成（分支 `phase-1/import-dshbox-base`，PR #1 待审，main 未动）；
-阶段 2 已开始（分支 `phase-2/backup-v5`，2.1 见下）。**
+**阶段 1 与阶段 2 均已完成，并已合并进 `main`（2026-10-16）。**
+
+**阶段 2 的验收标准五条全部在真机上满足** —— 包括最后那条「可换台设备恢复」
+（建会话 → 导出 → 新建一个 → 恢复 → 完全重启 DSH → 它消失了）。
+明细见 [docs/INCIDENTS.md](docs/INCIDENTS.md) 末尾的验收表。
+
+**真机一共抓出 6 个 bug（事故第 39–44 条），而本机 174 条 + 325 项 + CI 全绿时
+一个都没抓到。** 下一个阶段的计划见 [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md)。
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
 （`README.md`、`.gitignore`）→ **实际导入 765 个文件、25.4 MB**。
@@ -403,7 +409,7 @@ Kotlin 未动仍 43 ⇒ **108**。两个类**分别钉** 5 / 7 —— 只钉总�
 
 ### 事故与真机验证记录
 
-**42 条事故的索引表在 [docs/INCIDENTS.md 附录 B](docs/INCIDENTS.md#附录-b事故索引表42-条)。**
+**44 条事故的索引表在 [docs/INCIDENTS.md 附录 B](docs/INCIDENTS.md#附录-b事故索引表44-条)。**
 每条事故的完整过程、原始报错、复现命令与故障注入结果，在那边正文的各节里。
 
 **为什么表不在这里**：它在这里时**五次**把本文件撑过 65536 字节的指令预算而被**静默截断**，
