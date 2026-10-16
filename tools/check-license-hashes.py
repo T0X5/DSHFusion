@@ -31,6 +31,32 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def check_tracked_in_git(paths: list[str]) -> list[str]:
+    """受保护的原件**必须被 git 跟踪** —— 磁盘上有不算数。
+
+    🔴 这条断言来自一个真实事故（2026-10-16）：
+
+    套件的 5e 节会「删掉上游 GPL 原件 → 断言会红 → 还原」。**运行被杀时卡在
+    「删掉」与「还原」之间**，于是原件在磁盘上不存在；紧接着我执行的 `git add -A`
+    **把这次删除记进了提交**并推到 main —— **受保护的许可原件从仓库里消失了**。
+
+    而本检查器当时**是通过的**：它读的是磁盘，磁盘上后来又有了（被下一次运行的还原写回）。
+    **「文件在磁盘上」≠「文件在仓库里」。**
+
+    这与仓库里那条「`check-import-fidelity.py` 读的是 git 索引，改动没 `git add`
+    之前它对你是瞎的」是同一族的**反面**：那次是「索引落后于工作区」，
+    这次是「工作区骗过了只看磁盘的检查」。
+    """
+    import subprocess
+
+    out = subprocess.run(["git", "ls-files"], capture_output=True, text=True)
+    if out.returncode != 0:
+        return []           # 不是 git 检出（例如导出的压缩包）→ 这一条不适用
+    tracked = set(out.stdout.splitlines())
+    return [f"{p} 在磁盘上存在，但**不在 git 里** —— 受保护的原件必须被跟踪" 
+            for p in paths if p not in tracked]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="核验上游许可原件哈希")
     parser.add_argument("--update", action="store_true",
@@ -71,6 +97,8 @@ def main() -> int:
         return 0
 
     mismatches = []
+    # 「磁盘上有」不算数 —— 受保护的原件必须在 git 里（见 check_tracked_in_git 的说明）
+    untracked = check_tracked_in_git(list(files.keys()))
     missing = []
     for relative, record in sorted(files.items()):
         path = ROOT / relative
@@ -81,10 +109,12 @@ def main() -> int:
         if actual != record.get("sha256"):
             mismatches.append((relative, record.get("sha256"), actual))
 
-    if missing or mismatches:
+    if missing or mismatches or untracked:
         print("许可原件核验失败：", file=sys.stderr)
         for item in missing:
             print(f"  ✗ 缺失: {item}", file=sys.stderr)
+        for item in untracked:
+            print(f"  ✗ 未跟踪: {item}", file=sys.stderr)
         for relative, want, got in mismatches:
             print(f"  ✗ 被改动: {relative}", file=sys.stderr)
             print(f"      期望 {want}", file=sys.stderr)
