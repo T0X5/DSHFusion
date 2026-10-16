@@ -5,7 +5,7 @@
   "categories": {
     "ours": {
       "files": 100,
-      "lines": 30071
+      "lines": 30059
     },
     "dsha_import": {
       "files": 38,
@@ -13,18 +13,18 @@
     },
     "backbone_diverged": {
       "files": 80,
-      "lines": 22540
+      "lines": 22505
     },
     "backbone": {
       "files": 686,
-      "lines": 244208
+      "lines": 244266
     }
   },
   "total": {
     "files": 904,
-    "lines": 302580
+    "lines": 302591
   },
-  "ours_ratio_lines": 0.0994,
+  "ours_ratio_lines": 0.0993,
   "ours_ratio_files": 0.1106,
   "note": "⚠️ **这个比例的口径是「行数」，而它低估了自写部分。** `tools/`+`governance/`+`docs/` 共 75+ 个文件是纯自写，但它们不是 Kotlin/Java 代码，行数远小于骨干。**不要把「9%」读成「这个项目只有 9% 是自己的」** —— 读成「Kotlin/Java 代码里 9% 是自己写的」。"
 }
