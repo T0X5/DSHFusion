@@ -147,3 +147,70 @@ DSHBox 走 `pilot/dshbox-adapter`（Shizuku）。**这是 3.2 授权模型最该
 2. **`device.shell.command` 单独深读**：它的三档前提（root/Shizuku/ADB）是 3.2 授权模型的直接输入
 3. **`mobile-pilot` vs DSHA 那 5 个 UI/安全插件**：判它们是不是在解决同一个问题
 4. 每条**补上「证据等级」的升级路径**（要做什么才算「本机跑过」/「真机验证过」）
+
+---
+
+# 台账 · 第二批（2026-10-16）：把「待查」填上
+
+> 做法：去 DSHBox 侧**读入口文件**（`pilot/`、`plugin-manager/dshbox-plugins/assets/plugins/`），
+> 判「同一套 / 不是同一套 / 没有」。**不是靠 grep 命中数当结论** ——
+> 命中数只用来找候选，结论要看那一处引用。
+
+## 先更正第一批的一个错误
+
+**第一批写「DSHBox 的插件没有 `package.json`」—— 那是错的。**
+
+`mobile-pilot` **有** `plugin/package.json`（`@local/mobile-pilot`），
+只是布局与 DSHA 不同（在 `plugin/` 子目录里）。**我只看顶层就下了结论。**
+
+> 结论没变（两边的插件机制**确实**不同），但**理由错了** ——
+> 正确的是「**布局/机制不同**」，而不是「DSHBox 那边没有清单」。
+> 这是本文件里第二次「读了一个不含答案的地方」。
+
+## 填好的台账
+
+| `id` | DSHA | DSHBox | 前提 | 证据等级 |
+|---|---|---|---|---|
+| `device.shell.command` | `dsh-device-shell-guide` | `pilot/dshbox-adapter` | **root / Shizuku / ADB** | 只读过代码 |
+| `ui.overlay.status` | `dsh-status-overlay`(35K) | ✅ `mobile-pilot` 的 `悬浮`（`pilot.js` 里 11 处） | 悬浮窗权限 | 只读过代码 |
+| `ui.notify.turn-end` | `dsh-task-notifier`(19K) | ✅ `mobile-pilot` 的 `通知`（9 处） | 通知权限 | 只读过代码 |
+| `ui.a11y.drive` | 有 | ✅ `pilot/interlock-relay-core`（`RelayA11yWatchdog`） | **无障碍服务** | 只读过代码 |
+| `device.app.control` | 待查 | ✅ `mobile-pilot` 的 `app.launch` / `app.info` 工具 | 应用层 | 只读过代码 |
+| `device.alarm` | 待查 | ✅ `mobile-pilot` 的 `alarm.set` / `alarm.show` 工具 | 应用层 | 只读过代码 |
+| `device.vdisplay` | `dsh-tool-vscreen`(31K) | ★ **没有**（`vscreen`/`虚拟显示` 命中 0） | 待查 | 只读过代码 |
+| `device.computer-use` | `dsh-computer-use-android`(27K) | ★ **没有**（`computer-use` 命中 0） | 设备桥已认证 | 只读过代码 |
+| `safety.destructive-guard` | `dsh-destructive-guard`(87K) | ⚠️ **部分**：5 个文件提到破坏性/危险命令，但**没找到等价的一道闸** | 无 | 只读过代码 |
+| `ui.mobile-adaptation` | `dsh-web-mobile`(1.7M) | `dsh-mobile-adapt` + `mobile-pilot` | 无 | 🔴 **不是同一套**（已核实） |
+| `agent.auto-review` | `dsh-auto-review`(19K) | 待查 | 无 | 只读过代码 |
+
+## 这一批的**主要产出：两条 DSHA 独有的能力**
+
+```
+device.vdisplay        DSHA 有，DSHBox 没有
+device.computer-use    DSHA 有，DSHBox 没有
+```
+
+**这两条是 3.1 里最值钱的输出** —— 因为它们是「**吸收 DSHA 精华**」这句话的**具体所指**：
+不是笼统地「DSHA 功能更全」，而是**这两件具体的设备能力**在骨干上没有。
+
+⚠️ **但「没有」不等于「该做」** —— 3.4（安全边界）要回答的是：
+`computer-use`（让 agent 直接操作手机）与 `vdisplay`（虚拟显示）
+**需要什么前提、默认该不该开**。**这正是 3.2–3.4 存在的原因。**
+
+## 顺带查出的 `mobile-pilot` 工具面
+
+它声明的工具里有：`app.launch`、`app.info`、`alarm.set`、`alarm.show`、
+以及一批读屏相关的（`checkable` / `bottom` / `forward` / `backward` …）。
+
+**它是一套「应用层 + 读屏」的能力面** —— 与 DSHA 那 5 个 UI/安全插件
+**在问题上重叠、在实现上不同**（同 `ui.mobile-adaptation` 的情形）。
+**「判它们是不是在解决同一个问题」这件事仍未做完**（下一批）。
+
+## 下一批（更新）
+
+1. **`device.vdisplay` 与 `device.computer-use` 深读**：它们**需要什么前提**、
+   在 DSHA 里**默认开不开** —— 这是 3.2/3.4 的直接输入
+2. **`safety.destructive-guard` 到底有没有等价闸**：那 5 个文件要逐个读（现在只是「提到」）
+3. **`mobile-pilot` vs DSHA 那 5 个**：判「同一问题、不同实现」还是「不同问题」
+4. **`agent.auto-review` 在 DSHBox 侧的对应物**（仍是「待查」）
+5. 给每条写**证据等级的升级路径**（要做什么才算「本机跑过」/「真机验证过」）
