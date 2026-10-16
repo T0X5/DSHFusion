@@ -111,7 +111,7 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
      **不需要运行环境资产**，每次 push/PR 都跑。
    - **慢车道**：`assembleDebug` / `assembleRelease` + 签名。需要资产与密钥，
      `workflow_dispatch` 手动触发。**签名密钥只走 secrets，绝不入库。**
-2. **真机验收记录**：在 `docs/device-acceptance/` 下按版本留档<!-- future: docs/device-acceptance/ -->，包含实际包摘要、
+2. **真机验收记录**：在 `docs/device-acceptance/` 下按版本留档，包含实际包摘要、
    包名、版本码、证书指纹与非破坏性操作结果。**不得从旧记录移用。**
 3. **`androidTest` 从零开始**：不追求覆盖率，先为"装了能启动、能连上 3080、
    终端能出 `node -v`"这三条建立 instrumented 冒烟测试。
