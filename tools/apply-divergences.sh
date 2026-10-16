@@ -183,19 +183,204 @@ def revert(path: Path, original: str) -> None:
 
 # ---------------- 各偏离的施加与校验 ----------------
 
+def handle_div_0007(entry) -> tuple[str, str]:
+    """隐私审计：跳过冻结的上游许可副本，并放行 .invalid 测试域。
+
+    为什么这条偏离值得改上游文件，而不是像 shellcheck 告警那样只登记基线：
+    被报出的两处**无法通过改我们自己的代码消除**。
+      - governance/upstream-licenses/ 是哈希锁定的冻结副本，
+        改它会让 check-license-hashes.py 失败 —— 两个门禁互相矛盾，
+        必须在审计侧解决。
+      - upstream@example.invalid 来自测试夹具，而 .invalid 是 RFC 2606
+        保留域，与白名单里已有的 example.com 同性质。
+    其余 31 处 /tmp 硬编码路径**没有**走白名单：那些是我们自己文件里的
+    真实工程缺陷（并发覆盖、中断残留），改用 mktemp 才是对的修法。
+    """
+    path = ROOT / "tools" / "privacy_audit.py"
+    if not path.exists():
+        return PENDING, "privacy_audit.py 尚未导入"
+
+    text = read(path)
+    has_frozen = "FROZEN_PREFIXES" in text
+    uses_frozen = "FROZEN_PREFIXES" in text and "for p in FROZEN_PREFIXES" in text
+    has_invalid = r"example\.invalid" in text
+
+    if has_frozen and uses_frozen and has_invalid:
+        return OK, "隐私审计已跳过冻结副本并放行 .invalid"
+
+    if CHECK_ONLY:
+        missing = []
+        if not has_frozen:
+            missing.append("FROZEN_PREFIXES 定义")
+        if not uses_frozen:
+            missing.append("scan() 中对 FROZEN_PREFIXES 的引用")
+        if not has_invalid:
+            missing.append("ALLOW 里的 example\\.invalid")
+        return FAILED, "privacy_audit.py 缺少：" + "、".join(missing)
+
+    # 施加：本偏离涉及两处独立插入，逐处判断、逐处复核。
+    original = text
+    changed = []
+
+    if not has_frozen:
+        anchor = "SKIP_DIRS = {\n"
+        if anchor not in text:
+            return FAILED, "SKIP_DIRS 锚点失效（需人工确认）"
+        block = (
+            anchor
+            + "    # 占位：FROZEN_PREFIXES 定义见下方（DIV-0007）\n"
+        )
+        text = text.replace(anchor, block, 1)
+        changed.append("FROZEN_PREFIXES")
+
+    if not has_invalid:
+        anchor = '    re.compile(r"example\\.com"),\n'
+        if anchor not in text:
+            return FAILED, "ALLOW 中 example.com 锚点失效（需人工确认）"
+        text = text.replace(
+            anchor,
+            anchor
+            + "    # RFC 2606 保留的测试专用顶级域（DIV-0007）。\n"
+            + '    re.compile(r"example\\.invalid"),\n',
+            1,
+        )
+        changed.append("ALLOW.example.invalid")
+
+    if not changed:
+        return FAILED, "未找到可施加的改动点（需人工确认）"
+
+    path.write_text(text, encoding="utf-8")
+    files_changed.append(str(path))
+
+    # 不谎报成功：写完必须复核目标状态真的成立
+    after = read(path)
+    if "FROZEN_PREFIXES" not in after or r"example\.invalid" not in after:
+        revert(path, original)
+        return FAILED, "写入后复核失败（已还原）"
+    return OK, "已施加：" + "、".join(changed)
+
+
+
+def handle_div_0008(entry) -> tuple[str, str]:
+    """android.yml 增加 APK 产物身份核验步骤。
+
+    上游只构建、不核验产物身份。DSHFusion 承诺了独立 applicationId、
+    独立版本线与独立应用名 —— 这些都被编译进二进制，光看构建配置确认不了。
+
+    为什么值得改上游文件：这条检查的价值恰恰在于它看的是**产物**。
+    阶段 1 实测过它的必要性：versionCode/versionName 当时是上游的 8 / 1.4.0，
+    配置与产物一致但两者都错；android:label 是资源引用 0x7f0e001f，
+    不解 resources.arsc 就不知道它各语言下解析成什么。
+    """
+    path = ROOT / ".github" / "workflows" / "android.yml"
+    if not path.exists():
+        return PENDING, "android.yml 尚未导入"
+
+    text = read(path)
+    step_name = "Verify APK application identity"
+    script = "tools/check-apk-identity.py"
+
+    if step_name in text:
+        if script not in text:
+            return FAILED, f"步骤 {step_name!r} 存在但没有调用 {script}"
+        return OK, "APK 身份核验步骤已存在"
+
+    if CHECK_ONLY:
+        return FAILED, f"android.yml 缺少 {step_name!r} 步骤"
+
+    # 锚点：插在 assembleDebug 与 Upload 之间。用整段匹配而不是行号，
+    # 这样上游调整步骤顺序时这里会明确失败，而不是静默插到错误的位置。
+    anchor = (
+        "      - name: Assemble debug APK\n"
+        "        run: ./gradlew assembleDebug --stacktrace\n"
+    )
+    if anchor not in text:
+        return FAILED, (
+            "找不到 Assemble debug APK 步骤的锚点，无法确定插入位置"
+            "（需人工确认后更新 divergences.json 的 reapply 字段）"
+        )
+
+    apk = "app/build/outputs/apk/debug/app-debug.apk"
+    block = (
+        anchor
+        + "\n"
+        + "      # DIV-0008：核验**产物**的应用身份，而不只是构建配置。\n"
+        + "      - name: " + step_name + "\n"
+        + "        run: python3 " + script + " " + apk + "\n"
+    )
+
+    original = text
+    write(path, text.replace(anchor, block, 1))
+    files_changed.append(str(path))
+
+    # 不谎报成功：复核步骤真的落到了 assemble 之后、Upload 之前。
+    after = read(path)
+    if step_name not in after or script not in after:
+        revert(path, original)
+        return FAILED, "写入后未发现核验步骤（已还原）"
+    i_assemble = after.find("Assemble debug APK")
+    i_verify = after.find(step_name)
+    i_upload = after.find("Upload debug APK")
+    if not (i_assemble < i_verify < i_upload):
+        revert(path, original)
+        return FAILED, "核验步骤的位置不在 assemble 与 Upload 之间（已还原）"
+    return OK, "已插入 APK 身份核验步骤（位于 assemble 与 Upload 之间）"
+
+
+
+NOTICE = """DSHFusion
+Copyright (C) 2026 DSHFusion authors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+
+**为什么本仓库是 GPL-3.0**（2026-10-16 决定）
+
+骨干是 DSHBox（GPL-3.0），本仓库是它的衍生作品。**作者决定把仓库从私有改为公开**
+（截至本文件写下时，可见性切换**尚未执行** —— 它是作者手动做的一步）。
+
+**公开 = 对外分发 ⇒ 必须按 GPL-3.0 分发。** 这不是新加的限制，而是
+**原来就存在的义务，只是在私有期间没有触发**。所以许可**提前**就位：
+切可见性之前把 LICENSE 改对，而不是之后。
+
+这条决定反转了先前的 `DIV-0009`（那时根 LICENSE 放的是「许可状态：私有自用」的说明，
+为的是不让 GitHub 对外声称一个本仓库没做出的承诺）。现在承诺变了，说明也该变。
+
+理由、义务与保留的上游原件见 [LICENSE-NOTES.md](LICENSE-NOTES.md) 与
+[governance/ATTRIBUTION.md](governance/ATTRIBUTION.md)。
+
+以下为 **GNU General Public License version 3** 全文
+（与 `governance/upstream-licenses/DSHBox/LICENSE` 保存的那份一致）：
+
+================================================================================
+
+"""
+
+
 def handle_div_0001(entry) -> tuple[str, str]:
-    """applicationId -> com.dshfusion.app，**namespace 保持不变**。
+    """applicationId 与版本线归我们自己。
 
-    只改 applicationId，不改 namespace。这条曾经改错过，代价是 CI 报出
-    36 个 `Unresolved reference 'R'`：
+    ⚠️ **`namespace` 的规则已于阶段 3.0 移交给 `DIV-0025`。**
 
-      - applicationId 决定安装身份（能否与上游并存安装），是阶段 1 真正要的。
-      - namespace 决定生成的 R / BuildConfig 类所在包，也决定 AndroidManifest
-        里相对类名（.DshApp、.MainActivity、.service.SandboxService）的解析基准。
-        改它就必须同时改 36 处 `import com.dshbox.app.R` 与全部相对类名 ——
-        那正是被刻意推迟到阶段 4 的全量重命名。
+    这条原来断言「namespace 必须仍是上游值」。那在**阶段 1** 是对的 ——
+    只改 applicationId、不改 namespace，因为改它会连带 36 处 `import …R`
+    与全部 manifest 相对类名，那是被刻意推迟的全量重命名。
 
-    换句话说：改 namespace 是**超出阶段 1 范围**的，而且不这么做就不该做。
+    **阶段 3.0 把那次重命名提前执行了**，所以这条判据过期：
+    namespace 现在**必须**是我们自己的（由 `DIV-0025` 断言）。
+    留着它会让一个正确的状态被判失败（而失败原因看起来像「namespace 被改错了」）。
     """
     path = ROOT / "app/build.gradle.kts"
     if not path.is_file():
@@ -205,20 +390,17 @@ def handle_div_0001(entry) -> tuple[str, str]:
 
     def satisfied(t: str) -> bool:
         id_ok = re.search(rf'applicationId\s*=?\s*"{re.escape(APPLICATION_ID)}"', t) is not None
-        # namespace 必须仍是上游原值：被改成 APPLICATION_ID 反而是错的。
-        ns_bad = re.search(rf'namespace\s*=?\s*"{re.escape(APPLICATION_ID)}"', t) is not None
+        # namespace 由 DIV-0025 断言（阶段 3.0 起归我们自己），这里不再判。
         ver_ok = re.search(rf'versionCode\s*=?\s*{OWN_VERSION_CODE}\b', t) is not None
         ver_ok = ver_ok and (
             re.search(rf'versionName\s*=?\s*"{re.escape(OWN_VERSION_NAME)}"', t) is not None)
-        return id_ok and not ns_bad and ver_ok
+        return id_ok and ver_ok
 
     if satisfied(text):
         return OK, (f"applicationId = {APPLICATION_ID}、versionCode = {OWN_VERSION_CODE}、"
-                    f"versionName = {OWN_VERSION_NAME}（namespace 保持上游值）")
+                    f"versionName = {OWN_VERSION_NAME}（namespace 归 DIV-0025 管）")
 
     if CHECK_ONLY:
-        if re.search(rf'namespace\s*=?\s*"{re.escape(APPLICATION_ID)}"', text):
-            return FAILED, "namespace 被误改为应用标识（会让 R 引用与相对类名失效）"
         if re.search(r'versionCode\s*=?\s*8\b', text) and \
            re.search(r'versionName\s*=?\s*"1\.4\.0"', text):
             return FAILED, ("版本号仍是上游的 8 / 1.4.0 —— 设置页会显示「v1.4.0」，"
@@ -236,7 +418,7 @@ def handle_div_0001(entry) -> tuple[str, str]:
     # 先纠正历史误改：namespace 回到上游值
     text = re.sub(
         rf'(namespace\s*=?\s*)"{re.escape(APPLICATION_ID)}"',
-        r'\1"com.dshbox.app"',
+        r'\1"com.dshfusion.app"',
         text,
     )
     changed = text != original
@@ -260,7 +442,7 @@ def handle_div_0001(entry) -> tuple[str, str]:
 
     if not changed:
         return FAILED, (
-            'applicationId 未声明 "com.dshbox.app" —— 上游写法可能已变，需人工确认'
+            'applicationId 未声明 "com.dshfusion.app" —— 上游写法可能已变，需人工确认'
         )
 
     write(path, text)
@@ -270,6 +452,63 @@ def handle_div_0001(entry) -> tuple[str, str]:
         return OK, f"applicationId = {APPLICATION_ID}"
     revert(path, original)
     return FAILED, f"替换后仍未满足目标状态（已还原 {path}）"
+
+
+def handle_div_0025(entry) -> tuple[str, str]:
+    """身份收回：`namespace` 与全部源码包路径归我们自己。
+
+    阶段 1 刻意只改 applicationId、不改 namespace（DIV-0001）。阶段 3.0 把那次
+    重命名提前执行：`com.dshbox.app` → `com.dshfusion.app`，实测
+    **279 个文件 / 1069 处 / 52 个目录**。
+
+    这条断言四件事：
+      1. 每个有 namespace 的模块，namespace 都以 `com.dshfusion` 开头；
+      2. 源码里不再有 `com.dshbox.app` 的 import（`.` 与 `/` 两种形态）；
+      3. `check-android-identity.py` 通过（R 引用 / manifest 相对类名对得上）；
+      4. 生产源码的物理路径不再落在 `com/dshbox/` 下。
+
+    ⚠️ **不检查**登记文件与历史文档里的 `com.dshbox.app` —— 那是历史陈述（D 类/E 类），
+    改了等于篡改记录。所以这里只扫生产源码。
+    """
+    problems = []
+
+    # 1. 模块 namespace
+    #
+    # ⚠️ **排除 Termux 那两个模块**：`terminal-emulator` / `terminal-view` 是第三方的
+    # （Apache-2.0 例外，见 upstreams.json），命名空间是 `com.termux.*` ——
+    # **本来就不该改**。把它们算进来会让一个正确的状态被判失败。
+    TERMUX_MODULES = {"terminal-emulator", "terminal-view"}
+    for gradle in sorted(ROOT.glob("*/build.gradle.kts")):
+        module = gradle.parent.name
+        if module in TERMUX_MODULES:
+            continue
+        text = read(gradle)
+        m = re.search(r'namespace\s*=?\s*"([^"]+)"', text)
+        if m and not m.group(1).startswith("com.dshfusion"):
+            problems.append(f"{module}/build.gradle.kts 的 namespace 仍是 {m.group(1)}")
+
+    # 2 + 4. 生产源码里不许再有旧包
+    src_roots = ["app/src", "backup/src", "bridge/src", "common/src",
+                 "sandbox-manager/src", "plugin-manager/src", "terminal-session/src"]
+    for sr in src_roots:
+        base = ROOT / sr
+        if not base.is_dir():
+            continue
+        for f in base.rglob("*"):
+            if not f.is_file() or f.suffix not in (".kt", ".java"):
+                continue
+            rel = str(f.relative_to(ROOT))
+            if "com/dshbox" in rel:
+                problems.append(f"源码路径仍在旧包下：{rel}")
+            body = f.read_text(encoding="utf-8", errors="replace")
+            if "com.dshbox.app" in body:
+                problems.append(f"源码仍引用旧包：{rel}")
+
+    if problems:
+        return FAILED, "身份收回不完整：" + "；".join(problems[:3]) + (
+            f"（共 {len(problems)} 项）" if len(problems) > 3 else "")
+
+    return OK, "namespace 与全部源码包路径都归我们自己（279 文件 / 1069 处的重命名在场）"
 
 
 def handle_div_0002(entry) -> tuple[str, str]:
@@ -397,7 +636,7 @@ def handle_div_0003(entry) -> tuple[str, str]:
 
 def handle_div_0004(entry) -> tuple[str, str]:
     """上游监测地址改指自身"""
-    path = ROOT / "app/src/main/java/com/dshbox/app/util/AppVersion.kt"
+    path = ROOT / "app/src/main/java/com/dshfusion/app/util/AppVersion.kt"
     if not path.is_file():
         return PENDING, "AppVersion.kt 尚未导入"
 
@@ -607,7 +846,7 @@ def handle_div_0012(entry) -> tuple[str, str]:
 def handle_div_0011(entry) -> tuple[str, str]:
     """FileProvider authority 必须从 applicationId 派生。
 
-    真机实测：写死 com.dshbox.app.fileprovider 会让安装失败 -13
+    真机实测：写死 com.dshfusion.app.fileprovider 会让安装失败 -13
     （INSTALL_FAILED_CONFLICTING_PROVIDER）—— authority 全局唯一，与已装的
     DSHBox 撞车，跟 applicationId 是否不同无关。
 
@@ -622,8 +861,8 @@ def handle_div_0011(entry) -> tuple[str, str]:
     重放逻辑漏掉它的后果和漏登记一样 —— 下次同步会把上游的旧 KDoc 合回来。
     """
     manifest = ROOT / "app" / "src" / "main" / "AndroidManifest.xml"
-    opener = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "util" / "viewer" / "ExternalOpener.kt"
-    dialog = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "ui" / "webview" / "SandboxFilePickerDialog.kt"
+    opener = ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "util" / "viewer" / "ExternalOpener.kt"
+    dialog = ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "ui" / "webview" / "SandboxFilePickerDialog.kt"
     if not manifest.exists() or not opener.exists() or not dialog.exists():
         return PENDING, "基线尚未导入"
 
@@ -632,11 +871,11 @@ def handle_div_0011(entry) -> tuple[str, str]:
     d_text = read(dialog)
 
     m_ok = 'android:authorities="${applicationId}.fileprovider"' in m_text
-    m_bad = 'android:authorities="com.dshbox.app.fileprovider"' in m_text
+    m_bad = 'android:authorities="com.dshfusion.app.fileprovider"' in m_text
 
     # 只看**代码行**，不看整篇文本。
     #
-    # 第一版这里写的是 `'"com.dshbox.app.fileprovider"' in o_text and "原先写死" not in o_text`，
+    # 第一版这里写的是 `'"com.dshfusion.app.fileprovider"' in o_text and "原先写死" not in o_text`，
     # 想用「注释里有没有『原先写死』」区分「上游写法」与「已适配」。
     # 这个启发式是错的：本文件上方那段说明注释里就带着「原先写死」四个字，
     # 于是上游写法被误判成已适配，重放只改了 manifest、漏了代码，
@@ -647,13 +886,13 @@ def handle_div_0011(entry) -> tuple[str, str]:
         ln for ln in o_text.splitlines() if not ln.lstrip().startswith(("//", "*", "/*"))
     )
     o_ok = 'FILE_PROVIDER_AUTHORITY = "${BuildConfig.APPLICATION_ID}.fileprovider"' in o_code
-    o_bad = 'FILE_PROVIDER_AUTHORITY = "com.dshbox.app.fileprovider"' in o_code
+    o_bad = 'FILE_PROVIDER_AUTHORITY = "com.dshfusion.app.fileprovider"' in o_code
 
     # 第三处只出现在 KDoc 里，所以按**代码行**过滤会把整段注释滤掉 —— 这里要反过来，
     # 直接对全文匹配。锚点也取得更具体（带上 content:// 与结尾斜杠），
     # 免得匹配到正文里其它提到 authority 的句子。
     d_ok = "content://<applicationId>.fileprovider/" in d_text
-    d_bad = "content://com.dshbox.app.fileprovider/" in d_text
+    d_bad = "content://com.dshfusion.app.fileprovider/" in d_text
 
     if m_ok and o_ok and d_ok:
         return OK, "三处 authority 都派生自 applicationId"
@@ -670,23 +909,23 @@ def handle_div_0011(entry) -> tuple[str, str]:
     changed = []
     if m_bad:
         write(manifest, m_text.replace(
-            'android:authorities="com.dshbox.app.fileprovider"',
+            'android:authorities="com.dshfusion.app.fileprovider"',
             'android:authorities="${applicationId}.fileprovider"', 1))
         changed.append("AndroidManifest.xml")
     if o_bad:
         new_o = o_text.replace(
-            'const val FILE_PROVIDER_AUTHORITY = "com.dshbox.app.fileprovider"',
+            'const val FILE_PROVIDER_AUTHORITY = "com.dshfusion.app.fileprovider"',
             'val FILE_PROVIDER_AUTHORITY = "${BuildConfig.APPLICATION_ID}.fileprovider"', 1)
         if new_o == o_text:
             return FAILED, "ExternalOpener.kt 的 FILE_PROVIDER_AUTHORITY 锚点失效，需人工确认"
-        if "import com.dshbox.app.BuildConfig" not in new_o:
+        if "import com.dshfusion.app.BuildConfig" not in new_o:
             new_o = new_o.replace("import androidx.core.content.FileProvider\n",
-                                  "import androidx.core.content.FileProvider\nimport com.dshbox.app.BuildConfig\n", 1)
+                                  "import androidx.core.content.FileProvider\nimport com.dshfusion.app.BuildConfig\n", 1)
         write(opener, new_o)
         changed.append("ExternalOpener.kt")
     if d_bad:
         new_d = d_text.replace(
-            "content://com.dshbox.app.fileprovider/",
+            "content://com.dshfusion.app.fileprovider/",
             "content://<applicationId>.fileprovider/", 1)
         if new_d == d_text:
             return FAILED, "SandboxFilePickerDialog.kt 的 KDoc 锚点失效，需人工确认"
@@ -766,37 +1005,42 @@ def handle_div_0010(entry) -> tuple[str, str]:
 
 
 def handle_div_0009(entry) -> tuple[str, str]:
-    """根目录 LICENSE 改为许可状态说明，而不是上游的 GPL-3.0 全文。
+    """根 LICENSE **是** GPL-3.0 全文，且上游原件受哈希保护。
 
-    上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，
-    而 LICENSE-PENDING.md 写的是「暂不设许可，私有自用」—— 矛盾的是 GitHub
-    那一侧：它对外声称了一个本仓库并未做出的许可承诺。
+    ⚠️ **这条的方向被反转过一次 —— 反转本身就是它最有价值的部分。**
 
-    **这个 handler 的重点不是「根目录不再是 GPL」，而是「GPL 没丢」。**
-    只检查前者等于允许许可证在换位置的过程中凭空消失。所以这里做三件事：
-      1. 根 LICENSE 含 DSHFusion 自己的标记；
-      2. 根 LICENSE 不再是 GPL 全文；
-      3. 上游 GPL 副本仍存在于 governance/upstream-licenses/DSHBox/LICENSE
-         且 SHA-256 与受保护清单一致。
-    第 3 条是真正的安全网。
+    **阶段 1 的原方向**：根 LICENSE 放「许可状态：私有自用，未授予许可」的说明。
+    理由是上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，
+    而本仓库当时并未做出那个承诺 —— **矛盾的是 GitHub 那一侧**。
+
+    **2026-10-16 反转**：仓库从私有改为公开（起因是 Actions 分钟数用尽，
+    公开仓库免费）。**公开 = 对外分发 ⇒ 骨干 DSHBox 是 GPL-3.0 ⇒
+    衍生作品必须同样以 GPL-3.0 分发。** 这条义务原本就存在，只是私有期间没触发。
+    于是「不让 GitHub 显示 GPL-3.0」这个原始动机整个消失了。
+
+    **核验双向，缺一不可：**
+
+      ① 根 LICENSE 必须含 GPL-3.0 全文，且带我们的版权声明
+         —— 分发时许可必须在那里；
+      ② `governance/upstream-licenses/DSHBox/LICENSE` 必须仍在、且哈希与受保护清单一致
+         —— **许可证不许在换位置的过程中消失**。
+
+    只查 ① 会让「上游原件被顺手删掉」无人发现；
+    只查 ② 会让「公开了却没有许可」无人发现。
+
+    ⚠️ **这里有一处「两处真相」**：重放时写入的通知头是下面的字面量，
+    而仓库里已提交的 `LICENSE` 是它的实例。两者一旦漂移，重放就会产生无谓的 diff。
+    所以 `verify-phase0.sh` 的 5e 节有一条**逐字节相等**的断言钉住它。
     """
     import hashlib
 
-    root_license = ROOT / "LICENSE"
-    if not root_license.exists():
-        return FAILED, "根目录 LICENSE 不存在（导入异常）"
-
-    text = read(root_license)
-    is_gpl = "GNU GENERAL PUBLIC LICENSE" in text[:2000]
-    has_marker = "许可状态：私有自用" in text
-
-    # 受保护的 GPL 副本：这是第 3 条，也是最重要的一条
     protected = ROOT / "governance" / "upstream-licenses" / "DSHBox" / "LICENSE"
     if not protected.exists():
         return FAILED, (
-            "受保护的上游 GPL 副本 governance/upstream-licenses/DSHBox/LICENSE 不存在 —— "
-            "根 LICENSE 已被替换，此时上游许可原文就是唯一的留存，绝不能缺"
+            "受保护的上游 GPL 原件 governance/upstream-licenses/DSHBox/LICENSE 不存在 —— "
+            "公开分发的仓库里，上游许可原文绝不能缺"
         )
+
     hashes_path = ROOT / "governance" / "upstream-license-hashes.json"
     try:
         declared = json.loads(read(hashes_path))
@@ -804,200 +1048,47 @@ def handle_div_0009(entry) -> tuple[str, str]:
         want = declared["governance/upstream-licenses/DSHBox/LICENSE"]
         want = want if isinstance(want, str) else want.get("sha256")
     except (OSError, ValueError, KeyError) as exc:
-        return FAILED, f"读不出受保护 GPL 副本的声明哈希：{exc}"
+        return FAILED, f"读不出受保护 GPL 原件的声明哈希：{exc}"
 
     got = hashlib.sha256(protected.read_bytes()).hexdigest()
     if got != want:
         return FAILED, (
-            f"受保护的上游 GPL 副本哈希不符（{got[:12]}… != {want[:12]}…）—— "
+            f"受保护的上游 GPL 原件哈希不符（{got[:12]}… != {want[:12]}…）—— "
             "上游许可原文被改动过"
         )
 
-    if is_gpl and has_marker:
-        return FAILED, "根 LICENSE 同时含 GPL 全文与 DSHFusion 标记，文件状态不明"
-    if has_marker:
-        return OK, "根 LICENSE 已是许可状态说明，且上游 GPL 原文完整留存"
+    root_license = ROOT / "LICENSE"
+    if not root_license.exists():
+        return FAILED, "根目录 LICENSE 不存在 —— 公开分发时这是致命的"
+
+    text = read(root_license)
+    is_gpl = "GNU GENERAL PUBLIC LICENSE" in text
+    has_ours = "DSHFusion" in text[:600]
+
+    if is_gpl and has_ours:
+        return OK, "根 LICENSE 是 GPL-3.0 全文（含我们的版权声明），且上游原件仍在且哈希一致"
 
     if CHECK_ONLY:
-        return FAILED, "根 LICENSE 仍是上游的 GPL-3.0 全文"
+        if not is_gpl:
+            return FAILED, (
+                "根 LICENSE 不含 GPL-3.0 全文 —— 本仓库公开分发，"
+                "这是「分发时没有许可」，必须先修（见 LICENSE-NOTES.md）"
+            )
+        return FAILED, "根 LICENSE 里没有 DSHFusion 的版权声明（GPL-3.0 要求保留版权声明）"
 
-    # 写入我方版本。内容与仓库中已提交的一致；这里重写是为了让
-    # 「合并上游后重放偏离」这条流程对 LICENSE 也成立 ——
-    # 上游一旦更新 LICENSE，合并会把 GPL 全文带回来，必须能自动改回。
-    body = """DSHFusion — 许可状态：私有自用，未授予许可
-================================================
-
-版权所有 (C) 2026 DSHFusion 作者。保留所有权利。
-
-本仓库当前是**私有仓库**，仅用于作者本人使用、开发与测试，**不对外分发**。
-
-本文件不是一份开源许可证，也不授予任何人对本仓库代码或产物的任何权利。
-本文件的作用是**准确描述现状**，而不是声称一个与事实不符的许可。
-
-GPL-3.0 全文并未从本仓库移除，只是不再放在根目录。它按原样保存在：
-
-    governance/upstream-licenses/DSHBox/LICENSE
-
-该文件的 SHA-256 记录在 governance/upstream-license-hashes.json 中，
-并由 tools/check-license-hashes.py 在每次 CI 中核验。
-
-完整说明见仓库根目录的 LICENSE 提交版本，以及 LICENSE-PENDING.md。
-"""
+    # 重放：用「通知头 + 受保护的上游原件」重建根 LICENSE。
+    # 上游一旦更新 LICENSE，合并会把它的 GPL 全文（没有我们的声明）带回来，这里能自动改回。
     original = text
+    body = NOTICE + read(protected)
     write(root_license, body)
     files_changed.append(str(root_license))
 
     after = read(root_license)
-    if "GNU GENERAL PUBLIC LICENSE" in after[:2000]:
+    if "GNU GENERAL PUBLIC LICENSE" not in after or "DSHFusion" not in after[:600]:
         revert(root_license, original)
-        return FAILED, "写入后根 LICENSE 仍像 GPL 全文（已还原）"
-    if "许可状态：私有自用" not in after:
-        revert(root_license, original)
-        return FAILED, "写入后根 LICENSE 未出现 DSHFusion 标记（已还原）"
-    return OK, "根 LICENSE 已改为许可状态说明（上游 GPL 原文仍受哈希保护）"
+        return FAILED, "重放写出的根 LICENSE 不含 GPL-3.0 全文或我们的版权声明"
 
-
-def handle_div_0008(entry) -> tuple[str, str]:
-    """android.yml 增加 APK 产物身份核验步骤。
-
-    上游只构建、不核验产物身份。DSHFusion 承诺了独立 applicationId、
-    独立版本线与独立应用名 —— 这些都被编译进二进制，光看构建配置确认不了。
-
-    为什么值得改上游文件：这条检查的价值恰恰在于它看的是**产物**。
-    阶段 1 实测过它的必要性：versionCode/versionName 当时是上游的 8 / 1.4.0，
-    配置与产物一致但两者都错；android:label 是资源引用 0x7f0e001f，
-    不解 resources.arsc 就不知道它各语言下解析成什么。
-    """
-    path = ROOT / ".github" / "workflows" / "android.yml"
-    if not path.exists():
-        return PENDING, "android.yml 尚未导入"
-
-    text = read(path)
-    step_name = "Verify APK application identity"
-    script = "tools/check-apk-identity.py"
-
-    if step_name in text:
-        if script not in text:
-            return FAILED, f"步骤 {step_name!r} 存在但没有调用 {script}"
-        return OK, "APK 身份核验步骤已存在"
-
-    if CHECK_ONLY:
-        return FAILED, f"android.yml 缺少 {step_name!r} 步骤"
-
-    # 锚点：插在 assembleDebug 与 Upload 之间。用整段匹配而不是行号，
-    # 这样上游调整步骤顺序时这里会明确失败，而不是静默插到错误的位置。
-    anchor = (
-        "      - name: Assemble debug APK\n"
-        "        run: ./gradlew assembleDebug --stacktrace\n"
-    )
-    if anchor not in text:
-        return FAILED, (
-            "找不到 Assemble debug APK 步骤的锚点，无法确定插入位置"
-            "（需人工确认后更新 divergences.json 的 reapply 字段）"
-        )
-
-    apk = "app/build/outputs/apk/debug/app-debug.apk"
-    block = (
-        anchor
-        + "\n"
-        + "      # DIV-0008：核验**产物**的应用身份，而不只是构建配置。\n"
-        + "      - name: " + step_name + "\n"
-        + "        run: python3 " + script + " " + apk + "\n"
-    )
-
-    original = text
-    write(path, text.replace(anchor, block, 1))
-    files_changed.append(str(path))
-
-    # 不谎报成功：复核步骤真的落到了 assemble 之后、Upload 之前。
-    after = read(path)
-    if step_name not in after or script not in after:
-        revert(path, original)
-        return FAILED, "写入后未发现核验步骤（已还原）"
-    i_assemble = after.find("Assemble debug APK")
-    i_verify = after.find(step_name)
-    i_upload = after.find("Upload debug APK")
-    if not (i_assemble < i_verify < i_upload):
-        revert(path, original)
-        return FAILED, "核验步骤的位置不在 assemble 与 Upload 之间（已还原）"
-    return OK, "已插入 APK 身份核验步骤（位于 assemble 与 Upload 之间）"
-
-
-def handle_div_0007(entry) -> tuple[str, str]:
-    """隐私审计：跳过冻结的上游许可副本，并放行 .invalid 测试域。
-
-    为什么这条偏离值得改上游文件，而不是像 shellcheck 告警那样只登记基线：
-    被报出的两处**无法通过改我们自己的代码消除**。
-      - governance/upstream-licenses/ 是哈希锁定的冻结副本，
-        改它会让 check-license-hashes.py 失败 —— 两个门禁互相矛盾，
-        必须在审计侧解决。
-      - upstream@example.invalid 来自测试夹具，而 .invalid 是 RFC 2606
-        保留域，与白名单里已有的 example.com 同性质。
-    其余 31 处 /tmp 硬编码路径**没有**走白名单：那些是我们自己文件里的
-    真实工程缺陷（并发覆盖、中断残留），改用 mktemp 才是对的修法。
-    """
-    path = ROOT / "tools" / "privacy_audit.py"
-    if not path.exists():
-        return PENDING, "privacy_audit.py 尚未导入"
-
-    text = read(path)
-    has_frozen = "FROZEN_PREFIXES" in text
-    uses_frozen = "FROZEN_PREFIXES" in text and "for p in FROZEN_PREFIXES" in text
-    has_invalid = r"example\.invalid" in text
-
-    if has_frozen and uses_frozen and has_invalid:
-        return OK, "隐私审计已跳过冻结副本并放行 .invalid"
-
-    if CHECK_ONLY:
-        missing = []
-        if not has_frozen:
-            missing.append("FROZEN_PREFIXES 定义")
-        if not uses_frozen:
-            missing.append("scan() 中对 FROZEN_PREFIXES 的引用")
-        if not has_invalid:
-            missing.append("ALLOW 里的 example\\.invalid")
-        return FAILED, "privacy_audit.py 缺少：" + "、".join(missing)
-
-    # 施加：本偏离涉及两处独立插入，逐处判断、逐处复核。
-    original = text
-    changed = []
-
-    if not has_frozen:
-        anchor = "SKIP_DIRS = {\n"
-        if anchor not in text:
-            return FAILED, "SKIP_DIRS 锚点失效（需人工确认）"
-        block = (
-            anchor
-            + "    # 占位：FROZEN_PREFIXES 定义见下方（DIV-0007）\n"
-        )
-        text = text.replace(anchor, block, 1)
-        changed.append("FROZEN_PREFIXES")
-
-    if not has_invalid:
-        anchor = '    re.compile(r"example\\.com"),\n'
-        if anchor not in text:
-            return FAILED, "ALLOW 中 example.com 锚点失效（需人工确认）"
-        text = text.replace(
-            anchor,
-            anchor
-            + "    # RFC 2606 保留的测试专用顶级域（DIV-0007）。\n"
-            + '    re.compile(r"example\\.invalid"),\n',
-            1,
-        )
-        changed.append("ALLOW.example.invalid")
-
-    if not changed:
-        return FAILED, "未找到可施加的改动点（需人工确认）"
-
-    path.write_text(text, encoding="utf-8")
-    files_changed.append(str(path))
-
-    # 不谎报成功：写完必须复核目标状态真的成立
-    after = read(path)
-    if "FROZEN_PREFIXES" not in after or r"example\.invalid" not in after:
-        revert(path, original)
-        return FAILED, "写入后复核失败（已还原）"
-    return OK, "已施加：" + "、".join(changed)
+    return OK, "根 LICENSE 已重建为「通知头 + GPL-3.0 全文」，上游原件哈希一致"
 
 
 def handle_div_0013(entry) -> tuple[str, str]:
@@ -1134,62 +1225,62 @@ def handle_div_0014(entry) -> tuple[str, str]:
         而那会逼着作者删掉解释 —— 正是我们不想要的方向。
     """
     REQUIRED = [
-        ("common/src/main/java/com/dshbox/app/common/Constants.kt",
+        ("common/src/main/java/com/dshfusion/app/common/Constants.kt",
          ["const val DSH_PORT_AUTO", "fun dshBaseUrl(port: Int)"],
          "端口改为「让内核分配」，地址改为按实际端口拼"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxConfig.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxConfig.kt",
          ["val dshPort: Int = Constants.DSH_PORT_AUTO"],
          "配置默认值不再是 3080"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxProcessRunner.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxProcessRunner.kt",
          ["--port $port"],
          "端口必须作为命令行参数传给 dsh"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DefaultSandboxManager.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DefaultSandboxManager.kt",
          ["DshWebLaunchParser.parse",
           "portProvider = { _dshPort.value }",
           "tokenProvider = { _dshLaunchToken.value }",
           "resetDshEndpointState"],
          "从 dsh 自己的输出学端口+token，并把运行期值喂给健康检查"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/HttpHealthChecker.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/HttpHealthChecker.kt",
          ["tokenProvider", "!= HTTP_UNAUTHORIZED"],
          "健康检查核验身份：401 = 应答者不认识本实例的 token"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DshHealthPolicy.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DshHealthPolicy.kt",
          ["probe.webUiReady && probe.processAlive"],
          "就绪必须同时要求本实例进程存活"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxHealth.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxHealth.kt",
          ["instanceVerified"],
          "区分「没人应答」与「有人应答但不是我」"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxManager.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxManager.kt",
          ["val dshPort: StateFlow<Int>", "val dshBaseUrl: StateFlow<String?>"],
          "接口暴露实例端口与实例地址"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DshWebLaunch.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DshWebLaunch.kt",
          # 钉的是**代码表达式**而不是字面量 `65535`：KDoc 里也写着「1..65535」，
          # 只查字面量的话，把校验删掉仍然能通过 —— 实测漏过一次，故收紧。
          ["dsh web: http", "port !in 1..65535"],
          "端口/token 解析器存在，且会拒绝越界端口"),
         # ── UI 层：光有「资源里有个占位文案」不够，必须确认 UI 真的在用实例地址。
         #    只查资源键会被「UI 仍然写死地址」骗过 —— 实测过，这一条是补上来的。
-        ("app/src/main/java/com/dshbox/app/ui/home/HomeScreen.kt",
+        ("app/src/main/java/com/dshfusion/app/ui/home/HomeScreen.kt",
          ["dshBaseUrl ?: stringResource(R.string.home_dsh_address_unknown)"],
          "首页显示本实例地址，端口未知时给占位文案"),
-        ("app/src/main/java/com/dshbox/app/ui/MainScreen.kt",
+        ("app/src/main/java/com/dshfusion/app/ui/MainScreen.kt",
          ["sandboxManager.dshBaseUrl.collectLatest", "url = dshBaseUrl.orEmpty()"],
          "WebView 与浏览器入口用本实例地址"),
-        ("app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+        ("app/src/main/java/com/dshfusion/app/service/SandboxService.kt",
          ["sandboxManager.dshBaseUrl.value"],
          "通知栏与浏览器入口用本实例地址"),
-        ("app/src/main/java/com/dshbox/app/ui/settings/DiagnosticsScreen.kt",
+        ("app/src/main/java/com/dshfusion/app/ui/settings/DiagnosticsScreen.kt",
          ["R.string.home_dsh_address_unknown"],
          "诊断页显示本实例地址"),
     ]
 
     FORBIDDEN = [
-        ("common/src/main/java/com/dshbox/app/common/Constants.kt",
+        ("common/src/main/java/com/dshfusion/app/common/Constants.kt",
          ["const val DSH_DEFAULT_PORT", "const val DSH_BASE_URL"],
          "写死的端口常量与地址常量必须已删除"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DefaultSandboxManager.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DefaultSandboxManager.kt",
          ['base["PORT"]'],
          "上游那个不起作用的 PORT 环境变量必须已删除"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/HttpHealthChecker.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/HttpHealthChecker.kt",
          ["in 200..599"],
          "「任意状态码都算存活」的判据必须已被替换"),
     ]
@@ -1277,7 +1368,7 @@ def handle_div_0014(entry) -> tuple[str, str]:
     #
     # 只比对**代码**，不比对注释：注释里必然会引用这些旗标来解释原因，
     # 把注释算进去会让「解释」本身触发误判（本项目栽过这个跟头）。
-    runner_rel = "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxProcessRunner.kt"
+    runner_rel = "sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxProcessRunner.kt"
     runner = ROOT / runner_rel
     if not runner.is_file():
         return PENDING, f"{runner_rel} 尚未导入"
@@ -1545,7 +1636,7 @@ def handle_div_0018(entry) -> tuple[str, str]:
                 missing.append(f"{lang}/{key} 仍是长文案「{value}」")
 
     # 结构那一半：动作装配必须走纯函数，不能再是 4 个连着的 addAction。
-    svc = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "service" / "SandboxService.kt"
+    svc = ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "service" / "SandboxService.kt"
     if not svc.exists():
         return PENDING, "SandboxService.kt 尚未导入"
     body = read(svc)
@@ -1619,7 +1710,7 @@ def handle_div_0019(entry) -> tuple[str, str]:
     imported = ROOT / "backup" / "src" / "main" / "java" / "com" / "deepseekharness" / "app" / "backup" / "BackupArchive.java"
     if not imported.exists():
         problems.append("backup 模块里没有导入的 BackupArchive.java")
-    facade = ROOT / "backup" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "backup" / "V5Archive.kt"
+    facade = ROOT / "backup" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "backup" / "V5Archive.kt"
     if not facade.exists():
         problems.append("backup 模块里没有预检门面 V5Archive.kt")
     registry = ROOT / "governance" / "dsha-imports.json"
@@ -1643,7 +1734,7 @@ def handle_div_0024(entry) -> tuple[str, str]:
     """
     problems = []
 
-    app = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "DshApp.kt"
+    app = ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "DshApp.kt"
     if not app.exists():
         return PENDING, "DshApp.kt 尚未导入"
     text = read(app)
@@ -1719,9 +1810,9 @@ def handle_div_0022(entry) -> tuple[str, str]:
     """
     problems = []
 
-    app = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "DshApp.kt"
+    app = ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "DshApp.kt"
     if not app.exists():
-        return PENDING, "app/src/main/java/com/dshbox/app/DshApp.kt 尚未导入"
+        return PENDING, "app/src/main/java/com/dshfusion/app/DshApp.kt 尚未导入"
     text = read(app)
 
     if "AutomaticBackupJobService.schedule(this)" not in text:
@@ -1732,7 +1823,7 @@ def handle_div_0022(entry) -> tuple[str, str]:
         problems.append("重登记没有先判断开关状态 —— 关掉之后也会登记一条空转的心跳")
 
     service = (
-        ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app"
+        ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app"
         / "service" / "AutomaticBackupJobService.kt"
     )
     if not service.exists():
@@ -1876,6 +1967,7 @@ def handle_div_0020(entry) -> tuple[str, str]:
 
 HANDLERS = {
     "DIV-0001": handle_div_0001,
+    "DIV-0025": handle_div_0025,
     "DIV-0002": handle_div_0002,
     "DIV-0003": handle_div_0003,
     "DIV-0004": handle_div_0004,

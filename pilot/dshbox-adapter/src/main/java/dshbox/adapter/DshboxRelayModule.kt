@@ -3,7 +3,7 @@ package dshbox.adapter
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
-import com.dshbox.app.common.LogRedactor
+import com.dshfusion.app.common.LogRedactor
 import dshbox.adapter.entry.PilotActivity
 import dshbox.adapter.locale.appLanguageTags
 import dshbox.adapter.locale.withAppLanguage

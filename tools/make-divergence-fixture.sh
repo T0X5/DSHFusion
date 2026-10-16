@@ -33,14 +33,14 @@ TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # 就会让「偏离能否施加」的测试因为夹具不真实而假失败（曾发生过）。
 mkdir -p "$TARGET/app/src/main/res/values" \
          "$TARGET/app/src/main/res/values-zh" \
-         "$TARGET/app/src/main/java/com/dshbox/app/util" \
+         "$TARGET/app/src/main/java/com/dshfusion/app/util" \
          "$TARGET/governance"
 
 cat > "$TARGET/app/build.gradle.kts" <<'EOF'
 android {
-    namespace = "com.dshbox.app"
+    namespace = "com.dshfusion.app"
     defaultConfig {
-        applicationId = "com.dshbox.app"
+        applicationId = "com.dshfusion.app"
         versionCode = 8
         versionName = "1.4.0"
     }
@@ -67,7 +67,7 @@ cat > "$TARGET/app/src/main/res/values-zh/strings.xml" <<'EOF'
 </resources>
 EOF
 
-cat > "$TARGET/app/src/main/java/com/dshbox/app/util/AppVersion.kt" <<'EOF'
+cat > "$TARGET/app/src/main/java/com/dshfusion/app/util/AppVersion.kt" <<'EOF'
 object AppVersion {
     private const val API = "https://api.github.com/repos/WSK-build/DSHBox/releases/latest"
     private const val SITE = "https://wsk-build.github.io/DSHBox/"
@@ -96,9 +96,9 @@ done
 case "$SCENARIO" in
     drift)
         # 上游把 applicationId 写法改成了带空格/单引号之外的形式
-        sed -i 's/applicationId = "com.dshbox.app"/applicationId("com.dshbox.app")/' \
+        sed -i 's/applicationId = "com.dshfusion.app"/applicationId("com.dshfusion.app")/' \
             "$TARGET/app/build.gradle.kts"
-        sed -i 's/namespace = "com.dshbox.app"/namespace = "com.dshbox.app"/' \
+        sed -i 's/namespace = "com.dshfusion.app"/namespace = "com.dshfusion.app"/' \
             "$TARGET/app/build.gradle.kts"
         ;;
     asset-missing)
@@ -154,7 +154,7 @@ planned = [
      "rationale": "fixture", "reapply": "替换 assets.srcDirs"},
     {"id": "DIV-0004", "type": "config", "phase": 1,
      "title": "上游监测地址指向自身",
-     "target_files": ["app/src/main/java/com/dshbox/app/util/AppVersion.kt"],
+     "target_files": ["app/src/main/java/com/dshfusion/app/util/AppVersion.kt"],
      "change": "URL 改指自身",
      "rationale": "fixture", "reapply": "替换 URL"},
     {"id": "DIV-0005", "type": "removal", "phase": 1,

@@ -9,8 +9,41 @@ permissions:
 on:
   push:
     branches: [ main, develop ]
+    # 🔴 **只为「不可能影响构建」的改动跳过。**
+    #
+    # 这条与下面的 concurrency 都是 2026-10-16 加了 —— 起因是本仓库的
+    # GitHub Actions 分钟数**用尽（2000/2000）**，而仓库是**私有**的（要计费）。
+    #
+    # 我（agent）那天的做法贡献了很大一块：9 个提交里 5 个是纯文档/治理，
+    # 却每个都跑了一遍完整 Android CI；而且每个提交还**同时**触发两次
+    # （PR #37 的 synchronize + 一个临时 ci-trigger PR）。
+    #
+    # 只忽略这两类，因为它们**从不参与编译**：
+    #   - `docs/**`    —— 文档
+    #   - `**/*.md`    —— 任意位置的 Markdown（含根 README / AGENTS）
+    #
+    # ⚠️ **刻意不忽略 `governance/**`**：它里面的 `upstreams.json` 是
+    # `tools/build-dsh-layer.sh` 的版本来源，改了它运行环境层就会变 ——
+    # 那是构建输入，不是文档。
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
     branches: [ main, develop ]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+
+# 🔴 **这一条是本轮真正省钱的那一条。**
+#
+# 没有它时：往同一个 PR 连推 5 次 = **5 个完整 Android CI 并发跑**，
+# 前 4 个的结果在推第 5 次时已经没有意义，但它们照样把分钟数烧掉了。
+# 有了它：新的一次会**取消**同一个 ref 上还在跑的那一次。
+#
+# `contracts.yml` 早就有这一条；`android.yml`（那个 15–25 分钟的）一直没有。
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -124,7 +157,7 @@ jobs:
           # 期望值说明（都是**实测**出来的，不是数出来的）：
           # 这个类第一次真跑时报 8 条，而我按阅读数成了 7 条 —— 断言当场红了。
           # 又一次「期望值必须来自真实执行」（docs/INCIDENTS.md 第 22 条）。
-          codes = "com.dshbox.app.backup.CredentialProjectionCodesTest"
+          codes = "com.dshfusion.app.backup.CredentialProjectionCodesTest"
           if codes not in classes:
               problems.append(f"{codes} 没有运行（本机无 kotlinc，它只可能在这里跑）")
           elif classes[codes] != 8:
@@ -154,7 +187,7 @@ jobs:
               problems.append(f"{restore} 跑了 {classes[restore]} 条，期望 8 条")
           # 2.4b 的落点映射同样是会毁数据的那条路径（它决定往哪写），单独钉住。
           # 尤其要钉住「端到端往返」与「活动目录被改动就拒绝」这两条用例都在。
-          mapping = "com.dshbox.app.backup.HostRestoreMappingTest"
+          mapping = "com.dshfusion.app.backup.HostRestoreMappingTest"
           if mapping not in classes:
               problems.append(f"{mapping} 没有运行（落点映射没跑 = 2.4b 没有证据）")
           elif classes[mapping] != 11:
@@ -169,24 +202,24 @@ jobs:
           for name, want, why in (
               ("com.deepseekharness.app.backup.HostDataTransactionTest", 5,
                "上游的事务测试没跑 = 提交/回切的严密性没有证据"),
-              ("com.dshbox.app.backup.HostRestoreTransactionTest", 8,
+              ("com.dshfusion.app.backup.HostRestoreTransactionTest", 8,
                "我们的适配层集成测试没跑 = 「上游事务接得上我们的计划」没有证据"),
-              ("com.dshbox.app.backup.DshHostPathsTest", 5,
+              ("com.dshfusion.app.backup.DshHostPathsTest", 5,
                "路径规范化没跑 = 真机上导出会以 PARENT_LINK 失败，而那是"
                "「符号链接没被解析」的**唯一**症状"),
-              ("com.dshbox.app.backup.DshAutomaticBackupRunnerTest", 11,
+              ("com.dshfusion.app.backup.DshAutomaticBackupRunnerTest", 11,
                "自动备份的**顺序**守卫没跑 = 「导出失败时不会净损失旧备份」没有证据"),
-              ("com.dshbox.app.backup.DshRestoreOrchestratorTest", 16,
+              ("com.dshfusion.app.backup.DshRestoreOrchestratorTest", 17,
                "恢复编排是本模块**会毁数据**的那条路径；「预检不碰数据」由摘要证明，"
                "且**三种坏归档都必须有具名错误码**（验收标准写的是「明确报错」）"),
-              ("com.dshbox.app.backup.DshBackupExporterTest", 17,
+              ("com.dshfusion.app.backup.DshBackupExporterTest", 17,
                "导出编排是本模块第三段会泄数据的路径；且「排除谓词的坐标系要拼前缀」"
                "少一步就**静默带走机器本地凭据**"),
               ("com.deepseekharness.app.util.AutomaticBackupPolicyTest", 4,
                "导入的到期判定测试没跑 = 「计划什么时候该备份」没有证据"),
               ("com.deepseekharness.app.util.ScheduledBackupOwnerTest", 5,
                "导入的单飞票据测试没跑 = 「过期请求不会覆盖新设置」没有证据"),
-              ("com.dshbox.app.backup.DshAutomaticBackupRetentionTest", 7,
+              ("com.dshfusion.app.backup.DshAutomaticBackupRetentionTest", 7,
                "保留策略测试没跑 = 「只保留 3 份」没有证据，且审计结论失去可证伪形式"),
           ):
               if name not in classes:

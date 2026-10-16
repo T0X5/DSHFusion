@@ -4,7 +4,7 @@ upstream-mirrors/
 
 # 运行环境资产：分层 bundle，从公开来源获取或离线导入，不入库。
 # 前导斜杠是必须的：不带斜杠的 runtime/ 会匹配任意层级的同名目录，
-# 而上游有 4 个名为 runtime 的源码包（app/src/main/java/com/dshbox/app/runtime/
+# 而上游有 4 个名为 runtime 的源码包（app/src/main/java/com/dshfusion/app/runtime/
 # 等，共 22 个文件），会被静默吞掉、不进提交、克隆后构建失败。
 /runtime/
 /runtime/android-assets/

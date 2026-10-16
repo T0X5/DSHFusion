@@ -41,7 +41,7 @@ UPSTREAM_PREFIX = re.compile(r"^(?:DSHA|DSHBox)\s*:\s*")
 BACKTICK_PATH = re.compile(
     r"`(?P<path>"
     r"(?:governance|docs|tools|\.github)/[A-Za-z0-9_./*-]+"
-    r"|AGENTS\.md|README\.md|LICENSE-PENDING\.md"
+    r"|AGENTS\.md|README\.md|LICENSE-NOTES\.md|LICENSE"
     r")`"
 )
 

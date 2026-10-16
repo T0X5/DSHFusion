@@ -74,7 +74,7 @@
       "type": "config",
       "phase": 1,
       "target_files": [
-        "app/src/main/java/com/dshbox/app/util/AppVersion.kt"
+        "app/src/main/java/com/dshfusion/app/util/AppVersion.kt"
       ],
       "change": "AppVersion.kt 的 SITE_URL / REPO_URL / API_URL 由 DSHBox 的站点与仓库改为 https://github.com/T0X5/DSHFusion；User-Agent 由 DSHBox/ 改为 DSHFusion/。",
       "rationale": "不能把用户导向 DSHBox 的发布页，也不能让本应用把 DSHBox 的 Release 当成自身更新源。**本项曾经做错**：常量被换成了 example.invalid 占位域名，而重放器只检查「还有没有指向上游的地址」，于是报告「已指向自身」—— 占位域名解析不到任何主机，那句话是假的，链接会死、更新检查永远失败。现在重放器改为正向校验地址里确实出现 SELF_URL，并显式拒绝 example.invalid。",
@@ -140,18 +140,19 @@
     },
     {
       "id": "DIV-0009",
-      "title": "根目录 LICENSE 不再放 GPL-3.0 全文，改为许可状态说明",
+      "title": "根 LICENSE 是 GPL-3.0 全文（2026-10-16 起公开分发），且上游原件受哈希保护",
       "upstream": "dshbox",
       "type": "removal",
       "phase": 1,
       "target_files": [
         "LICENSE"
       ],
-      "change": "根目录 LICENSE 由上游的 GPL-3.0 全文替换为 DSHFusion 的许可状态说明（私有自用、未授予许可），并指向 governance/upstream-licenses/DSHBox/LICENSE。",
-      "rationale": "上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，而 LICENSE-PENDING.md 写的是「暂不设许可，私有自用」—— 两者矛盾，且矛盾的是 GitHub 那一侧：它对外声称了一个本仓库并未做出的许可承诺。现在改成明确的状态说明，名实相符。",
+      "change": "**2026-10-16 反转了这条的原始方向。**\n\n原方向（阶段 1）：根 LICENSE 放「许可状态：私有自用，未授予许可」的说明，不声称 GPL-3.0 —— 因为当时仓库私有、不分发，而 GitHub 会据根 LICENSE 对外显示许可，那会是一个本仓库没做出的承诺。\n\n现方向（公开后）：**根 LICENSE 就是 GPL-3.0 全文**。仓库从私有改为公开 = 对外分发 ⇒ 骨干 DSHBox 是 GPL-3.0 ⇒ 衍生作品必须同样以 GPL-3.0 分发。**这条义务原本就存在，只是私有期间没有触发。**",
+      "rationale": "起因是 GitHub Actions 分钟数用尽（私有仓库计费，公开仓库免费），但**这不是计费决定而是许可决定**：公开即分发，分发即触发 GPL-3.0。于是「不让 GitHub 显示 GPL-3.0」这个原始动机整个消失了 —— 现在正是要它显示。",
       "safety": "**GPL-3.0 全文没有被删除，只是换了位置。** 它按原样保存在 governance/upstream-licenses/DSHBox/LICENSE，SHA-256 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986，由 governance/upstream-license-hashes.json 记录并在 CI 中核验。handle_div_0009 会**正向核验**该副本仍然存在且哈希一致 —— 只检查「根目录不再是 GPL」是不够的，那等于允许许可证被换掉后凭空消失。",
-      "reapply": "由 tools/apply-divergences.sh 的 handle_div_0009 校验：根 LICENSE 含 DSHFusion 标记且不再是 GPL 全文，同时上游 GPL 副本存在且哈希正确。",
-      "conflict_risk": "low"
+      "reapply": "`tools/apply-divergences.sh` 的 handle_div_0009：**双向**核验 —— ① 根 LICENSE 含 GPL-3.0 全文；② `governance/upstream-licenses/DSHBox/LICENSE` 仍在且哈希一致。",
+      "conflict_risk": "low",
+      "note": "⚠️ **上游 GPL 原件没有被删**：它按原样保存在 `governance/upstream-licenses/`。「换位置」不等于「可以消失」，所以第 ② 条核验是真正的安全网。\n\n三种注入：删副本 / 改副本一个字节 / 把 GPL 从根目录拿走 —— 全部必须被拦下。"
     },
     {
       "id": "DIV-0010",
@@ -176,8 +177,8 @@
       "phase": 1,
       "target_files": [
         "app/src/main/AndroidManifest.xml",
-        "app/src/main/java/com/dshbox/app/util/viewer/ExternalOpener.kt",
-        "app/src/main/java/com/dshbox/app/ui/webview/SandboxFilePickerDialog.kt"
+        "app/src/main/java/com/dshfusion/app/util/viewer/ExternalOpener.kt",
+        "app/src/main/java/com/dshfusion/app/ui/webview/SandboxFilePickerDialog.kt"
       ],
       "change": "1) app/src/main/AndroidManifest.xml：FileProvider 的 `android:authorities=\"com.dshbox.app.fileprovider\"` → `\"${applicationId}.fileprovider\"`。\n2) ExternalOpener.kt：`const val FILE_PROVIDER_AUTHORITY = \"com.dshbox.app.fileprovider\"` → `val FILE_PROVIDER_AUTHORITY = \"${BuildConfig.APPLICATION_ID}.fileprovider\"`（去掉 const，因为 APPLICATION_ID 随构建变体变化）。\n3) SandboxFilePickerDialog.kt：仅 KDoc 里的 authority 示例改成 `content://<applicationId>.fileprovider/...`。**这一条一开始漏登记了**，是 tools/check-import-fidelity.py 报出来的 —— 见 detection。",
       "rationale": "**这是第一次真机验证暴露的问题，而且是我的阶段 1 决策造成的。**\n\n真机安装报 `安装失败(-13)` / `与已安装应用内容提供者冲突`，即 INSTALL_FAILED_CONFLICTING_PROVIDER。\n\n根因：applicationId 只是「安装身份」的一条轴，ContentProvider 的 authority 是**另一条独立的轴** —— Android 要求它全局唯一，两个已安装应用声明同一个 authority 时后装的那个直接失败 -13，**跟 applicationId 是否不同无关**。\n\n阶段 1 把 applicationId 从 com.dshbox.app 改成 com.dshfusion.app，三条身份断言全过、CI 全绿，但 authority 写死成上游的值，与已装的 DSHBox 撞车。我此前把「并存安装必需」理解成只包含 applicationId / 应用名 / 版本号，**漏掉了 authority 这条轴**。\n\n第二重后果（即使装上了也会中）：上游代码里 authority 有两个来源，manifest 写死 `com.dshbox.app.fileprovider`，而 DshWebViewScreen.kt:449 用 `\"${context.packageName}.fileprovider\"` 计算 —— 在 DSHBox 里两者相等所以没事，在 DSHFusion 里 packageName 是 com.dshfusion.app，两者不等，getUriForFile 会抛异常（该文件第 168 行的注释正好警告过这个后果）。所以两处必须一起改。",
@@ -226,23 +227,23 @@
       "type": "adaptation",
       "phase": 1,
       "target_files": [
-        "common/src/main/java/com/dshbox/app/common/Constants.kt",
-        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxConfig.kt",
-        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxProcessRunner.kt",
-        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/DefaultSandboxManager.kt",
-        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/HttpHealthChecker.kt",
-        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/DshHealthPolicy.kt",
-        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxHealth.kt",
-        "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxManager.kt",
-        "sandbox-manager/src/test/java/com/dshbox/app/sandbox/HttpHealthCheckerTest.kt",
-        "sandbox-manager/src/test/java/com/dshbox/app/sandbox/DshHealthPolicyTest.kt",
-        "sandbox-manager/src/test/java/com/dshbox/app/sandbox/SandboxProcessRunnerTest.kt",
-        "app/src/main/java/com/dshbox/app/ui/MainScreen.kt",
-        "app/src/main/java/com/dshbox/app/ui/home/HomeScreen.kt",
-        "app/src/main/java/com/dshbox/app/ui/settings/SettingsScreen.kt",
-        "app/src/main/java/com/dshbox/app/ui/settings/DiagnosticsScreen.kt",
-        "app/src/main/java/com/dshbox/app/ui/webview/DshBrowser.kt",
-        "app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+        "common/src/main/java/com/dshfusion/app/common/Constants.kt",
+        "sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxConfig.kt",
+        "sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxProcessRunner.kt",
+        "sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DefaultSandboxManager.kt",
+        "sandbox-manager/src/main/java/com/dshfusion/app/sandbox/HttpHealthChecker.kt",
+        "sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DshHealthPolicy.kt",
+        "sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxHealth.kt",
+        "sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxManager.kt",
+        "sandbox-manager/src/test/java/com/dshfusion/app/sandbox/HttpHealthCheckerTest.kt",
+        "sandbox-manager/src/test/java/com/dshfusion/app/sandbox/DshHealthPolicyTest.kt",
+        "sandbox-manager/src/test/java/com/dshfusion/app/sandbox/SandboxProcessRunnerTest.kt",
+        "app/src/main/java/com/dshfusion/app/ui/MainScreen.kt",
+        "app/src/main/java/com/dshfusion/app/ui/home/HomeScreen.kt",
+        "app/src/main/java/com/dshfusion/app/ui/settings/SettingsScreen.kt",
+        "app/src/main/java/com/dshfusion/app/ui/settings/DiagnosticsScreen.kt",
+        "app/src/main/java/com/dshfusion/app/ui/webview/DshBrowser.kt",
+        "app/src/main/java/com/dshfusion/app/service/SandboxService.kt",
         "app/src/main/res/values/strings.xml",
         "app/src/main/res/values-zh/strings.xml",
         "app/src/main/res/values-ar/strings.xml",
@@ -320,9 +321,9 @@
       "type": "adaptation",
       "phase": 1,
       "target_files": [
-        "app/src/main/java/com/dshbox/app/service/SandboxService.kt",
-        "app/src/main/java/com/dshbox/app/service/DshNotifyActions.kt",
-        "app/src/test/java/com/dshbox/app/service/DshNotifyActionsTest.kt",
+        "app/src/main/java/com/dshfusion/app/service/SandboxService.kt",
+        "app/src/main/java/com/dshfusion/app/service/DshNotifyActions.kt",
+        "app/src/test/java/com/dshfusion/app/service/DshNotifyActionsTest.kt",
         "app/src/main/res/values/strings.xml",
         "app/src/main/res/values-zh/strings.xml",
         "app/src/main/res/values-ar/strings.xml",
@@ -396,7 +397,7 @@
       "type": "patch",
       "phase": 2,
       "target_files": [
-        "app/src/main/java/com/dshbox/app/DshApp.kt"
+        "app/src/main/java/com/dshfusion/app/DshApp.kt"
       ],
       "change": "在 `onCreate` 里、布局迁移之后，加一段：**若自动备份已开启，就重登记一次心跳任务**（`AutomaticBackupJobService.schedule(this)`）。\n\n心跳用的是 `setPersisted(false)`（不跨重启保留，理由见 `schedule` 的注释：开机后设置可能已被改过，而持久化还要另加开机广播权限）。所以设备重启之后那条任务就没了 —— **少了这一段，自动备份会在重启后静默停止**：用户看到开关还开着，而再也不会有新备份。",
       "rationale": "这是本项目反复吃亏的那个形态：**一个不再发生的动作，看起来和「还没到点」完全一样。** 没有这一行，`stop`/`daily`/`interval` 三种模式的行为在重启前后不一致，而没有任何东西会报出来。放在 `onCreate` 而不是 `MainActivity`：心跳不该依赖用户打开界面。",
@@ -429,7 +430,7 @@
       "type": "patch",
       "phase": 2,
       "target_files": [
-        "app/src/main/java/com/dshbox/app/DshApp.kt"
+        "app/src/main/java/com/dshfusion/app/DshApp.kt"
       ],
       "change": "在 `DshApp.onCreate` 里起一条进程级协程，观察 `container.sandboxManager.sandboxState`，**转入 `STOPPED` 时**写一个时间戳（`AutomaticBackupSettingsStore.setStopped`）。\n\n**为什么不在 `stopSandbox()` 里记一笔**：停止有至少五条路径 —— 界面上的停止按钮**直接调 `sandboxManager.stopSandbox()`、根本不经过 `SandboxService`**；通知栏走 `ACTION_STOP_SANDBOX`；还有 `OnlineRuntimeImportManager`（两处）与 `DevInstallReceiver`（两处）。在每条里各记一笔是注定会漏的。\n\n`sandboxState` 是**唯一汇聚点**（`DefaultSandboxManager` 改的就是它），观察它既覆盖全部路径，也不用改 `sandbox-manager` 一行。",
       "rationale": "2.5 的三档里「停止后」需要一个停止时刻，而**这个时间戳此前根本没有任何写入方** —— `stop` 模式一次都不会触发，用户看到的是「开关开着、什么都没发生」。漏一条路径的后果是**静默的**：那条路径停止之后不会备份，而没有任何东西会报出来。",
@@ -437,6 +438,39 @@
       "reapply": "在 `DshApp.onCreate` 末尾起协程收集 `sandboxState`，`distinctUntilChanged()` 后只在 `STOPPED` 时写时间戳。",
       "conflict_risk": "低 —— 追加在 `onCreate` 尾部，与 DIV-0022 相邻。",
       "note": "⚠️ 先前我在 `AutomaticBackupSettingsStore` 的注释与设备文档里都写「只有界面上的停止会记、通知栏不记」——**那是错的，而且错得更糟**：当时 `setStopped` **没有任何调用方**，所以缺口的范围是**全部**。我凭「界面那条我见过」推断了其余路径，而没有搜一遍调用方（第 28 条同族：从「我见过的」推断「全部」）。两处都已更正。"
+    },
+    {
+      "id": "DIV-0025",
+      "title": "身份收回：namespace 与全部源码包路径改为 com.dshfusion.*",
+      "upstream": "dshbox",
+      "type": "identity",
+      "phase": 3,
+      "target_files": [
+        "app/build.gradle.kts",
+        "backup/build.gradle.kts",
+        "bridge/build.gradle.kts",
+        "common/build.gradle.kts",
+        "sandbox-manager/build.gradle.kts",
+        "plugin-manager/build.gradle.kts",
+        "terminal-session/build.gradle.kts",
+        "tools/check-android-identity.py",
+        "tools/check-apk-identity.py",
+        "tools/apply-divergences.sh",
+        "*com/dshbox/*",
+        "*/src/{main,test}/java/com/dshbox/*",
+        "*/src/{main,test}/java/com/dshbox",
+        "TRADEMARK.md",
+        "app/src/debug/AndroidManifest.xml",
+        "pilot/dshbox-adapter/src/main/java/dshbox/adapter/DshboxRelayModule.kt",
+        "tools/deploy_to_device.sh",
+        "pilot/dshbox-adapter/**"
+      ],
+      "change": "阶段 1 刻意只改 applicationId、不改 namespace（DIV-0001），理由是「改它会连带 36 处 `import …R` 与全部 manifest 相对类名，而那是全量重命名」。阶段 3.0 把那次重命名提前执行：`com.dshbox.app` → `com.dshfusion.app`，实测 **279 个文件 / 1069 处 / 52 个目录**，跨 13 种文件类型。（当初估的是 721 处，实测多出 48%。）",
+      "rationale": "用户 2026-10-16 的定位修正：上游从「母体」变「来源」。「看着像 fork」最直接的来源就是包名仍是上游的 —— applicationId 早在阶段 1 就独立了，而 namespace 与全部包路径一直没动。没有这一步，「边界是自己的」无法检查（上游文件与我们的文件在包名上分不开）。",
+      "detection": "`tools/apply-divergences.sh --check` 的 handle_div_0025：逐模块断言 namespace 以 `com.dshfusion` 开头；扫生产源码断言路径与内容都不再出现 `com.dshbox.app`。另有 `check-android-identity.py`（R 引用与 manifest 相对类名）与 `check-apk-identity.py`（产物级）。",
+      "reapply": "`tools/apply-divergences.sh` 的 handle_div_0025：**不断言式重放，只校验** —— 重命名不是「替换某段文本」那么规整（目录路径 + 包声明 + import + namespace + 用部件拼的路径都是不同形态），无法用锚点替换安全重放。同步上游后若这条失败，需要**人工重跑重命名工具**，见 docs/PHASE3-IDENTITY-RENAME.md。",
+      "conflict_risk": "**高** —— 这是本项目最大的一次结构偏离。但它相对安全：① 改名是机械的、可全库校验（`check-android-identity` 会抓 R 引用与相对类名）；② 残留的 `com.dshbox.app` 全部属于 D 类（插件夹具指向上游 app）与 E 类（登记叙述与历史文档），有明确清单；③ 本次曾因「全树替换」误改上游许可原件与历史文档，被 `check-license-hashes` 与 `check-references` 当场抓住 —— 说明现有门禁能兜住这类误伤。",
+      "note": "⚠️ **同步上游时这条会失败**，因为上游带来的文件又是 `com.dshbox.app`。届时的正确动作不是「跳过」，而是重跑重命名工具并复核残留清单（只允许 D 类与 E 类）。另：`plugin-manager` 与 `terminal-session` 用的是 `com.dshbox.pluginmanager` / `com.dshbox.terminal`（不含 `.app`）—— **最初的测量漏了它们**，因为它们不匹配 `com.dshbox.app`。这印证了「我量过范围了」的范围往往比它听起来小。\n\n📌 `target_files` 用了**路径模式**（`*com/dshbox/*`）而不是列 224 个文件 —— 因为改名的本质就是「这一整棵子树换了个名字」，逐个列文件既冗长又会随上游漂移而失效。`check-import-fidelity.py` 的 `matches_any` 支持 fnmatch，且它的 `*` 跨 `/` 匹配。"
     }
   ]
 }

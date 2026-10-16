@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -39,7 +40,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "governance" / "dsha-imports.json"
 
 # 导入副本所在的源码根。这里出现的 `.java` 一律视为 DSHA 的副本，
-# DSHFusion 自己写的代码是 Kotlin（com.dshbox.app.*），不在这些目录里。
+# DSHFusion 自己写的代码是 Kotlin（com.dshfusion.app.*），不在这些目录里。
 IMPORT_ROOT = ROOT / "backup" / "src"
 
 
@@ -239,6 +240,37 @@ def _texts(path: pathlib.Path):
             except OSError:
                 pass
     return out
+
+
+def check_reasons_are_not_postponements(doc: dict) -> list:
+    """`not_imported` 的 `reason` 不许写成「某阶段再评估」。
+
+    🔴 这条检查来自一个真实发现（2026-10-16，C6）：
+
+    18 条 not_imported 里**有 4 条**的理由是「阶段 2.2 做范围备份时再评估」或
+    「阶段 2.4 的范围」—— 而**那两个阶段都已经做完了**，没有任何人回来评估。
+    它们就那么挂在登记文件里，看起来像「已经安排好了」。
+
+    **「以后再说」不是理由，是延期 —— 而延期不会自己回来。**
+    登记文件的作用是**终止下一个人的怀疑**（`docs/INCIDENTS.md` 第 33 条），
+    所以它必须写**实质理由**（「依赖的东西不存在」/「我们已经有了」/「词汇不同」…），
+    而不是把判断推给一个未来的自己。
+    """
+    problems = []
+    # ⚠️ 这条正则**故意留了间隔**（`[^。；\n]{0,24}?`）：真实写法是
+    # 「阶段 2.2 做范围备份时再评估」，关键词并不紧跟数字。
+    # 但它**不能**误伤正当的前向引用 —— 「现在它属于阶段 2.8 的评估范围」是合法的，
+    # 所以只认「再评估 / 再处理 / 再说 / 的范围」这几种**推给未来**的写法。
+    pattern = re.compile(
+        r"阶段\s*\d+(?:\.\d+)?[^。；\n]{0,24}?(?:再评估|再处理|再说|的范围)")
+    for item in doc["not_imported"]["items"]:
+        path = item.get("upstream_path", "?")
+        reason = item.get("reason") or ""
+        for m in pattern.finditer(reason):
+            problems.append(
+                f"{path} 的理由里有「{m.group(0)}」—— 那是延期不是理由；"
+                "请换成实质理由（依赖不存在 / 我们已经有了 / 词汇不同 …）")
+    return problems
 
 
 def run_not_imported_verifications(doc: dict) -> list:
@@ -450,6 +482,7 @@ def main() -> int:
         | {str(i.get("upstream_path", "")) for i in ((doc.get("derived") or {}).get("items") or [])}
     )
     not_imported_problems = check_not_imported_disjoint(doc, upstream_taken)
+    not_imported_problems += check_reasons_are_not_postponements(doc)
     verify_problems, verify_checked = run_not_imported_verifications(doc)
 
     if (missing or bad_header or mismatched or unregistered or stray

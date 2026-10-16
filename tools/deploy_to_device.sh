@@ -18,7 +18,7 @@
 #   4. poll until runtime-new is promoted and the new DSH node is up with the
 #      expected environment (Debian PATH + DSH_PERMISSION_MODE)
 #
-# Requirements: adb on PATH, device online, com.dshbox.app installed.
+# Requirements: adb on PATH, device online, com.dshfusion.app installed.
 # Idempotent: re-running re-deploys the bundle (previous slot is preserved for
 # rollback).
 
@@ -33,7 +33,7 @@ if [ -z "$ADB" ]; then
     done
 fi
 [ -n "$ADB" ] || die "adb not found (install platform-tools or set ADB=/path/to/adb)"
-PKG="com.dshbox.app"
+PKG="com.dshfusion.app"
 BUNDLE=""
 BUNDLE_SHA=""
 
@@ -115,7 +115,7 @@ if [ "$DEBUGGABLE" -ge 1 ]; then
     # make sure the app process is up so the broadcast is delivered
     "$ADB" shell "monkey -p $PKG -c android.intent.category.LAUNCHER 1" >/dev/null 2>&1 || true
     log "broadcasting install (stop/install/promote/start)..."
-    "$ADB" shell "am broadcast -n $PKG/.dev.DevInstallReceiver -a com.dshbox.app.dev.action.INSTALL_RUNTIME \
+    "$ADB" shell "am broadcast -n $PKG/.dev.DevInstallReceiver -a com.dshfusion.app.dev.action.INSTALL_RUNTIME \
         --es bundle $DEV_BUNDLE \
         --es sha256 $BUNDLE_SHA --ez autostart true" | grep -q "result=0" || die "broadcast rejected"
 else

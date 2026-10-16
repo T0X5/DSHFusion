@@ -48,11 +48,11 @@
 | [docs/PHASE1-PREREQUISITES.md](docs/PHASE1-PREREQUISITES.md) | 阶段 1 前置审计：运行时资产 · 许可证 · 数据迁移 |
 | [docs/INSTALL-ON-DEVICE.md](docs/INSTALL-ON-DEVICE.md) | 真机安装步骤（手动执行） |
 | [governance/ATTRIBUTION.md](governance/ATTRIBUTION.md) | 署名与许可义务 |
-| [LICENSE-PENDING.md](LICENSE-PENDING.md) | 许可状态说明（为何暂不设许可证） |
+| [LICENSE-NOTES.md](LICENSE-NOTES.md) | 许可状态说明（为何暂不设许可证） |
 
 ### 可核验性（不靠「我说完成了」）
 
-- `python3 tools/verify-phase0.sh` —— **325 项**，每项负面路径都带故障注入，注入失效会自己报红
+- `python3 tools/verify-phase0.sh` —— **337 项**，每项负面路径都带故障注入，注入失效会自己报红
 - `bash tools/run-backup-jvm-tests.sh` —— 本机真编译真跑 `:backup` 的 Java 侧
 - 24 处对上游的偏离全部登记于 `governance/divergences.json`，可由 `apply-divergences.sh` 重放
 - DSHA 导入的 30 个文件逐字节溯源，正文 sha256 受 `check-dsha-imports.py` 保护
@@ -84,7 +84,7 @@ DSHA 并非劣质项目——它的功能面更宽（备份 v5、LAN、ADB 无�
 python3 tools/check-upstreams.py          # 治理契约检查
 python3 tools/check-references.py         # 引用完整性（断链、不存在的路径）
 python3 tools/check-license-hashes.py     # 上游许可原件哈希核验
-bash tools/verify-phase0.sh               # 阶段验证套件（325 项，含失败路径与故障注入）
+bash tools/verify-phase0.sh               # 阶段验证套件（337 项，含失败路径与故障注入）
 tools/sync-upstream.sh dshbox --fetch     # 拉取上游 + 生成变更摘要
 tools/apply-divergences.sh --check        # 检查已登记偏离的施加状态
 ```
@@ -102,7 +102,7 @@ git clone --mirror https://github.com/DSH-APP/DSHA.git   ../upstream-mirrors/DSH
 ## 许可
 
 当前**暂不设置许可证，私有自用**。理由与后续步骤见
-[LICENSE-PENDING.md](LICENSE-PENDING.md)。
+[LICENSE-NOTES.md](LICENSE-NOTES.md)。
 
 上游版权与许可原文按原样保存在
 [governance/upstream-licenses/](governance/upstream-licenses/)：

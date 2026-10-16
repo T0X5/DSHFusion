@@ -111,7 +111,7 @@ CI 从不构建 release、从不签名、从不接触设备，唯一的设备验
      **不需要运行环境资产**，每次 push/PR 都跑。
    - **慢车道**：`assembleDebug` / `assembleRelease` + 签名。需要资产与密钥，
      `workflow_dispatch` 手动触发。**签名密钥只走 secrets，绝不入库。**
-2. **真机验收记录**：在 `docs/device-acceptance/` 下按版本留档<!-- future: docs/device-acceptance/ -->，包含实际包摘要、
+2. **真机验收记录**：在 `docs/device-acceptance/` 下按版本留档，包含实际包摘要、
    包名、版本码、证书指纹与非破坏性操作结果。**不得从旧记录移用。**
 3. **`androidTest` 从零开始**：不追求覆盖率，先为"装了能启动、能连上 3080、
    终端能出 `node -v`"这三条建立 instrumented 冒烟测试。
@@ -422,13 +422,13 @@ void syncDirectory(File directory) throws IOException;    // 持久化屏障
 这条检查要在提交前做，而不是靠「反正都在 `filesDir` 下」这种推断。
 
 > ⚠️ **上游没有这条检查**，所以它补在**适配层**
-> （[`HostRestoreTransaction.java`](../backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java)），
+> （[`HostRestoreTransaction.java`](../backup/src/main/java/com/dshfusion/app/backup/HostRestoreTransaction.java)），
 > 上游的 `HostDataTransaction` 保持逐字节不动。
 
 **实现**：上游 `HostDataTransaction`（315 行）+ `TransactionMarkers`（34 行）
 + `util/Ids`（13 行）**逐字节导入**；上游的 `HostDataTransactionTest`（202 行 / 5 条，
 含一条**真杀子进程**的）**适配后导入**（11 处工具链替换）；
-[`HostRestoreTransaction.java`](../backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java)
+[`HostRestoreTransaction.java`](../backup/src/main/java/com/dshfusion/app/backup/HostRestoreTransaction.java)
 是**本仓库自写**的适配层，只做词汇映射。
 
 **上游比我手写的那份严密在哪（逐条）**：

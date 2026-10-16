@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.dshbox.terminal"
+    namespace = "com.dshfusion.terminal"
     compileSdk = 36
 
     defaultConfig {

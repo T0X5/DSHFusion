@@ -434,7 +434,7 @@ def main() -> int:
         print(f"authority      : {', '.join(auths)}")
     print()
 
-    # --- 断言 1：应用标识必须是 DSHFusion 自己的 ---
+    # --- 断言 1：应用标识必须是 DSHFusion 自己的，不许还是上游的 ---
     if pkg == "com.dshbox.app":
         problems.append(
             "applicationId 仍是上游的 com.dshbox.app —— 会与 DSHBox 冲突，无法并存安装"
@@ -450,12 +450,12 @@ def main() -> int:
         )
 
     # --- 断言 3：application 类必须是上游 namespace 下的 ---
-    # namespace 在阶段 1 刻意保持 com.dshbox.app；若这里变成 com.dshfusion.app，
+    # namespace 在阶段 1 刻意保持 com.dshfusion.app；若这里变成 com.dshfusion.app，
     # 说明有人动了 namespace，而那会让 R 引用与 manifest 相对类名失效。
     app_name = str(app.get("name", ""))
-    if app_name and not app_name.startswith("com.dshbox.app"):
+    if app_name and not app_name.startswith("com.dshfusion.app"):
         problems.append(
-            f"application 类是 {app_name}，期望在 com.dshbox.app 下"
+            f"application 类是 {app_name}，期望在 com.dshfusion.app 下"
             "（阶段 1 刻意不改 namespace）"
         )
 
@@ -468,9 +468,9 @@ def main() -> int:
     # authority 时，后装的那个直接失败 -13（INSTALL_FAILED_CONFLICTING_PROVIDER），
     # 跟 applicationId 是否不同**完全无关**。
     #
-    # 阶段 1 把 applicationId 从 com.dshbox.app 改成 com.dshfusion.app，
+    # 阶段 1 把 applicationId 从 com.dshfusion.app 改成 com.dshfusion.app，
     # 三条断言全过，CI 全绿 —— 但 APK 里 FileProvider 的 authority 是写死的
-    # `com.dshbox.app.fileprovider`，与已装的 DSHBox 撞车，真机上装不上去。
+    # `com.dshfusion.app.fileprovider`，与已装的 DSHBox 撞车，真机上装不上去。
     # 前面三条断言都查不到它，因为它们查的都是「值对不对」，
     # 而这条要查的是「**这个值是不是从 applicationId 派生的**」。
     authorities = manifest.get("authorities", [])
@@ -749,9 +749,9 @@ def main() -> int:
     LATE_PHASE_CLASSES = [
         "Lcom/deepseekharness/app/backup/BackupArchive;",
         "Lcom/deepseekharness/app/backup/HostDataTransaction;",
-        "Lcom/dshbox/app/backup/HostRestoreMapping;",
-        "Lcom/dshbox/app/backup/DshBackupExporter;",
-        "Lcom/dshbox/app/backup/DshAutomaticBackupRetention;",
+        "Lcom/dshfusion/app/backup/HostRestoreMapping;",
+        "Lcom/dshfusion/app/backup/DshBackupExporter;",
+        "Lcom/dshfusion/app/backup/DshAutomaticBackupRetention;",
     ]
     with zipfile.ZipFile(path) as _z:
         dex = [n for n in _z.namelist() if n.endswith(".dex")]

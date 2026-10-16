@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.dshbox.app.bridge"
+    namespace = "com.dshfusion.app.bridge"
     compileSdk = 36
 
     defaultConfig {

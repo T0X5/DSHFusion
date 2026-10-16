@@ -1,6 +1,6 @@
 # DSH WebUI is served over local HTTP; keep WebView and JS bridge classes.
--keep class com.dshbox.app.bridge.** { *; }
--keepclassmembers class com.dshbox.app.bridge.** { *; }
+-keep class com.dshfusion.app.bridge.** { *; }
+-keepclassmembers class com.dshfusion.app.bridge.** { *; }
 
 # Termux terminal-emulator: native methods are bound by name to libtermux.so.
 # (Also shipped as consumer rules in the :terminal-emulator module.)

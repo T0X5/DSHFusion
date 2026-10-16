@@ -15,19 +15,32 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 > 第二件东西定为 **统一设备能力层**；身份收回（全量包名重命名）**提前到现在**。
 > 全部依据、可检查标准与阶段计划见 [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md) ——
 > **不要重新推翻，要改就改那一份。**
+>
+> ✅ **阶段 3.0（身份收回）已完成**：分支 `phase-3.0/identity`，
+> `com.dshbox.app` → `com.dshfusion.app`，实测 **279 个文件 / 1069 处 / 52 个目录**
+> （当初估 721 处，**漏了 48%** —— 还漏了 `com.dshbox.pluginmanager` / `.terminal` / `.testhost`
+> 这三个不含 `.app` 的包）。Android CI 全绿（**真的编得过**）。
+> 偏离登记为 `DIV-0025`；审计、五类分法与陷阱清单见
+> [docs/PHASE3-IDENTITY-RENAME.md](docs/PHASE3-IDENTITY-RENAME.md)。
 
 它不是 DSHBox 的 fork，也不是 DSHA 的 fork —— 它是**独立仓库**，通过显式的
 双上游同步流程长期跟踪两者。见 [docs/UPSTREAM-SYNC.md](docs/UPSTREAM-SYNC.md)。
 
 ## 这个仓库当前处于什么阶段
 
-**阶段 1 与阶段 2 均已完成，并已合并进 `main`（2026-10-16）。**
+**阶段 1 已完成、阶段 2 的「备份恢复」已完成，均已合并进 `main`（2026-10-16）。**
+
+> ⚠️ **阶段 2 的定义是「备份恢复 + 受管更新」，而「受管更新」先前没有做、也没有归属** ——
+> 它掉在了两份计划之间（FUSION-PLAN 的 2.x 只列到 2.6，而「环境更新」被写成「阶段 3 的事」，
+> 但阶段 3 已改成统一设备能力层）。现定为 **阶段 2.8**，
+> 审计与计划见 [docs/PHASE2.8-MANAGED-UPDATE.md](docs/PHASE2.8-MANAGED-UPDATE.md)。
+> **在 2.8 完成之前，本文件不再写「阶段 2 已完成」。**
 
 **阶段 2 的验收标准五条全部在真机上满足** —— 包括最后那条「可换台设备恢复」
 （建会话 → 导出 → 新建一个 → 恢复 → 完全重启 DSH → 它消失了）。
 明细见 [docs/INCIDENTS.md](docs/INCIDENTS.md) 末尾的验收表。
 
-**真机一共抓出 6 个 bug（事故第 39–44 条），而本机 174 条 + 325 项 + CI 全绿时
+**真机一共抓出 6 个 bug（事故第 39–44 条），而本机 176 条 + 337 项 + CI 全绿时
 一个都没抓到。** 下一个阶段的计划见 [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md)。
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
@@ -214,7 +227,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 > **不是「恢复在真机上不会毁数据」**。后者要等 2.4b 有了界面入口。
 
 **阶段 2.4b-① 已实现（2026-10-14，同一分支）**：**恢复的落点** ——
-[`HostRestoreMapping.java`](backup/src/main/java/com/dshbox/app/backup/HostRestoreMapping.java)，
+[`HostRestoreMapping.java`](backup/src/main/java/com/dshfusion/app/backup/HostRestoreMapping.java)，
 把归档的逻辑根映射到本机 `user-data/.dsh`。三条要点：
 
 1. **审计推翻了「复用 DSHA 的落点实现」这个默认假设，而且最强的理由与 `android.*` 无关。**
@@ -230,7 +243,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 > ✅ **阶段 2.4b-① 已通过真实 CI**（run [38651955250](https://github.com/T0X5/DSHFusion/actions/runs/38651955250)，
 > commit `0aea1dd`）：**24/24 步全绿**，`:backup` **96 条测试 / 13 个测试类**
 > （2.4a 是 85 / 12；多的 11 条正是 `HostRestoreMappingTest`，CI 日志里逐类打印为
-> `11 com.dshbox.app.backup.HostRestoreMappingTest`），产物 `dshapp-debug-apk` 128,789,923 字节。
+> `11 com.dshfusion.app.backup.HostRestoreMappingTest`），产物 `dshapp-debug-apk` 128,789,923 字节。
 > Contracts 4/4 全绿。
 >
 > **这次计数断言又是「确认」而不是「证伪」** —— 我在 `android.yml` 里写的是 **96**
@@ -259,7 +272,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 **现在的落点**：`HostDataTransaction`（315 行）+ `TransactionMarkers`（34 行）
 + `Ids`（13 行）**逐字节导入**；上游的 `HostDataTransactionTest`（202 行 / 5 条，
 含一条**真杀子进程**的）**适配后导入**；我们自写一层
-[`HostRestoreTransaction.java`](backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java)
+[`HostRestoreTransaction.java`](backup/src/main/java/com/dshfusion/app/backup/HostRestoreTransaction.java)
 做词汇映射。
 
 **两边的词汇恰好同构**，所以适配层很薄：
@@ -320,7 +333,7 @@ Kotlin 未动仍 43 ⇒ **108**。两个类**分别钉** 5 / 7 —— 只钉总�
   `ScheduledBackupOwner` 82 行 / 只有 `java.lang`）+ 它们的测试（4 + 5 条，含 DST
   与时钟回拨、跨线程拒绝）。`ScheduledBackupOwner` 是**线程受限的单飞票据所有者**，
   参数用**引用相等** —— 它回答的是「现在这个 job id 是不是我这次提交的那个」。
-- **保留策略必须自写**（[`DshAutomaticBackupRetention.java`](backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRetention.java)）：
+- **保留策略必须自写**（[`DshAutomaticBackupRetention.java`](backup/src/main/java/com/dshfusion/app/backup/DshAutomaticBackupRetention.java)）：
   上游 pruner 的判据建立在「自动备份是**一个目录 + 四个具名成员**」上，而我们是
   **单文件** `DSHDATA` 容器 —— 直接抄不是「命名对不上」，是**连输入都没有**，
   后果是**静默的空操作**（用户以为保留 3 份，磁盘无限增长）。
@@ -452,23 +465,45 @@ Kotlin 未动仍 43 ⇒ **108**。两个类**分别钉** 5 / 7 —— 只钉总�
 
 ## 许可状态
 
-DSHFusion 当前**暂不设置许可证，私有自用**（见根目录 [LICENSE](LICENSE) 与
-[LICENSE-PENDING.md](LICENSE-PENDING.md)）。
+**DSHFusion 以 GPL-3.0 分发。** 全文见根目录 [LICENSE](LICENSE)；
+理由、义务与「公开之前做过的检查」见 [LICENSE-NOTES.md](LICENSE-NOTES.md)。
 
-这不是"随便用"的意思 —— 而是说：本仓库**没有对外分发**，因此 GPL-3.0 的分发义务
-尚未触发；但**一旦决定公开或分发，必须重新评估**，因为骨干 DSHBox 是 GPL-3.0。
+| 组成部分 | 许可 | 含义 |
+|---|---|---|
+| 骨干（DSHBox） | **GPL-3.0** | 本仓库是它的**衍生作品** ⇒ 分发时整体必须是 GPL-3.0 |
+| 选择性吸收（DSHA） | MIT | 与 GPL-3.0 兼容，可并入 |
+| `terminal-emulator` / `terminal-view` | Apache-2.0 | 与 GPL-3.0 兼容（**与 GPLv2 不兼容**，别降版） |
 
-**根 `LICENSE` 放的是状态说明，不是 GPL-3.0 全文**（DIV-0009）。
-原因：上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，
-而本仓库并未做出那个承诺 —— 矛盾的是 GitHub 那一侧。
+### 2026-10-16：从「私有自用」改为「公开 + GPL-3.0」（**可见性切换待作者确认**）
 
-> ⚠️ **GPL-3.0 原文没有被删除，只是换了位置**：它按原样保存在
+**起因**：GitHub Actions 分钟数用尽（2000/2000，仓库是私有 ⇒ 计费），
+而公开仓库的 Actions 免费。
+
+⚠️ **许可已就位，但可见性还没切** —— 用户选择「先只做许可准备，切可见性前我再确认」。
+所以现在的状态是：**私有仓库 + GPL-3.0 许可**（合法且常见；GPL-3.0 的义务在分发时才触发）。
+
+**但这不是一个计费决定，是一个许可决定**：
+
+> **公开 = 对外分发 ⇒ GPL-3.0 的义务被触发。**
+
+这条义务**原本就存在**（骨干是 GPL-3.0），只是在私有期间**没有触发**。
+
+这**反转了 `DIV-0009`**。那时根 LICENSE 放的是「许可状态：私有自用，未授予许可」的说明 ——
+理由是上游根 LICENSE 是 GPL-3.0 全文，GitHub 据此把本仓库显示成「GPL-3.0」，
+而本仓库当时并未做出那个承诺，**矛盾的是 GitHub 那一侧**。
+现在承诺变了，说明也跟着变 —— 于是根 LICENSE **就是** GPL-3.0 全文。
+
+> ⚠️ **上游 GPL-3.0 原文没有被删，也没有被改**：它按原样保存在
 > [governance/upstream-licenses/DSHBox/LICENSE](governance/upstream-licenses/DSHBox/LICENSE)，
 > 受 `governance/upstream-license-hashes.json` 的 SHA-256 保护。
-> `handle_div_0009` 会**正向核验**这份副本仍然存在且哈希一致 ——
-> 只检查「根目录不再是 GPL」是不够的，那等于允许许可证在换位置时凭空消失。
-> 这条安全网做过三种故障注入（删副本 / 改副本一个字节 / 把 GPL 全文塞回根目录），
-> 全部正确拦截。
+>
+> `handle_div_0009` 现在是**双向**核验：
+> **①** 根 LICENSE **必须**含 GPL-3.0 全文（分发时它必须在那里）；
+> **②** 那份上游副本**必须**仍在、且哈希一致（**许可证不许在换位置的过程中消失**）。
+> 只查其中一条都是不够的 —— 第 ① 条防止「分发时没有许可」，
+> 第 ② 条防止「上游原件被顺手删掉」。
+>
+> 三种故障注入：**删副本** / **改副本一个字节** / **把 GPL 从根目录拿走** —— 全部必须被拦下。
 
 ## 目录结构
 
@@ -476,7 +511,7 @@ DSHFusion 当前**暂不设置许可证，私有自用**（见根目录 [LICENSE
 dshfusion/
 ├── AGENTS.md                    ← 你在这里（唯一权威规范）
 ├── README.md                    对外入口
-├── LICENSE-PENDING.md           许可待定说明
+├── LICENSE-NOTES.md           许可说明（为什么是 GPL-3.0、义务、公开前检查）
 ├── governance/
 │   ├── upstreams.json           双上游清单（URL、锁定提交、许可、同步策略）
 │   ├── divergences.json         对上游的每一处偏离登记
@@ -525,7 +560,7 @@ dshfusion/
 │   └── verify-phase0.sh         阶段验证套件（成功与失败路径；工作区项数见运行输出）
 ├── backup/                      阶段 2.1–2.4b②：v5 格式与预检 + 范围与排除 + 凭据投影 + 恢复核心 + 落点映射 + 提交与回切（见其 README）
 │   └── src/main/java/com/deepseekharness/app/**  DSHA 原样导入（MIT，勿改正文）
-│   └── src/main/java/com/dshbox/app/backup/**    本仓库自写（Java，为能本机真跑）
+│   └── src/main/java/com/dshfusion/app/backup/**    本仓库自写（Java，为能本机真跑）
 ├── governance/inherited-lint-baseline.json  上游导入文件既有的 lint/可执行位状态
 └── .github/workflows/
     ├── contracts.yml            契约与规范检查（每次 push/PR）
@@ -542,10 +577,10 @@ dshfusion/
 | 版本号 | `versionCode = 1` / `versionName = 0.1.0` | 独立版本线，不复用上游的 8 / 1.4.0 |
 | 签名 | 独立自建密钥库（DIV-0017） | 固定身份，密钥库走 Actions Secret，**不入库**；不要求、也不使用任何上游发布证书 |
 
-> **阶段 1 刻意不做全量包名重命名。** DSHBox 内部有 721 处 `com.dshbox.app`
-> 引用，一次性重命名会产生巨大的 diff 并让后续每次上游同步都冲突。
-> 阶段 1 只改 `applicationId`、应用名、版本号与签名 —— 这些是"并存安装"必需的。
-> 完整重命名列为阶段 4 的独立任务。见 [docs/FUSION-PLAN.md](docs/FUSION-PLAN.md)。
+> **阶段 1 刻意没做全量包名重命名**（当时的理由：DSHBox 内部有 721 处 `com.dshbox.app`
+> 引用，一次性重命名会让后续每次上游同步都冲突）。
+> **阶段 3.0 起已提前执行** —— 见 [PHASE3-IDENTITY-RENAME.md](docs/PHASE3-IDENTITY-RENAME.md)
+> 与 `governance/divergences.json` 的 DIV-0025。
 
 ## 构建（阶段 1 完成后生效）
 

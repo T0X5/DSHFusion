@@ -19,8 +19,8 @@
 > ⚠️ 但**没有在真机上验证过** —— 2.2 还没有导出/恢复入口。
 
 | `com.deepseekharness.app.backup`（**13** 个类）<br>`com.deepseekharness.app.util`（`BackupScopes`、`FileKind`） | DSHA `467c7eb0` | **逐字节原样副本**（MIT，**17** 个文件）<br>**另有 4 份测试/类属于改写或适配** |
-| `com.dshbox.app.backup`（`V5Archive.kt`、`DshBackupScope.kt`、`DshBackupExclusions.kt`） | DSHFusion | 本仓库自己写的 Kotlin |
-| `com.dshbox.app.backup.CredentialProjectionCodesTest` | DSHFusion | 本仓库自写的测试（单列在 `dsha-imports.json` 的 `original` 段） |
+| `com.dshfusion.app.backup`（`V5Archive.kt`、`DshBackupScope.kt`、`DshBackupExclusions.kt`） | DSHFusion | 本仓库自己写的 Kotlin |
+| `com.dshfusion.app.backup.CredentialProjectionCodesTest` | DSHFusion | 本仓库自写的测试（单列在 `dsha-imports.json` 的 `original` 段） |
 
 阶段 2.1 引入的是容器与预检（`BackupArchive`/`BackupLimits`/`BackupJson`/`BackupControl`、
 `BackupScopes` 与两份原始测试）；阶段 2.2 补上**枚举与写入**那一半
@@ -92,7 +92,7 @@ bytes[32]           SHA-256（覆盖以上全部字节）
 
 ## DSHFusion 加了什么
 
-`V5Archive`（[`V5Archive.kt`](src/main/java/com/dshbox/app/backup/V5Archive.kt)）只做两件事：
+`V5Archive`（[`V5Archive.kt`](src/main/java/com/dshfusion/app/backup/V5Archive.kt)）只做两件事：
 
 - `hasMagic(header)` —— 这是不是一份未加密的 v5 归档；
 - `verify(input)` —— 全程只读地核验，并返回 `V5ArchiveManifest`。
@@ -363,7 +363,7 @@ DSHA 的对应实现是 `NativeRestoreTargets`（301 行）。第一版审计给
 `dsh-home`/`dsh-child`/`native-settings`/`plugin-store`/…，其中 `dsh-child` 是
 「`.dsh` 的子条目**逐个成根**」；我们是「一个 `DshBackupMember` 一个根」。
 所以 `NativeRestoreTargets` 登记为 `not_imported`，我们另写
-[`HostRestoreMapping.java`](src/main/java/com/dshbox/app/backup/HostRestoreMapping.java)。
+[`HostRestoreMapping.java`](src/main/java/com/dshfusion/app/backup/HostRestoreMapping.java)。
 
 ### 为什么这个类是 Java，而不是像 `DshBackupScope.kt` 那样用 Kotlin
 
@@ -372,7 +372,7 @@ DSHA 的对应实现是 `NativeRestoreTargets`（301 行）。第一版审计给
 `tools/run-backup-jvm-tests.sh` 只编译 `backup/src` 下的 `.java`，所以写 Java 换来的是
 「落点对不对」这个问题能在两秒内得到答案。
 
-代价是它破了「`.java` 在 `com/deepseekharness/app/`、我们的在 `com/dshbox/app/*.kt`」这条
+代价是它破了「`.java` 在 `com/deepseekharness/app/`、我们的在 `com/dshfusion/app/*.kt`」这条
 语言约定。**换来的是可验证性，这个交换是划算的**，但它必须被显式登记 ——
 `governance/dsha-imports.json` 的 `original` 段如实列了这两个文件（自写、无上游对应物），
 而 `check-dsha-imports.py` 的反向扫描据此把它们算作「已登记」而不是「上游文件漏登记」。
@@ -457,7 +457,7 @@ DSHA 用它把 `.dsh` 的子条目并进一个 group。**我们不这么做**：
 | [`HostDataTransaction.java`](src/main/java/com/deepseekharness/app/backup/HostDataTransaction.java)（315 行） | DSHA **逐字节**导入 |
 | `TransactionMarkers.java`（34 行）、`util/Ids.java`（13 行） | DSHA **逐字节**导入 |
 | `HostDataTransactionTest.java`（202 行 / 5 条，含一条**真杀子进程**的） | 适配后导入（11 处工具链替换） |
-| [`HostRestoreTransaction.java`](src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java) | **本仓库自写**：词汇映射 |
+| [`HostRestoreTransaction.java`](src/main/java/com/dshfusion/app/backup/HostRestoreTransaction.java) | **本仓库自写**：词汇映射 |
 | `HostRestoreTransactionTest.java`（7 条） | **本仓库自写**：集成 + `CROSS_DEVICE` + 设置轴 |
 
 **两边的词汇恰好同构**，所以适配层很薄：
@@ -553,7 +553,7 @@ move(candidate, active)            // 候选挪进来
 
 > ✅ **阶段 2.4b-② 已通过真实 CI**（run [38655637817](https://github.com/T0X5/DSHFusion/actions/runs/38655637817)，
 > commit `9d02c9f`，**手写那一版**）：**24/24 步全绿**，`:backup` **105 条测试 / 14 个测试类**
-> （日志逐类打印 `9 com.dshbox.app.backup.HostRestoreCommitTest`），
+> （日志逐类打印 `9 com.dshfusion.app.backup.HostRestoreCommitTest`），
 > 产物 `dshapp-debug-apk` 128,789,786 字节。Contracts 4/4 全绿。
 > **本轮换成移植版之后的新计数是 108（Java 65 + Kotlin 43），CI 待跑。**
 >

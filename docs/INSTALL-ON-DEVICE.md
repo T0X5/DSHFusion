@@ -105,7 +105,7 @@ python3 tools/check-apk-identity.py app-debug.apk
 applicationId  : com.dshfusion.app
 versionCode    : 1
 versionName    : 0.1.0
-application    : com.dshbox.app.DshApp
+application    : com.dshfusion.app.DshApp
 authority      : com.dshfusion.app.fileprovider, com.dshfusion.app.shizuku, com.dshfusion.app.androidx-startup
 应用名（android:label = 0x7f0e001f）在各语言下的解析结果：
   ar         = 'DSHFusion'  ✅
@@ -544,7 +544,19 @@ head -c 1024 /sdcard/Download/DSHFusion/<那份>.dshbak > /sdcard/Download/DSHFu
    > `setStopped` **根本没有任何调用方**，所以 `stop` 模式一次也不会触发，
    > 缺口的范围是**全部**。我凭「界面那条我见过」推断了其余路径，
    > 而没有搜一遍调用方。
-2. **恢复只有一个开关，不能逐根挑选。** 选择了「只恢复会话」而拿到一份全量归档时，
-   设置与插件也会被恢复进去 —— 上游把它做成了通配符，我们目前照它的语义走。
-   所以**别用错范围去恢复一份全量归档**。
+2. **恢复的范围是一个开关，不能逐根勾选。**
+   ~~选择了「只恢复会话」而拿到一份全量归档时，设置与插件也会被恢复进去。~~
+
+   🔴 **更正（2026-10-16）：上面那句与代码不符。** 实际行为是**明确报错
+   `NO_RECOVERABLE_SCOPE`，而且数据一动不动** —— 由测试
+   `aNarrowScopeRefusesAFullArchiveInsteadOfOverRestoring` 用**执行**证明（不是推理）。
+
+   机制：`NativeRestorePlan.inspect` 的过滤是
+   `if (!selected.contains("application") && !selected.contains(scope)) continue;`，
+   而全量归档的根 `scope` 就是 `"application"` —— 选「会话」时 `selected = {"sessions"}`，
+   两个条件都成立 → **根被跳过** → 无落点 → 报错。
+
+   **但「不能逐根挑选」这件事本身仍然成立**，只是性质变了：
+   范围是**二选一的开关**，恢复的单位是**整份归档的根**，没有「只恢复其中几个根」的界面。
+   正确的说法是：**选错范围会报错，而不是做错事。**
 3. `stop` / `daily` 的**时钟精度是 15 分钟**（心跳周期）。对「每天一次」可以忽略。

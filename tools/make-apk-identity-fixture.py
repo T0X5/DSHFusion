@@ -22,9 +22,9 @@
 场景：
     good          applicationId=com.dshfusion.app、versionCode=1、versionName=0.1.0
                   → 期望 check-apk-identity.py 退出 0
-    upstream-id   applicationId=com.dshbox.app → 期望退出 1
+    upstream-id   applicationId=com.dshbox.app（上游值）→ 期望退出 1
     upstream-ver  versionCode=8、versionName=1.4.0 → 期望退出 1
-    wrong-ns      application 类不在 com.dshbox.app 下 → 期望退出 1
+    wrong-ns      application 类在 com.dshbox.app 下（不是我们的）→ 期望退出 1
     wrong-label   应用名字面量不是 DSHFusion → 期望退出 1
     no-manifest   包里没有 AndroidManifest.xml → 期望退出 2
     x64-layer     身份全对、层名与容器格式全对，只有 dsh 层**里面的包**是 x64
@@ -203,9 +203,9 @@ def build_end_element(name_idx: int, ns_idx: int = NO_INDEX) -> bytes:
 PHASE2_DESCRIPTORS = (
     b"Lcom/deepseekharness/app/backup/BackupArchive;\x00"
     b"Lcom/deepseekharness/app/backup/HostDataTransaction;\x00"
-    b"Lcom/dshbox/app/backup/HostRestoreMapping;\x00"
-    b"Lcom/dshbox/app/backup/DshBackupExporter;\x00"
-    b"Lcom/dshbox/app/backup/DshAutomaticBackupRetention;\x00"
+    b"Lcom/dshfusion/app/backup/HostRestoreMapping;\x00"
+    b"Lcom/dshfusion/app/backup/DshBackupExporter;\x00"
+    b"Lcom/dshfusion/app/backup/DshAutomaticBackupRetention;\x00"
 )
 
 
@@ -214,13 +214,16 @@ PHASE2_DESCRIPTORS = (
 # ⚠️ 与 `check-apk-identity.py` 的断言 10 是配套的：夹具不带它，**每个场景都会红**。
 # 这不是断言太严，是夹具失真 —— 一个真的、能跑的产物本来就该声明这个服务。
 # 另开一个 `missing-job-service` 场景把它留空，那才是用来证明断言 10 会红的方向。
-SERVICE_NAME = "com.dshbox.app.service.AutomaticBackupJobService"
+SERVICE_NAME = "com.dshfusion.app.service.AutomaticBackupJobService"
 SERVICE_PERMISSION = "android.permission.BIND_JOB_SERVICE"
 
 
 def build_axml(scenario: str) -> bytes:
     """拼出一份最小的 AndroidManifest.xml。"""
     if scenario == "upstream-id":
+        # ⚠️ **必须是上游的值** —— 这个场景测的就是「应用标识仍是上游的」会被拒绝。
+        # 阶段 3.0 的全树替换曾把它改成 com.dshfusion.app，
+        # 于是「应当失败」的场景变成什么都不测（套件的场景断言当场抓住）。
         package = "com.dshbox.app"
     else:
         package = "com.dshfusion.app"
@@ -231,9 +234,10 @@ def build_axml(scenario: str) -> bytes:
         version_code, version_name = 1, "0.1.0"
 
     if scenario == "wrong-ns":
-        app_class = "com.dshfusion.app.DshApp"
-    else:
+        # 同上：namespace 不对 = application 类不在**我们的** namespace 下。
         app_class = "com.dshbox.app.DshApp"
+    else:
+        app_class = "com.dshfusion.app.DshApp"
 
     if scenario == "wrong-label":
         label = "DSHBox"
@@ -245,6 +249,7 @@ def build_axml(scenario: str) -> bytes:
     # 每个场景都要有一个 provider —— 检查器现在要求「至少有一个 authority」
     # 且「每个都从 applicationId 派生」，缺了 provider 会命中前一条。
     if scenario == "bad-authority":
+        # 写死的 authority（不是从 applicationId 派生）—— 真机上与已装的 DSHBox 撞车。
         authority = "com.dshbox.app.fileprovider"
     else:
         authority = f"{package}.fileprovider"

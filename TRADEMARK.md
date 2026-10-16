@@ -31,7 +31,7 @@
 
 | 文件 | 说明 |
 |---|---|
-| `app/src/main/java/com/dshbox/app/ui/theme/AppIcons.kt` | 图标路径派生自 Material Icons（Apache-2.0），按该许可使用 |
+| `app/src/main/java/com/dshfusion/app/ui/theme/AppIcons.kt` | 图标路径派生自 Material Icons（Apache-2.0），按该许可使用 |
 
 > 设计源文件（原始 SVG、画板、方案包）**不在本仓库内**，由项目方另行保管。
 

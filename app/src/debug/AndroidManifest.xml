@@ -9,7 +9,7 @@
             android:name=".dev.DevInstallReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.dshbox.app.dev.action.INSTALL_RUNTIME" />
+                <action android:name="com.dshfusion.app.dev.action.INSTALL_RUNTIME" />
             </intent-filter>
         </receiver>
     </application>

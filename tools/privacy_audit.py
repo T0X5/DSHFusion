@@ -89,6 +89,12 @@ ALLOW = [
 
     # —— Kotlin 语法误匹配 ——
     re.compile(r"this@"),                           # this@Label 被当成邮箱
+    # GPL-3.0 的标准免责声明用词（"MERCHANTABILITY or FITNESS FOR A PARTICULAR
+    # PURPOSE"）。它是**法律用语**，不是设备序列号 —— 但它有 15 个大写字母，
+    # 会被「设备序列号样式」的启发式命中。
+    # 出现的场合：`tools/apply-divergences.sh` 里 DIV-0009 重放用的通知头字面量
+    # （它必须与仓库根的 LICENSE 逐字节一致，所以不能改写它）。
+    re.compile(r"\bMERCHANTABILITY\b"),
 
     # —— 上游（Termux）自带内容：非我方数据，公开发布 ——
     re.compile(r"/Users/fornwall"),                 # Termux 作者机器路径（Android Studio 模板注释）
@@ -111,10 +117,12 @@ ALLOW = [
     # 对应规则再次命中（自匹配），拼接后源码文本里不再出现可命中的连续形态。
     re.compile(r"/tmp/" r"dpkg-deb\."),                      # dpkg 临时目录名（单测夹具）
     re.compile(r"back/home" r"/recents"),                    # 安卓导航三键名，被「Linux 家目录」正则误匹配
-    # 仓库内相对路径「app/src/main/java/com/dshbox/app/ui/home/」下的 HomeScreen.kt
+    # 仓库内相对路径「app/src/main/java/com/dshfusion/app/ui/home/」下的 HomeScreen.kt
     # 被「Linux 家目录」正则误匹配（与上一条同类）。
     # 刻意写到完整仓库前缀：只放行这一条真实路径，不放宽任何 `/home/…` 形态。
-    re.compile(r"app/src/main/java/com/dshbox/app/ui/home" r"/HomeScreen\.kt"),
+    # 覆盖**两种**形态：`divergences.json` 的 target_files 用当前路径，
+    # 而同一条登记的 `change` 散文里记的是当时（阶段 1）的路径 —— 那是历史，不该改。
+    re.compile(r"app/src/main/java/com/dsh(fusion|box)/app/ui/home" r"/HomeScreen\.kt"),
     re.compile(r"C:" r"/\.\.\."),                            # 注释里说明「盘符式写法」的举例，非本机路径
     re.compile("ESO" "CKETTIMEDOUT"),                        # 上游 pnpm 错误码，被「设备序列号」正则误匹配
 
