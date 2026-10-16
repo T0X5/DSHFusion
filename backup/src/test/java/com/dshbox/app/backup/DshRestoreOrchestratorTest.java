@@ -510,4 +510,73 @@ public class DshRestoreOrchestratorTest {
     }
     return out;
   }
+
+  /**
+   * 🔴 **全量恢复必须「替换」，不是「合并」。**
+   *
+   * <p>真机上就是这么暴露的：用户建了会话 `测试C会话` → 导出（C 不在归档里）→ 恢复 →
+   * 界面报「已恢复：1」，而 **C 还在**。用户以为「恢复没生效」，
+   * 其实恢复生效了 —— 只是它做的是**合并**而不是**替换**。
+   *
+   * <p>根因：`HostRestoreMapping` 把 `Target.merge` **写死成 `true`**。
+   * 而 `NativeRestorePlan` 里 `merge=true` 的语义是先把**现有的整棵树**拷进候选、
+   * 再把归档覆盖上去 —— 于是归档里没有的东西一律保留，
+   * **全量恢复永远删不掉任何东西**。
+   *
+   * <p>这条断言就是那次事故的守卫：**归档之后新建的东西必须消失。**
+   */
+  @Test
+  public void aWholeHomeRestoreReplacesTheTreeInsteadOfMergingIntoIt() throws Exception {
+    File source = makeSource();
+    File archive = exportArchive(source, "whole.dshbak");
+
+    File target = temporary.newFolder("target-whole");
+    write(new File(target, ".dsh/sessions/a.json"), "{\"a\":1}");
+    // 归档**之后**新建的 —— 真机上就是那个「测试C会话」。
+    File afterExport = new File(target, ".dsh/sessions/after-export.json");
+    write(afterExport, "{\"new\":1}");
+
+    File task = temporary.newFolder("restore-whole");
+    DshRestoreOrchestrator run = new DshRestoreOrchestrator();
+    inspectInto(archive, target, task, run);
+    run.prepare(new BackupControl(null));
+    run.commit(new BackupControl(null));
+
+    assertFalse(
+        "全量恢复必须删掉归档里没有的文件 —— 否则「恢复成那份归档的样子」永远做不到",
+        afterExport.exists());
+    assertTrue("归档里有的必须还在", new File(target, ".dsh/sessions/a.json").isFile());
+  }
+
+  /**
+   * `merge` 的推导规则：**根是整个 home → 替换；根是子树 → 合并。**
+   *
+   * <p>前者是「把这个家恢复成那份归档的样子」，后者是「只换这一部分、别动其它」。
+   * 这条规则原来是不存在的 —— `merge` 被硬编码成 `true`，
+   * 而那让**全量**恢复也走了合并那条路。
+   */
+  @Test
+  public void wholeHomeRootsReplaceAndSubtreeRootsMerge() throws Exception {
+    File userData = temporary.newFolder("map-merge");
+    HostRestoreMapping mapping =
+        new HostRestoreMapping(
+            userData,
+            List.of(
+                new HostRestoreMapping.Member("dsh", ".dsh", "application"),
+                new HostRestoreMapping.Member("dsh-sessions", ".dsh/sessions", "sessions")));
+
+    Map<String, Object> whole = new LinkedHashMap<>();
+    whole.put("id", "dsh");
+    whole.put("scope", "application");
+    assertFalse(
+        "根就是整个 home（.dsh）→ 必须是替换，否则全量恢复删不掉任何东西",
+        mapping.target(whole).merge);
+
+    Map<String, Object> part = new LinkedHashMap<>();
+    part.put("id", "dsh-sessions");
+    part.put("scope", "sessions");
+    assertTrue(
+        "根是 home 里的子树 → 必须是合并，否则窄范围恢复会把其它东西也删掉",
+        mapping.target(part).merge);
+  }
 }

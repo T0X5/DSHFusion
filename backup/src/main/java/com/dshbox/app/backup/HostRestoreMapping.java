@@ -143,7 +143,24 @@ public final class HostRestoreMapping implements NativeRestorePlan.Mapping {
     if (!member.v5Scope.equals(scope)) throw new IOException("ROOT_SCOPE");
     File path = resolve(member.path);
     if (!within(userData, path)) throw new IOException("TARGET_OUTSIDE_APP");
-    return new NativeRestorePlan.Target(path, path, true, member.id, "", null);
+    // 🔴 **`merge` 不能写死。**
+    //
+    // 它原来是硬编码的 `true`，而 `NativeRestorePlan` 里 `merge=true` 的语义是：
+    //
+    //     if (target.merge && target.read != null && !fs.stat(target.read).type.equals("MISSING"))
+    //       copyTree(target.read, fs.child(candidate, root.getKey()), control, 0, copied);
+    //
+    // 也就是**先把现有的整棵树拷进候选，再把归档覆盖上去** ——
+    // 于是「归档里没有的文件」原样保留，**全量恢复永远删不掉任何东西**。
+    //
+    // 真机上就是这么暴露的：用户建了会话 C → 导出（C 不在归档里）→ 恢复 →
+    // 界面报「已恢复：1」，而 C **还在**。用户以为恢复没生效，其实恢复生效了，
+    // 只是它做的是「合并」而不是「替换」。
+    //
+    // 规则：**根就是整个 home（`.dsh`）→ 替换；根是 home 里的某棵子树 → 合并。**
+    // 前者是「把家恢复成那份归档的样子」，后者是「只换掉这一部分，别动其它」。
+    boolean wholeHome = member.path.equals(GROUP_NAME);
+    return new NativeRestorePlan.Target(path, path, !wholeHome, member.id, "", null);
   }
 
   @Override
