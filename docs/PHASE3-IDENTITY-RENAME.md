@@ -7,7 +7,7 @@
 ## 一、为什么做
 
 用户 2026-10-16 的定位修正：**上游从「母体」变成「来源」**。
-而「看着像 fork」最直接的来源就是包名仍是 `com.dshbox.app`。
+而「看着像 fork」最直接的来源就是包名仍是 `com.dshfusion.app`。
 
 `applicationId` 早在阶段 1 就改成了 `com.dshfusion.app`（DIV-0001），
 但 **`namespace` 与全部 Java/Kotlin 包路径仍是上游的** —— 那一处当时是**故意留的**
@@ -40,25 +40,25 @@
 ### A. 真要改的包与名字空间（改）
 
 - 4+ 个 `build.gradle.kts` 的 `namespace`：
-  `com.dshbox.app` / `.backup` / `.bridge` / `.common` / `.sandbox`
+  `com.dshfusion.app` / `.backup` / `.bridge` / `.common` / `.sandbox`
 - 224 个 `.kt` + 15 个 `.java` 的 `package` / `import` 语句
-- 52 个目录路径（`app/src/main/java/com/dshbox/app/**` 等）
+- 52 个目录路径（`app/src/main/java/com/dshfusion/app/**` 等）
 
 ### B. 指向我们自己的引用（改）
 
-- `app/proguard-rules.pro`：`-keep class com.dshbox.app.bridge.**`
+- `app/proguard-rules.pro`：`-keep class com.dshfusion.app.bridge.**`
   → 必须跟着走，否则 release 混淆会**静默失效**（而这正是它要防的事）
 - `app/src/debug/AndroidManifest.xml`：
-  `<action android:name="com.dshbox.app.dev.action.INSTALL_RUNTIME" />`
+  `<action android:name="com.dshfusion.app.dev.action.INSTALL_RUNTIME" />`
   → 这是**我们自己的** action 名
 
 ### C. 检查器里的「基线常量」（改，**而且它的期望要翻过来**）
 
-- `tools/check-android-identity.py:42` `UPSTREAM_NAMESPACE = "com.dshbox.app"`
+- `tools/check-android-identity.py:42` `UPSTREAM_NAMESPACE = "com.dshfusion.app"`
   → 它是**对照基线**。改名后这个常量必须指向新的期望，
   否则那条检查会**从「通过」变成「失败」**，而失败原因看起来像「代码错了」
 - `tools/check-apk-identity.py:453` 的注释与断言：
-  「namespace 在阶段 1 刻意保持 `com.dshbox.app`；若这里变成 `com.dshfusion.app`…」
+  「namespace 在阶段 1 刻意保持 `com.dshfusion.app`；若这里变成 `com.dshfusion.app`…」
   → **这条断言的期望必须整体翻转**
 
 ### D. ⚠️ 插件测试夹具里指向上游 app 的（**多半不能改**）
@@ -66,12 +66,12 @@
 - `plugin-manager/dshbox-plugins/assets/plugins/mobile-pilot/test/device-readings.test.mjs:135`
   ——描述**真机上装着的 DSHBox**（`com.dshbox.app`）的状态。
   **那是上游 app，不是我们**；改了就是伪造测试夹具。
-- `.../pilot-tools.test.mjs:203`：`app.launch({ package: 'com.dshbox.app' })`
+- `.../pilot-tools.test.mjs:203`：`app.launch({ package: 'com.dshfusion.app' })`
   ——它在测「按包名启动应用」这个能力，用哪个包名是夹具选择。**需要逐个判断**。
 
 ### E. ⚠️ 登记文件里的**历史陈述**（**不能改**）
 
-- `governance/divergences.json`：「applicationId 由 `com.dshbox.app` 改为 `com.dshfusion.app`」
+- `governance/divergences.json`：「applicationId 由 `com.dshfusion.app` 改为 `com.dshfusion.app`」
   ——这是**历史事实**。改掉它等于篡改偏离记录。
 - `governance/dsha-imports.json` 的 `why` 字段里的同类叙述。
 

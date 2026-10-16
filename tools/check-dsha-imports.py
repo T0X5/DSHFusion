@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "governance" / "dsha-imports.json"
 
 # 导入副本所在的源码根。这里出现的 `.java` 一律视为 DSHA 的副本，
-# DSHFusion 自己写的代码是 Kotlin（com.dshbox.app.*），不在这些目录里。
+# DSHFusion 自己写的代码是 Kotlin（com.dshfusion.app.*），不在这些目录里。
 IMPORT_ROOT = ROOT / "backup" / "src"
 
 

@@ -25,7 +25,7 @@
         "upstream_path": "app/src/main/java/com/deepseekharness/app/util/BackupScope.java",
         "upstream_bytes": 8331,
         "upstream_sha256": "ea0de66bb47cdd3e1b5de80fcc671b832fce2c8309db73cd99402787ddb97c47",
-        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshBackupScope.kt",
+        "local_path": "backup/src/main/java/com/dshfusion/app/backup/DshBackupScope.kt",
         "kind": "rewritten",
         "kept": [
           "四个范围与前缀互不相同的结构（FULL/SESSIONS/SETTINGS/PLUGINS）",
@@ -42,7 +42,7 @@
           "合并位置与读取起点改为**显式成对**的数据类（DSHA 是两个平行数组，只靠注释保证一一对应；它的单测也只比长度，挡不住顺序错位）"
         ],
         "why": "DSHA 的 BackupScope 深度绑定它自己的 i18n 子系统与自建插件管理目录，原样搬会连带引入一整条语言服务、并备份一堆本仓库不存在的路径。保留不变式、按本仓库实证布局重写，是这里唯一说得通的融合方式。",
-        "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshBackupScopeTest.kt"
+        "verified_by": "backup/src/test/java/com/dshfusion/app/backup/DshBackupScopeTest.kt"
       },
       {
         "upstream_path": "app/src/test/java/com/deepseekharness/app/backup/GuestDataResolverTest.java",
@@ -451,11 +451,11 @@
           ],
           "must_contain": [
             {
-              "path": "backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRetention.java",
+              "path": "backup/src/main/java/com/dshfusion/app/backup/DshAutomaticBackupRetention.java",
               "text": "OPERATION"
             },
             {
-              "path": "backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRetention.java",
+              "path": "backup/src/main/java/com/dshfusion/app/backup/DshAutomaticBackupRetention.java",
               "text": "COMPLETE"
             }
           ]
@@ -524,7 +524,7 @@
               "text": "BackupPreview"
             },
             {
-              "path": "backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java",
+              "path": "backup/src/main/java/com/dshfusion/app/backup/HostRestoreTransaction.java",
               "text": "BackupPreview"
             }
           ]
@@ -540,7 +540,7 @@
           ],
           "must_contain": [
             {
-              "path": "backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java",
+              "path": "backup/src/main/java/com/dshfusion/app/backup/HostRestoreTransaction.java",
               "text": "HostDataTransaction"
             }
           ]
@@ -556,7 +556,7 @@
           ],
           "must_contain": [
             {
-              "path": "backup/src/main/java/com/dshbox/app/backup/DshBackupScope.kt",
+              "path": "backup/src/main/java/com/dshfusion/app/backup/DshBackupScope.kt",
               "text": "\".dsh/profiles\""
             }
           ]
@@ -589,7 +589,7 @@
           ],
           "must_contain": [
             {
-              "path": "app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+              "path": "app/src/main/java/com/dshfusion/app/service/SandboxService.kt",
               "text": "BundledRuntimeInstaller"
             }
           ]
@@ -665,7 +665,7 @@
           ],
           "must_contain": [
             {
-              "path": "backup/src/main/java/com/dshbox/app/backup/DshBackupScope.kt",
+              "path": "backup/src/main/java/com/dshfusion/app/backup/DshBackupScope.kt",
               "text": "\".dsh/profiles\""
             }
           ]
@@ -681,7 +681,7 @@
           ],
           "must_contain": [
             {
-              "path": "plugin-manager/src/main/java/com/dshbox/pluginmanager/safety/GuardState.kt",
+              "path": "plugin-manager/src/main/java/com/dshfusion/pluginmanager/safety/GuardState.kt",
               "text": "plugin-guard"
             }
           ]
@@ -737,94 +737,94 @@
     "note": "本仓库自己写的、**不对应任何上游文件**的文件。单列一段，不混进 derived（derived 的语义是「改写了上游的什么」，而这些文件根本没有上游对应物）。**这一段的另一个作用是否定性的**：`:backup` 模块里并非所有文件都来自 DSHA，把自写文件显式列出来，才能挡住「backup/ 底下都是 DSHA 的」这个错误信念。",
     "items": [
       {
-        "local_path": "backup/src/test/java/com/dshbox/app/backup/CredentialProjectionCodesTest.kt",
+        "local_path": "backup/src/test/java/com/dshfusion/app/backup/CredentialProjectionCodesTest.kt",
         "why": "上游 CredentialProjectionTest 对 5 种坏输入只断言 startsWith(\"CREDENTIAL_PROJECTION_\")，只能证明「被拒绝了」，证明不了「因为正确的原因被拒绝」。这条按**实测**的具体错误码逐条钉住，并如实记录 anchor/tag/deep-nesting 三类实际抛 _FAILED（读源码会推成 _ALIAS/_TAG/_LIMIT，三个全错）。",
         "verified_by": "tools/check-credential-projection.java（本机与 CI 真跑）"
       },
       {
-        "local_path": "backup/src/main/java/com/dshbox/app/backup/HostRestoreMapping.java",
+        "local_path": "backup/src/main/java/com/dshfusion/app/backup/HostRestoreMapping.java",
         "why": "阶段 2.4b 的落点：逻辑根 → 本机路径（user-data/.dsh）。**不是移植** —— DSHA 的 NativeRestoreTargets 不可复用，最强理由不是「依赖 android」而是**逻辑根词汇不同**：它第一句就读 root 的 logicalKind，而我们的根（BackupSource.description()）只有 id/scope/external，会直接抛。写成 Java 而非 Kotlin 是刻意的：本机没有 kotlinc，只有 Java 侧能真编译真跑。",
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真跑，含端到端往返）"
       },
       {
-        "local_path": "backup/src/test/java/com/dshbox/app/backup/HostRestoreMappingTest.java",
+        "local_path": "backup/src/test/java/com/dshfusion/app/backup/HostRestoreMappingTest.java",
         "why": "上面那个映射的测试。最重要的两条是**串起来**与**注入**：① 用我们自己的 HostSnapshot 打归档、再用我们自己的 mapping 预检并构建候选 —— 2.1 → 2.4a → 2.4b 第一次端到端跑通（「两个模块各自的单测都过」证明不了它们能对接）；② 预检之后改动活动目录，构建候选必须报 TARGET_CHANGED 且**不留下候选树**。",
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真跑）"
       },
       {
-        "local_path": "backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java",
+        "local_path": "backup/src/main/java/com/dshfusion/app/backup/HostRestoreTransaction.java",
         "why": "阶段 2.4b-② 的**适配层**：把我们的 NativeRestorePlan（候选树 task/candidate/<group>、plan.before）接到上游的 HostDataTransaction（Targets/Settings/Fault）上。**不是移植，也不是重写** —— 上游那个类逐字节导入，这里只做词汇映射，并补上上游**没有**的 CROSS_DEVICE 检查（跨文件系统时 move 退化成拷贝、原子性静默消失）。设置轴故意做成「非空就抛 SETTINGS_NOT_SUPPORTED」：我们还没有设置轴，而恒空表的实现会让上游那三处设置断言永远通过（第 30 条）。⚠️ 这个文件的前身 HostRestoreCommit.java 是**手写的 350 行**，理由「上游那个类依赖 ConfigStore/KeyVault」是错的 —— 我没读那个文件就写下了它。已删除，不保留两套。见第 33 条。",
-        "verified_by": "backup/src/test/java/com/dshbox/app/backup/HostRestoreTransactionTest.java"
+        "verified_by": "backup/src/test/java/com/dshfusion/app/backup/HostRestoreTransactionTest.java"
       },
       {
-        "local_path": "backup/src/test/java/com/dshbox/app/backup/HostRestoreTransactionTest.java",
+        "local_path": "backup/src/test/java/com/dshfusion/app/backup/HostRestoreTransactionTest.java",
         "why": "上面那个适配层的**集成**测试。上游的 HostDataTransactionTest 测的是它自己（自搭的 sessions/settings 两根 + DiskSettings），证明不了「我们接得上」：① 我们的候选树路径与上游 candidate(id) 同构吗；② plan.before 能直接当 expectedBefore 吗；③ 适配层自己加的 CROSS_DEVICE 真的会在动任何东西之前拦下吗（上游没有这条检查，永远测不到）。故障注入用上游的**命名边界** Fault.boundary(name)，不用计数 —— 计数那套我踩过（第 31 条）。另有一条专门测「非空设置必须被拒绝」，防止设置轴变成没有输入空间的断言。",
         "verified_by": "tools/run-backup-jvm-tests.sh"
       },
       {
-        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRetention.java",
+        "local_path": "backup/src/main/java/com/dshfusion/app/backup/DshAutomaticBackupRetention.java",
         "why": "阶段 2.5 的**保留策略**（保留最新 3 份）。**必须自写，不能抄上游的 AutomaticBackupPruner** —— 上游的自动备份是「一个目录 + 四个具名成员」（portable.dshbak / verified.json / operation.json / source-checks），我们的是**单文件** DSHDATA 容器。抄过来的后果不是「命名对不上」那么轻，而是**它一条都不会删**（静默的空操作，长得和「确实没有需要删的」一模一样）。这条结论有可证伪的形式：测试里把上游那套判据跑在我们的命名上，断言它什么都不删。另外三条比上游更严：只碰 operation=MAINTENANCE（手动 EXPORT / 救援 RESCUE 永不入候选）；证明不了完整的 PARTIAL/BEST_EFFORT **既不计数也不删，而且要报出来**（上游是静默 continue）；keep 小于 1 时按 1 处理（不允许「全删」）。",
-        "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshAutomaticBackupRetentionTest.java"
+        "verified_by": "backup/src/test/java/com/dshfusion/app/backup/DshAutomaticBackupRetentionTest.java"
       },
       {
-        "local_path": "backup/src/test/java/com/dshbox/app/backup/DshAutomaticBackupRetentionTest.java",
+        "local_path": "backup/src/test/java/com/dshfusion/app/backup/DshAutomaticBackupRetentionTest.java",
         "why": "上面那个的测试，7 条。最关键的一条是 upstreamPrunerJudgementMatchesNothingOfOurs —— 把「不能直接抄上游 pruner」从一个**说法**变成一个**会红的实验**（事故表第 28 条：审计结论也要能被证伪）。它同时断言我们的策略**确实会删** —— 否则那条用例证明的只是「两边都不删」，成了一个两边都绿、什么也没区分开的断言。",
         "verified_by": "tools/run-backup-jvm-tests.sh"
       },
       {
-        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshBackupExporter.java",
+        "local_path": "backup/src/main/java/com/dshfusion/app/backup/DshBackupExporter.java",
         "why": "导出编排：把「范围成员」翻译成 `BackupSource`、调上游的 `HostSnapshot.create`、把产物移出任务目录。**容器格式、逐文件校验、完整性判定一行都没有重写**（硬约束 2）。写成 Java 是为了本机真跑 —— 它决定「到底把哪些东西写进了归档」，是本模块第三段会泄数据/毁数据的路径（前两段是恢复的落点与提交回切）。成员与排除清单都是**参数**（纯数据 + `FileBackupSource.Policy` 回调），因为范围的词汇在 Kotlin 侧 —— 若在这里 import 它们，这一层就退化回「只有 CI 能验」。",
-        "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshBackupExporterTest.java（12 条）"
+        "verified_by": "backup/src/test/java/com/dshfusion/app/backup/DshBackupExporterTest.java（12 条）"
       },
       {
-        "local_path": "backup/src/test/java/com/dshbox/app/backup/DshBackupExporterTest.java",
+        "local_path": "backup/src/test/java/com/dshfusion/app/backup/DshBackupExporterTest.java",
         "why": "上面那个的 14 条本机测试。两条最要紧的都**先自证前提成立**再断言性质：① 排除清单那一条先证明「回调真的被调用过且看得到 credentials」，否则 `assertFalse(内容不在归档里)` 在「策略压根没被调用」时**也是绿的**（第 30 条）；② 「路径出现在归档里」不等于「内容进了归档」—— 被排除项仍会留下一条`kind=EXCLUDED` 的元数据记录（没有载荷），这是有意的：「这次备份漏了什么」必须能从归档里读出来。我第一版就是断言「路径不许出现」，于是它把正确实现判失败了，而失败信息长得像「排除功能坏了」（第 32 条的同族）。\n\n另有两条钉**坐标系**：`Policy.exclusion` 给的是「相对成员根」的路径（`credentials`），而 `DshBackupExclusions.isExcluded` 收的是「相对 user-data」的（`.dsh/credentials`）。**两套坐标系差一个前缀，少了拼接则排除一条都不命中、且不报任何错** —— 归档里安静地带上机器本地凭据，所有计数与完整性判定照常通过。所以拼接放在本机可跑的 Java 层，并用「真实跑一条 `.dsh` 成员」的用例钉住（直接单测 `join` 只能证明拼接函数对，证明不了它真的接在了链路上）。",
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真编译真运行，14 条）"
       },
       {
-        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshBackupExportBridge.kt",
+        "local_path": "backup/src/main/java/com/dshfusion/app/backup/DshBackupExportBridge.kt",
         "why": "把 Kotlin 侧的范围与排除清单接到 Java 侧的导出编排上。`DshBackupExporter` **故意不认识** `DshBackupScope`/`DshBackupExclusions` —— 一旦被它 import，本机（没有 kotlinc）就编不了、跑不了，而它是最该本机验的一层。翻译只有三处决策，每处都可能静默出错：① `v5Scope` 直接取 `DshBackupMember.v5Scope`（不自己拼字符串）；② `external` 恒为 `false` —— 它决定容器的 integrity 字段，而**保留策略正是按那个字段决定删不删**；③ 谓词收的是 user-data 相对路径，**不许在这里提前拼成员前缀** —— 两边都拼一次会让排除清单一条都不命中且不报任何错。",
         "verified_by": "tools/verify-phase0.sh 的 5r 节里与该桥有关的全部断言"
       },
       {
-        "local_path": "app/src/main/java/com/dshbox/app/ui/settings/BackupScreen.kt",
+        "local_path": "app/src/main/java/com/dshfusion/app/ui/settings/BackupScreen.kt",
         "why": "导出界面（阶段 2.6 第 ④ 段）。三处刻意的选择：① 产物先写进 `cacheDir` 下的独占任务目录再交给 MediaStore —— 上游硬断言要求 `archive.parentFile` 等于任务目录，而任务目录又不许落在源之内；② 走 MediaStore 的下载集合（API 29+ 分区存储下**不需要任何权限**），`IS_PENDING` 起头、写完置 0，别的应用看不到半成品；③ `runExport` 与 Compose 无关，`ExportOutcome` 里**不许有** Composable 成员 —— 结果类型不该依赖「怎么显示」。该文件**不在 i18n 的硬编码扫描之外**：它引用的每个 `backup_*` 文案键在六份资源里都在，由 5t 节断言。\n\n⚠️ 这里**故意不写断言条数**：先写了「9 条」，实际是 13 条，改完又变成 17 条 —— 数字写在文档里会漂，而且没人会发现。要数就 awk 切出那两节数一遍（第 27 条）。",
         "verified_by": "tools/verify-phase0.sh 的 5t 节**全部断言**（含两条故障注入）+ tools/i18n_check.sh + tools/check-kotlin-hazards.py"
       },
       {
-        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshRestoreOrchestrator.java",
+        "local_path": "backup/src/main/java/com/dshfusion/app/backup/DshRestoreOrchestrator.java",
         "why": "恢复编排：`inspect`（只读预检）→ `prepare`（只读地建候选、重验目标）→ `commit`（换入）。它只做**顺序**，不做**逻辑** —— 落点在 `HostRestoreMapping`、平行候选与校验在 `NativeRestorePlan`、五相位标记与回切在 `HostRestoreTransaction`，每段都有各自的测试。写成 Java 是因为这是会毁数据的那条路径，只让 CI 编译它太贵。收纯数据（`HostRestoreMapping.Member` + `selectedScopes`），不 import Kotlin 类型。\n\n⚠️ `selectedScopes` 是**安全属性**：上游把 `selected` 当范围名集合，而 `\"application\"` 在它里面是**通配符** —— 图省事传它，会让「用户选了会话、却拿到一份全量归档」时把设置与插件也一起恢复进去。所以它只能来自用户选的范围。\n\n任务目录由编排自己建 UUID 子目录：上游校验目录名形状，而「你必须记得拼 UUID」的接口是注定会被用错的（我自己的测试第一次就 `TASK_NAME_NOT_UUID`）。\n\n**还有一处是上游的错误码不够明确**：实测三种坏法 —— 截断到一半抛出的异常 message 是 **null**（`garbage` 是 `ARCHIVE_VERSION`、翻一个字节是 `RECORD_CHECKSUM`/`ARCHIVE_FOOTER`）。而界面把 `error.message` 原样显示给用户，于是**最可能发生的那种损坏**（拷贝中断、空间不足、传输截断）会显示成一句空话。修在这里而不是上游：`NativeRestorePlan` 是逐字节导入的副本，改它就没法逐字节核验了；而「给用户看一个能对照的错误码」本来就是适配层的活。",
-        "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshRestoreOrchestratorTest.java（本机真跑）；tools/verify-phase0.sh 的 5u 节"
+        "verified_by": "backup/src/test/java/com/dshfusion/app/backup/DshRestoreOrchestratorTest.java（本机真跑）；tools/verify-phase0.sh 的 5u 节"
       },
       {
-        "local_path": "backup/src/test/java/com/dshbox/app/backup/DshRestoreOrchestratorTest.java",
+        "local_path": "backup/src/test/java/com/dshfusion/app/backup/DshRestoreOrchestratorTest.java",
         "why": "上面那个的行为测试。两条特别值得留：① `inspectAndPrepareDoNotTouchExistingData` 对目标树**逐文件取摘要**，在 inspect 与 prepare 之后各比一次，并在 commit 之后断言摘要**必须变了** —— 少了最后那半句，前两条会在「恢复其实什么都没做」时也绿；② `changedTargetBetweenInspectAndPrepareIsRefused` 证明上游的 `TARGET_CHANGED` 真的接在了链路上，少接一步，用户在这段时间里的改动会被静默覆盖。",
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真编译真运行，13 条）"
       },
       {
-        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRunner.java",
+        "local_path": "backup/src/main/java/com/dshfusion/app/backup/DshAutomaticBackupRunner.java",
         "why": "自动备份：到期判定 → 导出 → 保留策略。把三个各自有测试的东西接起来（`AutomaticBackupPolicy` 逐字节导入 / `DshBackupExporter` / `DshAutomaticBackupRetention`），**自己不重新实现其中任何一条**。\n\n**顺序是它存在的理由：先导出、后清理。** 反过来在导出失败时会**净损失**（旧的被删了、新的没生成）；先导出后清理，最坏只是多留一份旧备份。\n\n它还要**读每份归档的清单**（保留策略的判据是归档自己声明的 `operation`/`integrity`），所以必须容忍「某一份读不了」：读不了的**既不删也不计数**，如实报出来 —— 否则一份半截的归档会占掉「保留 3 份」里的一个位置，把一份好的挤掉。\n\n收纯数据，不 import Kotlin 类型（`archiveName` 由调用方按范围给 —— 那条「部分备份不能用全量名字」的不变式在 `DshBackupScope` 里，绕过去等于废掉它）。",
-        "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshAutomaticBackupRunnerTest.java（本机真跑）；tools/verify-phase0.sh 的 5u 节"
+        "verified_by": "backup/src/test/java/com/dshfusion/app/backup/DshAutomaticBackupRunnerTest.java（本机真跑）；tools/verify-phase0.sh 的 5u 节"
       },
       {
-        "local_path": "backup/src/test/java/com/dshbox/app/backup/DshAutomaticBackupRunnerTest.java",
+        "local_path": "backup/src/test/java/com/dshfusion/app/backup/DshAutomaticBackupRunnerTest.java",
         "why": "上面那个的 11 条行为测试。两条最要紧：① `aFailedExportDeletesNothing` —— 造 5 份旧备份、让导出撞名失败、断言**一份不少**（这是「先导出后清理」的行为证据）；② `unreadableArchivesAreNeitherDeletedNorCountedButAreReported` —— 一份读不了的归档不许参与计数（否则它会把一份好的挤掉，那是静默的数据损失）。\n\n⚠️ 我在这份测试里**两次数错了自己造的数据**：`NOW` 常量的年份算错、以及把 4 份自动备份写成「2 旧 + 1 新」。两次红的都是我的算术，不是实现（第 27 条同族）。",
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真编译真运行，11 条）"
       },
       {
-        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshHostPaths.java",
+        "local_path": "backup/src/main/java/com/dshfusion/app/backup/DshHostPaths.java",
         "why": "交给 `BackupFileSystem` 的宿主路径必须先规范化（解析掉符号链接）。\n\n`AndroidBackupFileSystem`（逐字节导入自 DSHA）逐级用 `O_PATH | O_NOFOLLOW` 走父目录，并要求每级 `S_ISDIR` —— 父链里有**任何一级是符号链接**就抛 `PARENT_LINK`。而 Android 上 `/data/user/0` **就是指向 `/data/data` 的符号链接**，`Context.getCacheDir()`/`getFilesDir()` 返回的正是那条路径。\n\n**这是真机上第一次点导出就红了的 bug**（`导出失败：PARENT_LINK`），根因是导出/恢复编排用了 `getAbsoluteFile()` —— 它只保证绝对路径、不解析链接。`HostRestoreMapping` 用的是 `getCanonicalFile()`，所以它没踩到。\n\n顺带修掉一条**安全侧漏**：`isInside` 这类包含关系判定也必须两边规范化，否则「源是 `/data/data/a`、任务目录是 `/data/user/0/a/task`」会被判成「不在源之内」，`TASK_INSIDE_SOURCE` 那条守卫**静默失效**。",
-        "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshHostPathsTest.java（用真符号链接，5 条）"
+        "verified_by": "backup/src/test/java/com/dshfusion/app/backup/DshHostPathsTest.java（用真符号链接，5 条）"
       },
       {
-        "local_path": "backup/src/test/java/com/dshbox/app/backup/DshHostPathsTest.java",
+        "local_path": "backup/src/test/java/com/dshfusion/app/backup/DshHostPathsTest.java",
         "why": "上面那个的 5 条测试，**用真符号链接**（`Files.createSymbolicLink`）造夹具 ——本机的 `/tmp` 上任何一级都不是链接，所以不造夹具就复现不了这个 bug 的成因。\n\n每条都**先自证前提**：两条路径字符串不同、且确实指同一处。少了这一步，在一台「建不出符号链接」的机器上整套会**静默通过**。\n\n⚠️ 我在这份测试里**连续写错三次断言**，三次都是同一个病：\n① 断言「产物路径含 `/real/`」—— 而产物在**任务目录**下，不在源下面；\n② 断言「产物在任务目录下」—— 而 `Exported.archive` 是**移出去之后的目标文件**；\n③ 才改成让**目标本身**经符号链接表示（那才是可观测的）。\n**我在断言一个我没有先确认「它到底在哪」的路径。**",
         "verified_by": "tools/run-backup-jvm-tests.sh（本机真编译真运行，5 条）"
       },
       {
-        "local_path": "backup/src/main/java/com/dshbox/app/backup/DshCredentialsSource.java",
+        "local_path": "backup/src/main/java/com/dshfusion/app/backup/DshCredentialsSource.java",
         "why": "把**凭据投影**施加到一棵树里的**那一个文件**上。\n\n为什么不能直接用上游的 `CredentialFileBackupSource`：它对**拿到的每一个 item** 做投影，并硬性要求「源里只有一个文件、路径为空」。所以它只能套在「**根就是凭据文件**」的源上 ——\n而那样凭据文件就成了**独立的根**，恢复目标（`.dsh/.credentials.yaml`）落在另一个根（`.dsh`）的目标**之内**。上游 `HostDataTransaction` 用**路径前缀**判目标重叠，直接抛 `OVERLAPPING_TARGETS` —— **真机上就是这么红的**（在用户点过「确认恢复」之后）。\n\n所以改成：一个根，投影在**树内部按路径**施加。这个类包在整棵 `.dsh` 树外面，只对路径等于 `CredentialProjection.FILE` 的 item 动手，其余**原样透传**。\n\n与上游那层共享两条语义：**token 里同时绑原始与投影后的哈希**（读取时先验原始没变、再验投影一致），**大小记投影后的长度**。少了任何一半，「读的时候文件已经变了」都会静默产出一份不一致的归档。",
-        "verified_by": "backup/src/test/java/com/dshbox/app/backup/DshBackupExporterTest.java 的 credentialsAreProjectedAndNeverIncludedVerbatim（三条断言，第三条「只出现一次」是关键）"
+        "verified_by": "backup/src/test/java/com/dshfusion/app/backup/DshBackupExporterTest.java 的 credentialsAreProjectedAndNeverIncludedVerbatim（三条断言，第三条「只出现一次」是关键）"
       }
     ]
   }

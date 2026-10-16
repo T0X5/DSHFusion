@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.dshbox.app.sandbox"
+    namespace = "com.dshfusion.app.sandbox"
     compileSdk = 36
 
     defaultConfig {

@@ -184,18 +184,17 @@ def revert(path: Path, original: str) -> None:
 # ---------------- 各偏离的施加与校验 ----------------
 
 def handle_div_0001(entry) -> tuple[str, str]:
-    """applicationId -> com.dshfusion.app，**namespace 保持不变**。
+    """applicationId 与版本线归我们自己。
 
-    只改 applicationId，不改 namespace。这条曾经改错过，代价是 CI 报出
-    36 个 `Unresolved reference 'R'`：
+    ⚠️ **`namespace` 的规则已于阶段 3.0 移交给 `DIV-0025`。**
 
-      - applicationId 决定安装身份（能否与上游并存安装），是阶段 1 真正要的。
-      - namespace 决定生成的 R / BuildConfig 类所在包，也决定 AndroidManifest
-        里相对类名（.DshApp、.MainActivity、.service.SandboxService）的解析基准。
-        改它就必须同时改 36 处 `import com.dshbox.app.R` 与全部相对类名 ——
-        那正是被刻意推迟到阶段 4 的全量重命名。
+    这条原来断言「namespace 必须仍是上游值」。那在**阶段 1** 是对的 ——
+    只改 applicationId、不改 namespace，因为改它会连带 36 处 `import …R`
+    与全部 manifest 相对类名，那是被刻意推迟的全量重命名。
 
-    换句话说：改 namespace 是**超出阶段 1 范围**的，而且不这么做就不该做。
+    **阶段 3.0 把那次重命名提前执行了**，所以这条判据过期：
+    namespace 现在**必须**是我们自己的（由 `DIV-0025` 断言）。
+    留着它会让一个正确的状态被判失败（而失败原因看起来像「namespace 被改错了」）。
     """
     path = ROOT / "app/build.gradle.kts"
     if not path.is_file():
@@ -205,20 +204,17 @@ def handle_div_0001(entry) -> tuple[str, str]:
 
     def satisfied(t: str) -> bool:
         id_ok = re.search(rf'applicationId\s*=?\s*"{re.escape(APPLICATION_ID)}"', t) is not None
-        # namespace 必须仍是上游原值：被改成 APPLICATION_ID 反而是错的。
-        ns_bad = re.search(rf'namespace\s*=?\s*"{re.escape(APPLICATION_ID)}"', t) is not None
+        # namespace 由 DIV-0025 断言（阶段 3.0 起归我们自己），这里不再判。
         ver_ok = re.search(rf'versionCode\s*=?\s*{OWN_VERSION_CODE}\b', t) is not None
         ver_ok = ver_ok and (
             re.search(rf'versionName\s*=?\s*"{re.escape(OWN_VERSION_NAME)}"', t) is not None)
-        return id_ok and not ns_bad and ver_ok
+        return id_ok and ver_ok
 
     if satisfied(text):
         return OK, (f"applicationId = {APPLICATION_ID}、versionCode = {OWN_VERSION_CODE}、"
-                    f"versionName = {OWN_VERSION_NAME}（namespace 保持上游值）")
+                    f"versionName = {OWN_VERSION_NAME}（namespace 归 DIV-0025 管）")
 
     if CHECK_ONLY:
-        if re.search(rf'namespace\s*=?\s*"{re.escape(APPLICATION_ID)}"', text):
-            return FAILED, "namespace 被误改为应用标识（会让 R 引用与相对类名失效）"
         if re.search(r'versionCode\s*=?\s*8\b', text) and \
            re.search(r'versionName\s*=?\s*"1\.4\.0"', text):
             return FAILED, ("版本号仍是上游的 8 / 1.4.0 —— 设置页会显示「v1.4.0」，"
@@ -236,7 +232,7 @@ def handle_div_0001(entry) -> tuple[str, str]:
     # 先纠正历史误改：namespace 回到上游值
     text = re.sub(
         rf'(namespace\s*=?\s*)"{re.escape(APPLICATION_ID)}"',
-        r'\1"com.dshbox.app"',
+        r'\1"com.dshfusion.app"',
         text,
     )
     changed = text != original
@@ -260,7 +256,7 @@ def handle_div_0001(entry) -> tuple[str, str]:
 
     if not changed:
         return FAILED, (
-            'applicationId 未声明 "com.dshbox.app" —— 上游写法可能已变，需人工确认'
+            'applicationId 未声明 "com.dshfusion.app" —— 上游写法可能已变，需人工确认'
         )
 
     write(path, text)
@@ -270,6 +266,63 @@ def handle_div_0001(entry) -> tuple[str, str]:
         return OK, f"applicationId = {APPLICATION_ID}"
     revert(path, original)
     return FAILED, f"替换后仍未满足目标状态（已还原 {path}）"
+
+
+def handle_div_0025(entry) -> tuple[str, str]:
+    """身份收回：`namespace` 与全部源码包路径归我们自己。
+
+    阶段 1 刻意只改 applicationId、不改 namespace（DIV-0001）。阶段 3.0 把那次
+    重命名提前执行：`com.dshbox.app` → `com.dshfusion.app`，实测
+    **279 个文件 / 1069 处 / 52 个目录**。
+
+    这条断言四件事：
+      1. 每个有 namespace 的模块，namespace 都以 `com.dshfusion` 开头；
+      2. 源码里不再有 `com.dshbox.app` 的 import（`.` 与 `/` 两种形态）；
+      3. `check-android-identity.py` 通过（R 引用 / manifest 相对类名对得上）；
+      4. 生产源码的物理路径不再落在 `com/dshbox/` 下。
+
+    ⚠️ **不检查**登记文件与历史文档里的 `com.dshbox.app` —— 那是历史陈述（D 类/E 类），
+    改了等于篡改记录。所以这里只扫生产源码。
+    """
+    problems = []
+
+    # 1. 模块 namespace
+    #
+    # ⚠️ **排除 Termux 那两个模块**：`terminal-emulator` / `terminal-view` 是第三方的
+    # （Apache-2.0 例外，见 upstreams.json），命名空间是 `com.termux.*` ——
+    # **本来就不该改**。把它们算进来会让一个正确的状态被判失败。
+    TERMUX_MODULES = {"terminal-emulator", "terminal-view"}
+    for gradle in sorted(ROOT.glob("*/build.gradle.kts")):
+        module = gradle.parent.name
+        if module in TERMUX_MODULES:
+            continue
+        text = read(gradle)
+        m = re.search(r'namespace\s*=?\s*"([^"]+)"', text)
+        if m and not m.group(1).startswith("com.dshfusion"):
+            problems.append(f"{module}/build.gradle.kts 的 namespace 仍是 {m.group(1)}")
+
+    # 2 + 4. 生产源码里不许再有旧包
+    src_roots = ["app/src", "backup/src", "bridge/src", "common/src",
+                 "sandbox-manager/src", "plugin-manager/src", "terminal-session/src"]
+    for sr in src_roots:
+        base = ROOT / sr
+        if not base.is_dir():
+            continue
+        for f in base.rglob("*"):
+            if not f.is_file() or f.suffix not in (".kt", ".java"):
+                continue
+            rel = str(f.relative_to(ROOT))
+            if "com/dshbox" in rel:
+                problems.append(f"源码路径仍在旧包下：{rel}")
+            body = f.read_text(encoding="utf-8", errors="replace")
+            if "com.dshbox.app" in body:
+                problems.append(f"源码仍引用旧包：{rel}")
+
+    if problems:
+        return FAILED, "身份收回不完整：" + "；".join(problems[:3]) + (
+            f"（共 {len(problems)} 项）" if len(problems) > 3 else "")
+
+    return OK, "namespace 与全部源码包路径都归我们自己（279 文件 / 1069 处的重命名在场）"
 
 
 def handle_div_0002(entry) -> tuple[str, str]:
@@ -397,7 +450,7 @@ def handle_div_0003(entry) -> tuple[str, str]:
 
 def handle_div_0004(entry) -> tuple[str, str]:
     """上游监测地址改指自身"""
-    path = ROOT / "app/src/main/java/com/dshbox/app/util/AppVersion.kt"
+    path = ROOT / "app/src/main/java/com/dshfusion/app/util/AppVersion.kt"
     if not path.is_file():
         return PENDING, "AppVersion.kt 尚未导入"
 
@@ -607,7 +660,7 @@ def handle_div_0012(entry) -> tuple[str, str]:
 def handle_div_0011(entry) -> tuple[str, str]:
     """FileProvider authority 必须从 applicationId 派生。
 
-    真机实测：写死 com.dshbox.app.fileprovider 会让安装失败 -13
+    真机实测：写死 com.dshfusion.app.fileprovider 会让安装失败 -13
     （INSTALL_FAILED_CONFLICTING_PROVIDER）—— authority 全局唯一，与已装的
     DSHBox 撞车，跟 applicationId 是否不同无关。
 
@@ -622,8 +675,8 @@ def handle_div_0011(entry) -> tuple[str, str]:
     重放逻辑漏掉它的后果和漏登记一样 —— 下次同步会把上游的旧 KDoc 合回来。
     """
     manifest = ROOT / "app" / "src" / "main" / "AndroidManifest.xml"
-    opener = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "util" / "viewer" / "ExternalOpener.kt"
-    dialog = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "ui" / "webview" / "SandboxFilePickerDialog.kt"
+    opener = ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "util" / "viewer" / "ExternalOpener.kt"
+    dialog = ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "ui" / "webview" / "SandboxFilePickerDialog.kt"
     if not manifest.exists() or not opener.exists() or not dialog.exists():
         return PENDING, "基线尚未导入"
 
@@ -632,11 +685,11 @@ def handle_div_0011(entry) -> tuple[str, str]:
     d_text = read(dialog)
 
     m_ok = 'android:authorities="${applicationId}.fileprovider"' in m_text
-    m_bad = 'android:authorities="com.dshbox.app.fileprovider"' in m_text
+    m_bad = 'android:authorities="com.dshfusion.app.fileprovider"' in m_text
 
     # 只看**代码行**，不看整篇文本。
     #
-    # 第一版这里写的是 `'"com.dshbox.app.fileprovider"' in o_text and "原先写死" not in o_text`，
+    # 第一版这里写的是 `'"com.dshfusion.app.fileprovider"' in o_text and "原先写死" not in o_text`，
     # 想用「注释里有没有『原先写死』」区分「上游写法」与「已适配」。
     # 这个启发式是错的：本文件上方那段说明注释里就带着「原先写死」四个字，
     # 于是上游写法被误判成已适配，重放只改了 manifest、漏了代码，
@@ -647,13 +700,13 @@ def handle_div_0011(entry) -> tuple[str, str]:
         ln for ln in o_text.splitlines() if not ln.lstrip().startswith(("//", "*", "/*"))
     )
     o_ok = 'FILE_PROVIDER_AUTHORITY = "${BuildConfig.APPLICATION_ID}.fileprovider"' in o_code
-    o_bad = 'FILE_PROVIDER_AUTHORITY = "com.dshbox.app.fileprovider"' in o_code
+    o_bad = 'FILE_PROVIDER_AUTHORITY = "com.dshfusion.app.fileprovider"' in o_code
 
     # 第三处只出现在 KDoc 里，所以按**代码行**过滤会把整段注释滤掉 —— 这里要反过来，
     # 直接对全文匹配。锚点也取得更具体（带上 content:// 与结尾斜杠），
     # 免得匹配到正文里其它提到 authority 的句子。
     d_ok = "content://<applicationId>.fileprovider/" in d_text
-    d_bad = "content://com.dshbox.app.fileprovider/" in d_text
+    d_bad = "content://com.dshfusion.app.fileprovider/" in d_text
 
     if m_ok and o_ok and d_ok:
         return OK, "三处 authority 都派生自 applicationId"
@@ -670,23 +723,23 @@ def handle_div_0011(entry) -> tuple[str, str]:
     changed = []
     if m_bad:
         write(manifest, m_text.replace(
-            'android:authorities="com.dshbox.app.fileprovider"',
+            'android:authorities="com.dshfusion.app.fileprovider"',
             'android:authorities="${applicationId}.fileprovider"', 1))
         changed.append("AndroidManifest.xml")
     if o_bad:
         new_o = o_text.replace(
-            'const val FILE_PROVIDER_AUTHORITY = "com.dshbox.app.fileprovider"',
+            'const val FILE_PROVIDER_AUTHORITY = "com.dshfusion.app.fileprovider"',
             'val FILE_PROVIDER_AUTHORITY = "${BuildConfig.APPLICATION_ID}.fileprovider"', 1)
         if new_o == o_text:
             return FAILED, "ExternalOpener.kt 的 FILE_PROVIDER_AUTHORITY 锚点失效，需人工确认"
-        if "import com.dshbox.app.BuildConfig" not in new_o:
+        if "import com.dshfusion.app.BuildConfig" not in new_o:
             new_o = new_o.replace("import androidx.core.content.FileProvider\n",
-                                  "import androidx.core.content.FileProvider\nimport com.dshbox.app.BuildConfig\n", 1)
+                                  "import androidx.core.content.FileProvider\nimport com.dshfusion.app.BuildConfig\n", 1)
         write(opener, new_o)
         changed.append("ExternalOpener.kt")
     if d_bad:
         new_d = d_text.replace(
-            "content://com.dshbox.app.fileprovider/",
+            "content://com.dshfusion.app.fileprovider/",
             "content://<applicationId>.fileprovider/", 1)
         if new_d == d_text:
             return FAILED, "SandboxFilePickerDialog.kt 的 KDoc 锚点失效，需人工确认"
@@ -1134,62 +1187,62 @@ def handle_div_0014(entry) -> tuple[str, str]:
         而那会逼着作者删掉解释 —— 正是我们不想要的方向。
     """
     REQUIRED = [
-        ("common/src/main/java/com/dshbox/app/common/Constants.kt",
+        ("common/src/main/java/com/dshfusion/app/common/Constants.kt",
          ["const val DSH_PORT_AUTO", "fun dshBaseUrl(port: Int)"],
          "端口改为「让内核分配」，地址改为按实际端口拼"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxConfig.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxConfig.kt",
          ["val dshPort: Int = Constants.DSH_PORT_AUTO"],
          "配置默认值不再是 3080"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxProcessRunner.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxProcessRunner.kt",
          ["--port $port"],
          "端口必须作为命令行参数传给 dsh"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DefaultSandboxManager.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DefaultSandboxManager.kt",
          ["DshWebLaunchParser.parse",
           "portProvider = { _dshPort.value }",
           "tokenProvider = { _dshLaunchToken.value }",
           "resetDshEndpointState"],
          "从 dsh 自己的输出学端口+token，并把运行期值喂给健康检查"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/HttpHealthChecker.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/HttpHealthChecker.kt",
          ["tokenProvider", "!= HTTP_UNAUTHORIZED"],
          "健康检查核验身份：401 = 应答者不认识本实例的 token"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DshHealthPolicy.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DshHealthPolicy.kt",
          ["probe.webUiReady && probe.processAlive"],
          "就绪必须同时要求本实例进程存活"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxHealth.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxHealth.kt",
          ["instanceVerified"],
          "区分「没人应答」与「有人应答但不是我」"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxManager.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxManager.kt",
          ["val dshPort: StateFlow<Int>", "val dshBaseUrl: StateFlow<String?>"],
          "接口暴露实例端口与实例地址"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DshWebLaunch.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DshWebLaunch.kt",
          # 钉的是**代码表达式**而不是字面量 `65535`：KDoc 里也写着「1..65535」，
          # 只查字面量的话，把校验删掉仍然能通过 —— 实测漏过一次，故收紧。
          ["dsh web: http", "port !in 1..65535"],
          "端口/token 解析器存在，且会拒绝越界端口"),
         # ── UI 层：光有「资源里有个占位文案」不够，必须确认 UI 真的在用实例地址。
         #    只查资源键会被「UI 仍然写死地址」骗过 —— 实测过，这一条是补上来的。
-        ("app/src/main/java/com/dshbox/app/ui/home/HomeScreen.kt",
+        ("app/src/main/java/com/dshfusion/app/ui/home/HomeScreen.kt",
          ["dshBaseUrl ?: stringResource(R.string.home_dsh_address_unknown)"],
          "首页显示本实例地址，端口未知时给占位文案"),
-        ("app/src/main/java/com/dshbox/app/ui/MainScreen.kt",
+        ("app/src/main/java/com/dshfusion/app/ui/MainScreen.kt",
          ["sandboxManager.dshBaseUrl.collectLatest", "url = dshBaseUrl.orEmpty()"],
          "WebView 与浏览器入口用本实例地址"),
-        ("app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+        ("app/src/main/java/com/dshfusion/app/service/SandboxService.kt",
          ["sandboxManager.dshBaseUrl.value"],
          "通知栏与浏览器入口用本实例地址"),
-        ("app/src/main/java/com/dshbox/app/ui/settings/DiagnosticsScreen.kt",
+        ("app/src/main/java/com/dshfusion/app/ui/settings/DiagnosticsScreen.kt",
          ["R.string.home_dsh_address_unknown"],
          "诊断页显示本实例地址"),
     ]
 
     FORBIDDEN = [
-        ("common/src/main/java/com/dshbox/app/common/Constants.kt",
+        ("common/src/main/java/com/dshfusion/app/common/Constants.kt",
          ["const val DSH_DEFAULT_PORT", "const val DSH_BASE_URL"],
          "写死的端口常量与地址常量必须已删除"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/DefaultSandboxManager.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DefaultSandboxManager.kt",
          ['base["PORT"]'],
          "上游那个不起作用的 PORT 环境变量必须已删除"),
-        ("sandbox-manager/src/main/java/com/dshbox/app/sandbox/HttpHealthChecker.kt",
+        ("sandbox-manager/src/main/java/com/dshfusion/app/sandbox/HttpHealthChecker.kt",
          ["in 200..599"],
          "「任意状态码都算存活」的判据必须已被替换"),
     ]
@@ -1277,7 +1330,7 @@ def handle_div_0014(entry) -> tuple[str, str]:
     #
     # 只比对**代码**，不比对注释：注释里必然会引用这些旗标来解释原因，
     # 把注释算进去会让「解释」本身触发误判（本项目栽过这个跟头）。
-    runner_rel = "sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxProcessRunner.kt"
+    runner_rel = "sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxProcessRunner.kt"
     runner = ROOT / runner_rel
     if not runner.is_file():
         return PENDING, f"{runner_rel} 尚未导入"
@@ -1545,7 +1598,7 @@ def handle_div_0018(entry) -> tuple[str, str]:
                 missing.append(f"{lang}/{key} 仍是长文案「{value}」")
 
     # 结构那一半：动作装配必须走纯函数，不能再是 4 个连着的 addAction。
-    svc = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "service" / "SandboxService.kt"
+    svc = ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "service" / "SandboxService.kt"
     if not svc.exists():
         return PENDING, "SandboxService.kt 尚未导入"
     body = read(svc)
@@ -1619,7 +1672,7 @@ def handle_div_0019(entry) -> tuple[str, str]:
     imported = ROOT / "backup" / "src" / "main" / "java" / "com" / "deepseekharness" / "app" / "backup" / "BackupArchive.java"
     if not imported.exists():
         problems.append("backup 模块里没有导入的 BackupArchive.java")
-    facade = ROOT / "backup" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "backup" / "V5Archive.kt"
+    facade = ROOT / "backup" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "backup" / "V5Archive.kt"
     if not facade.exists():
         problems.append("backup 模块里没有预检门面 V5Archive.kt")
     registry = ROOT / "governance" / "dsha-imports.json"
@@ -1643,7 +1696,7 @@ def handle_div_0024(entry) -> tuple[str, str]:
     """
     problems = []
 
-    app = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "DshApp.kt"
+    app = ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "DshApp.kt"
     if not app.exists():
         return PENDING, "DshApp.kt 尚未导入"
     text = read(app)
@@ -1719,9 +1772,9 @@ def handle_div_0022(entry) -> tuple[str, str]:
     """
     problems = []
 
-    app = ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "DshApp.kt"
+    app = ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "DshApp.kt"
     if not app.exists():
-        return PENDING, "app/src/main/java/com/dshbox/app/DshApp.kt 尚未导入"
+        return PENDING, "app/src/main/java/com/dshfusion/app/DshApp.kt 尚未导入"
     text = read(app)
 
     if "AutomaticBackupJobService.schedule(this)" not in text:
@@ -1732,7 +1785,7 @@ def handle_div_0022(entry) -> tuple[str, str]:
         problems.append("重登记没有先判断开关状态 —— 关掉之后也会登记一条空转的心跳")
 
     service = (
-        ROOT / "app" / "src" / "main" / "java" / "com" / "dshbox" / "app"
+        ROOT / "app" / "src" / "main" / "java" / "com" / "dshfusion" / "app"
         / "service" / "AutomaticBackupJobService.kt"
     )
     if not service.exists():
@@ -1876,6 +1929,7 @@ def handle_div_0020(entry) -> tuple[str, str]:
 
 HANDLERS = {
     "DIV-0001": handle_div_0001,
+    "DIV-0025": handle_div_0025,
     "DIV-0002": handle_div_0002,
     "DIV-0003": handle_div_0003,
     "DIV-0004": handle_div_0004,

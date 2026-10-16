@@ -18,7 +18,7 @@ plugins {
 android {
     // 本模块不产出任何资源，namespace 只为满足 AGP；源码包名是 DSHA 原名，
     // 两者不同是**有意的**（见上）。不引用 R，所以不冲突。
-    namespace = "com.dshbox.app.backup"
+    namespace = "com.dshfusion.app.backup"
     compileSdk = 36
 
     defaultConfig {

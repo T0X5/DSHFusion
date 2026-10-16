@@ -422,13 +422,13 @@ void syncDirectory(File directory) throws IOException;    // 持久化屏障
 这条检查要在提交前做，而不是靠「反正都在 `filesDir` 下」这种推断。
 
 > ⚠️ **上游没有这条检查**，所以它补在**适配层**
-> （[`HostRestoreTransaction.java`](../backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java)），
+> （[`HostRestoreTransaction.java`](../backup/src/main/java/com/dshfusion/app/backup/HostRestoreTransaction.java)），
 > 上游的 `HostDataTransaction` 保持逐字节不动。
 
 **实现**：上游 `HostDataTransaction`（315 行）+ `TransactionMarkers`（34 行）
 + `util/Ids`（13 行）**逐字节导入**；上游的 `HostDataTransactionTest`（202 行 / 5 条，
 含一条**真杀子进程**的）**适配后导入**（11 处工具链替换）；
-[`HostRestoreTransaction.java`](../backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java)
+[`HostRestoreTransaction.java`](../backup/src/main/java/com/dshfusion/app/backup/HostRestoreTransaction.java)
 是**本仓库自写**的适配层，只做词汇映射。
 
 **上游比我手写的那份严密在哪（逐条）**：

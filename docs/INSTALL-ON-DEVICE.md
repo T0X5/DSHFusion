@@ -105,7 +105,7 @@ python3 tools/check-apk-identity.py app-debug.apk
 applicationId  : com.dshfusion.app
 versionCode    : 1
 versionName    : 0.1.0
-application    : com.dshbox.app.DshApp
+application    : com.dshfusion.app.DshApp
 authority      : com.dshfusion.app.fileprovider, com.dshfusion.app.shizuku, com.dshfusion.app.androidx-startup
 应用名（android:label = 0x7f0e001f）在各语言下的解析结果：
   ar         = 'DSHFusion'  ✅

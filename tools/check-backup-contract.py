@@ -36,7 +36,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 IMPORTED = ROOT / "backup" / "src" / "main" / "java" / "com" / "deepseekharness" / "app"
-OWN_MAIN = ROOT / "backup" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "backup"
+OWN_MAIN = ROOT / "backup" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "backup"
 TESTS = ROOT / "backup" / "src" / "test"
 
 FAILURES: list[str] = []
@@ -232,8 +232,8 @@ JAVA_MEMBER = re.compile(r'new\s+HostRestoreMapping\.Member\(\s*"([^"]+)"\s*,\s*
 def check_member_table_matches_scope() -> int:
     global MIRRORED_MEMBERS
     problems = 0
-    scope = read(ROOT / "backup" / "src" / "main" / "java" / "com" / "dshbox" / "app" / "backup" / "DshBackupScope.kt")
-    java = read(ROOT / "backup" / "src" / "test" / "java" / "com" / "dshbox" / "app" / "backup" / "HostRestoreMappingTest.java")
+    scope = read(ROOT / "backup" / "src" / "main" / "java" / "com" / "dshfusion" / "app" / "backup" / "DshBackupScope.kt")
+    java = read(ROOT / "backup" / "src" / "test" / "java" / "com" / "dshfusion" / "app" / "backup" / "HostRestoreMappingTest.java")
     kotlin = {}
     for id_, path, merge, scope_name in SCOPE_MEMBER.findall(scope):
         if id_ in kotlin:

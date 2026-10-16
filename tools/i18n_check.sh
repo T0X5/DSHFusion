@@ -171,10 +171,10 @@ scanned = [
 #   - runtime/AptSourceProvisioner.kt、runtime/OnlineRuntimeImportManager.kt、
 #     service/SandboxService.kt：字符串是**写往 guest 的内容**或与 guest 英文输出混排的日志。
 whitelist = [
-    "app/src/main/java/com/dshbox/app/ui/theme/AppLocale.kt",
-    "app/src/main/java/com/dshbox/app/runtime/AptSourceProvisioner.kt",
-    "app/src/main/java/com/dshbox/app/runtime/OnlineRuntimeImportManager.kt",
-    "app/src/main/java/com/dshbox/app/service/SandboxService.kt",
+    "app/src/main/java/com/dshfusion/app/ui/theme/AppLocale.kt",
+    "app/src/main/java/com/dshfusion/app/runtime/AptSourceProvisioner.kt",
+    "app/src/main/java/com/dshfusion/app/runtime/OnlineRuntimeImportManager.kt",
+    "app/src/main/java/com/dshfusion/app/service/SandboxService.kt",
 ]
 cjk = re.compile(r"[\u4e00-\u9fff]")
 hits = 0

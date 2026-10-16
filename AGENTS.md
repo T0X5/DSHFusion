@@ -549,15 +549,15 @@ dshfusion/
 
 | 项目 | 值 | 说明 |
 |---|---|---|
-| 应用标识 | `com.dshfusion.app` | **独立于** `com.dsh.client` 与 `com.dshfusion.app`，可与两者并存安装 |
+| 应用标识 | `com.dshfusion.app` | **独立于** `com.dsh.client` 与 `com.dshbox.app`，可与两者并存安装 |
 | 应用名 | DSHFusion | |
 | 版本号 | `versionCode = 1` / `versionName = 0.1.0` | 独立版本线，不复用上游的 8 / 1.4.0 |
 | 签名 | 独立自建密钥库（DIV-0017） | 固定身份，密钥库走 Actions Secret，**不入库**；不要求、也不使用任何上游发布证书 |
 
-> **阶段 1 刻意不做全量包名重命名。** DSHBox 内部有 721 处 `com.dshfusion.app`
-> 引用，一次性重命名会产生巨大的 diff 并让后续每次上游同步都冲突。
-> 阶段 1 只改 `applicationId`、应用名、版本号与签名 —— 这些是"并存安装"必需的。
-> 完整重命名列为阶段 4 的独立任务。见 [docs/FUSION-PLAN.md](docs/FUSION-PLAN.md)。
+> **阶段 1 刻意没做全量包名重命名**（当时的理由：DSHBox 内部有 721 处 `com.dshbox.app`
+> 引用，一次性重命名会让后续每次上游同步都冲突）。
+> **阶段 3.0 起已提前执行** —— 见 [PHASE3-IDENTITY-RENAME.md](docs/PHASE3-IDENTITY-RENAME.md)
+> 与 `governance/divergences.json` 的 DIV-0025。
 
 ## 构建（阶段 1 完成后生效）
 

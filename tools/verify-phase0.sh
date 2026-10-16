@@ -310,7 +310,7 @@ for scenario in normal drift asset-missing strings-moved brand-intact brand-miss
                 if grep -q 'applicationId = "com.dshfusion.app"' app/build.gradle.kts \
                    && grep -q 'DSHFUSION_RUNTIME_ASSETS' app/build.gradle.kts \
                    && grep -q 'app_name">DSHFusion' app/src/main/res/values/strings.xml \
-                   && ! grep -rq 'WSK-build' app/src/main/java/com/dshbox/app/util/AppVersion.kt; then
+                   && ! grep -rq 'WSK-build' app/src/main/java/com/dshfusion/app/util/AppVersion.kt; then
                     printf '  [PASS] %-52s\n' "场景 normal：改动确实写入文件"
                     PASS=$((PASS + 1)); RESULTS+=("PASS|normal 改动落盘|ok")
                 else
@@ -705,14 +705,17 @@ expect 0 "隐私审计（发布前个人数据泄露）" \
     run_tool tools/privacy_audit.py
 
 # 应用标识一致性。这一条是 CI 打脸后补的：namespace 改错会让 36 个
-# `import com.dshbox.app.R` 编译失败，而且 manifest 的相对类名会在**运行时**
+# `import com.dshfusion.app.R` 编译失败，而且 manifest 的相对类名会在**运行时**
 # 崩 —— 后者编译期不一定报错。本环境跑不了 gradle，但这类错误纯静态可判。
 expect 0 "应用标识一致（namespace 对得上 R 引用与 manifest 相对类名）" \
     run_tool tools/check-android-identity.py
 # 光有检查不够：得证明它真的会失败，否则和没检查一样。
 IDENT_BAK="$(mktemp)"
 cp app/build.gradle.kts "$IDENT_BAK"
-sed -i 's/namespace = "com.dshbox.app"/namespace = "com.dshfusion.app"/' app/build.gradle.kts
+# ⚠️ 注入必须**真的改变** namespace。阶段 3.0 的全树替换曾把这两侧改成同一个值，
+# 于是注入变成空操作而「应当失败」的场景反而通过（套件当场抓住）。
+# 这里注入成**上游值** —— 那正是会让 R 引用（`import com.dshfusion.app.R`）失效的错。
+sed -i 's/namespace = "com.dshfusion.app"/namespace = "com.dshbox.app"/' app/build.gradle.kts
 expect 1 "故障注入：namespace 被改错时必须报错" \
     run_tool tools/check-android-identity.py
 cp "$IDENT_BAK" app/build.gradle.kts
@@ -1024,7 +1027,7 @@ check_scenario() {
 
 check_scenario upstream-id   "applicationId 仍是上游的"
 check_scenario upstream-ver  "版本号仍是上游的"
-check_scenario wrong-ns      "期望在 com.dshbox.app 下"
+check_scenario wrong-ns      "期望在 com.dshfusion.app 下"
 check_scenario wrong-label   "期望 'DSHFusion'"
 # 这一条是真机装不上之后补的：authority 写死成上游的值会让安装失败 -13。
 # 它必须能独立拦住，而不是靠别的断言顺带发现。
@@ -1103,7 +1106,7 @@ python3 tools/check-android-identity.py >/dev/null 2>&1 \
 # 注入：把 manifest 的 authority 改回硬编码，源码检查必须失败
 MF_BAK="$SCRATCH/manifest.bak"
 cp app/src/main/AndroidManifest.xml "$MF_BAK"
-sed -i 's|android:authorities="${applicationId}.fileprovider"|android:authorities="com.dshbox.app.fileprovider"|' \
+sed -i 's|android:authorities="${applicationId}.fileprovider"|android:authorities="com.dshfusion.app.fileprovider"|' \
     app/src/main/AndroidManifest.xml
 if python3 tools/check-android-identity.py >/dev/null 2>&1; then
     fail "注入：manifest authority 改回硬编码，源码检查没拦住"
@@ -1223,11 +1226,11 @@ section "5g. 动态端口与健康检查身份核验（DIV-0014）"
 # **别人**的服务，于是界面把「没起来的实例」显示成「DSH 就绪」；
 # 首页「启动」按钮的条件又是 `sandboxRunning && !dshReady`，被灰掉之后
 # 用户连手动重试的机会都没有。
-CONST_KT="common/src/main/java/com/dshbox/app/common/Constants.kt"
-POLICY_KT="sandbox-manager/src/main/java/com/dshbox/app/sandbox/DshHealthPolicy.kt"
-RUNNER_KT="sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxProcessRunner.kt"
-MGR_KT="sandbox-manager/src/main/java/com/dshbox/app/sandbox/DefaultSandboxManager.kt"
-HC_KT="sandbox-manager/src/main/java/com/dshbox/app/sandbox/HttpHealthChecker.kt"
+CONST_KT="common/src/main/java/com/dshfusion/app/common/Constants.kt"
+POLICY_KT="sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DshHealthPolicy.kt"
+RUNNER_KT="sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxProcessRunner.kt"
+MGR_KT="sandbox-manager/src/main/java/com/dshfusion/app/sandbox/DefaultSandboxManager.kt"
+HC_KT="sandbox-manager/src/main/java/com/dshfusion/app/sandbox/HttpHealthChecker.kt"
 
 if grep -qE 'const val DSH_DEFAULT_PORT|const val DSH_BASE_URL' "$CONST_KT"; then
     fail "Constants.kt 仍有写死的端口/地址常量（DIV-0014 未生效）"
@@ -1252,7 +1255,7 @@ fi
 # `error: unknown option '--patch'` 并退出 —— 真机上 DSH 每次启动都死在这里
 # （process-dsh.log 连续 6 次）。
 # 只查「命令里有没有 --patch」是抓不到它的（坏顺序下照样有），所以必须比下标。
-RUNNER_TEST="sandbox-manager/src/test/java/com/dshbox/app/sandbox/SandboxProcessRunnerTest.kt"
+RUNNER_TEST="sandbox-manager/src/test/java/com/dshfusion/app/sandbox/SandboxProcessRunnerTest.kt"
 ORDER_OK=$(python3 - "$RUNNER_KT" <<'PYORDER'
 import sys, pathlib
 # 只看代码不看注释：注释里必然会引用这些旗标来解释原因，
@@ -1342,7 +1345,7 @@ fi
 # 也就是说，换个看起来更「正规」的健康检查路径，会让判据**永久失败**，
 # 退化成上游踩过的另一个坑（一直未就绪 → 120s 超时 → 销毁进程）。
 # 所以 healthPath 必须保持 "/"，且不能被别处覆盖。
-CFG_KT="sandbox-manager/src/main/java/com/dshbox/app/sandbox/SandboxConfig.kt"
+CFG_KT="sandbox-manager/src/main/java/com/dshfusion/app/sandbox/SandboxConfig.kt"
 if grep -q 'val healthPath: String = "/"' "$CFG_KT"; then
     ok "healthPath 默认值是 /（与 DSH 打印的 URL 路径一致）"
 else
@@ -1503,7 +1506,7 @@ done
 # 结果把**正确的实现**判成了失败（见本次提交的说明）。
 if python3 - <<'PYEOF'
 import re, pathlib, sys
-p = pathlib.Path("app/src/main/java/com/dshbox/app/service/SandboxService.kt")
+p = pathlib.Path("app/src/main/java/com/dshfusion/app/service/SandboxService.kt")
 body = p.read_text(encoding="utf-8")
 if "for (action in dshNotifyActions(dshState))" not in body:
     print("buildNotification 没有按 dshNotifyActions(dshState) 循环装配动作", file=sys.stderr)
@@ -1526,8 +1529,8 @@ fi
 
 # 纯函数本身在不在、单测在不在。单测断言的是四条性质，
 # 不是「实现长什么样」—— 那样写的话重构一次就得改测试。
-NA_KT="app/src/main/java/com/dshbox/app/service/DshNotifyActions.kt"
-NA_TEST="app/src/test/java/com/dshbox/app/service/DshNotifyActionsTest.kt"
+NA_KT="app/src/main/java/com/dshfusion/app/service/DshNotifyActions.kt"
+NA_TEST="app/src/test/java/com/dshfusion/app/service/DshNotifyActionsTest.kt"
 if [ -f "$NA_KT" ] && [ -f "$NA_TEST" ]; then
     missing_assert=""
     for needle in "neverMoreThanThreeActions" "openAndStartAreMutuallyExclusive" \
@@ -1600,8 +1603,8 @@ fi
 
 # 预检的负面用例必须钉**具体错误码**。阶段 2 的验收是「故意投喂损坏备份 →
 # 明确报错」——「明确」就是这个：用户拿到的得是能据以处理的分类。
-V5_TEST="backup/src/test/java/com/dshbox/app/backup/V5ArchiveTest.kt"
-V5_KT="backup/src/main/java/com/dshbox/app/backup/V5Archive.kt"
+V5_TEST="backup/src/test/java/com/dshfusion/app/backup/V5ArchiveTest.kt"
+V5_KT="backup/src/main/java/com/dshfusion/app/backup/V5Archive.kt"
 if [ -f "$V5_TEST" ] && [ -f "$V5_KT" ]; then
     missing_code=""
     for code in PAYLOAD_CHECKSUM ARCHIVE_FOOTER ARCHIVE_VERSION FALSE_COMPLETE \
@@ -1671,8 +1674,8 @@ fi
 section "5l. 备份范围与排除清单（阶段 2.2）"
 # 这一节的每一条都对应一种「看起来成功、其实数据没了」的失败。
 SC_BAD=0
-SC_SCOPE="backup/src/main/java/com/dshbox/app/backup/DshBackupScope.kt"
-SC_EXCL="backup/src/main/java/com/dshbox/app/backup/DshBackupExclusions.kt"
+SC_SCOPE="backup/src/main/java/com/dshfusion/app/backup/DshBackupScope.kt"
+SC_EXCL="backup/src/main/java/com/dshfusion/app/backup/DshBackupExclusions.kt"
 if [ -f "$SC_SCOPE" ] && [ -f "$SC_EXCL" ]; then
     # ① 部分备份绝不叫全量的名字：老版本会按全量恢复，清掉配置与插件
     if grep -q '"DSHFusion-backup-"' "$SC_SCOPE" && grep -q 'isFull' "$SC_SCOPE"; then
@@ -1713,7 +1716,7 @@ if [ -f "$SC_SCOPE" ] && [ -f "$SC_EXCL" ]; then
     fi
     # ⑤ 排除逻辑与范围一一对应的性质必须有单测
     for t in DshBackupScopeTest DshBackupExclusionsTest; do
-        if [ -f "backup/src/test/java/com/dshbox/app/backup/$t.kt" ]; then
+        if [ -f "backup/src/test/java/com/dshfusion/app/backup/$t.kt" ]; then
             ok "$t 在场"
         else
             fail "缺少 $t"
@@ -1985,8 +1988,8 @@ section "5o. 恢复落点：逻辑根 → 本机路径（阶段 2.4b）"
 # 「自写」意味着**没有上游哈希可核**，所以这里只能核行为：
 # ① 它认的是我们自己的归档词汇；② 端到端往返真的跑通；③ 放进来的东西真的会被拒绝。
 
-MAPPING="backup/src/main/java/com/dshbox/app/backup/HostRestoreMapping.java"
-MAPPING_TEST="backup/src/test/java/com/dshbox/app/backup/HostRestoreMappingTest.java"
+MAPPING="backup/src/main/java/com/dshfusion/app/backup/HostRestoreMapping.java"
+MAPPING_TEST="backup/src/test/java/com/dshfusion/app/backup/HostRestoreMappingTest.java"
 
 # ① 映射在场，而且它没有把 DSHA 那套词汇顺手抄进来
 if [ -f "$MAPPING" ] && grep -q 'implements NativeRestorePlan.Mapping' "$MAPPING"; then
@@ -2057,12 +2060,12 @@ fi
 # ③ 注入自证：放宽「谁是上游」之后，检查器**不能**变成瞎的。
 #    上面把 original 里的自写文件从反向扫描里减掉了；一个既不在 files、
 #    也不在 derived、也不在 original 里的 .java 仍然必须变红。
-PROBE="backup/src/main/java/com/dshbox/app/backup/UnregisteredProbe.java"
+PROBE="backup/src/main/java/com/dshfusion/app/backup/UnregisteredProbe.java"
 if [ -e "$PROBE" ]; then
     fail "注入前 $PROBE 就已存在 —— 上一次注入没有清理干净"
     CR_BAD=1
 else
-    printf 'package com.dshbox.app.backup;\npublic final class UnregisteredProbe {}\n' > "$PROBE"
+    printf 'package com.dshfusion.app.backup;\npublic final class UnregisteredProbe {}\n' > "$PROBE"
     if python3 tools/check-dsha-imports.py >/dev/null 2>&1; then
         fail "放进未登记的 .java 后导入核验竟然还是通过 —— 反向扫描已经被放宽成瞎的"
         CR_BAD=1
@@ -2081,7 +2084,7 @@ fi
 # ④ 注入自证：成员表漂移必须被判失败。
 #    「有一条检查」不等于「那条检查会红」（事故表第 16/18/24 条）。
 #    这里把 Java 镜像表里一个成员的 path 改掉，检查器必须报出来；然后复原。
-MEMBER_TEST="backup/src/test/java/com/dshbox/app/backup/HostRestoreMappingTest.java"
+MEMBER_TEST="backup/src/test/java/com/dshfusion/app/backup/HostRestoreMappingTest.java"
 MEMBER_BAK=$(mktemp)
 cp "$MEMBER_TEST" "$MEMBER_BAK"
 if python3 - "$MEMBER_TEST" <<'INJECT'
@@ -2142,13 +2145,13 @@ section "5p. 提交与回切：候选树换进活动目录（阶段 2.4b-②）"
 
 TXN="backup/src/main/java/com/deepseekharness/app/backup/HostDataTransaction.java"
 TXN_TEST="backup/src/test/java/com/deepseekharness/app/backup/HostDataTransactionTest.java"
-ADAPTER="backup/src/main/java/com/dshbox/app/backup/HostRestoreTransaction.java"
-ADAPTER_TEST="backup/src/test/java/com/dshbox/app/backup/HostRestoreTransactionTest.java"
+ADAPTER="backup/src/main/java/com/dshfusion/app/backup/HostRestoreTransaction.java"
+ADAPTER_TEST="backup/src/test/java/com/dshfusion/app/backup/HostRestoreTransactionTest.java"
 CRASH="backup/src/test/java/com/deepseekharness/app/backup/HostTransactionCrashProcess.java"
 
 # ① **只有一套实现。** 手写的那份必须不存在 —— 保留两套正是硬约束 2 要避免的。
-if [ -e "backup/src/main/java/com/dshbox/app/backup/HostRestoreCommit.java" ] \
-   || [ -e "backup/src/test/java/com/dshbox/app/backup/HostRestoreCommitTest.java" ]; then
+if [ -e "backup/src/main/java/com/dshfusion/app/backup/HostRestoreCommit.java" ] \
+   || [ -e "backup/src/test/java/com/dshfusion/app/backup/HostRestoreCommitTest.java" ]; then
     fail "手写的 HostRestoreCommit 又出现了 —— 两套提交实现（硬约束 2）"
     CR_BAD=1
 else
@@ -2368,8 +2371,8 @@ fi
 # `[A-Za-z0-9_]\s*\.\s*new`（旧的那个字符类会匹配 `return` 的最后一个字母，于是把
 # **规则自己推荐的写法**判红）。改完两个方向都要验：
 # ① 真的悬空限定名仍须变红；② 推荐写法必须不再变红。
-DANGLE_PROBE="backup/src/main/java/com/dshbox/app/backup/DanglingProbe.java"
-printf 'package com.dshbox.app.backup;\n\nimport java.io.*;\n\nfinal class DanglingProbe {\n  static String p(File f) throws IOException {\n    return java.nio.file.new String(Files.readAllBytes(f.toPath()));\n  }\n}\n' > "$DANGLE_PROBE"
+DANGLE_PROBE="backup/src/main/java/com/dshfusion/app/backup/DanglingProbe.java"
+printf 'package com.dshfusion.app.backup;\n\nimport java.io.*;\n\nfinal class DanglingProbe {\n  static String p(File f) throws IOException {\n    return java.nio.file.new String(Files.readAllBytes(f.toPath()));\n  }\n}\n' > "$DANGLE_PROBE"
 if python3 tools/check-backup-contract.py >/dev/null 2>&1; then
     fail "注入的悬空限定名没有被判失败 —— 改完规则后它变瞎了"
     CR_BAD=1
@@ -2389,8 +2392,8 @@ fi
 
 section "5q. 自动备份的到期判定与保留策略（阶段 2.5）"
 
-RET="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRetention.java"
-RET_TEST="$ROOT/backup/src/test/java/com/dshbox/app/backup/DshAutomaticBackupRetentionTest.java"
+RET="$ROOT/backup/src/main/java/com/dshfusion/app/backup/DshAutomaticBackupRetention.java"
+RET_TEST="$ROOT/backup/src/test/java/com/dshfusion/app/backup/DshAutomaticBackupRetentionTest.java"
 POLICY="$ROOT/backup/src/main/java/com/deepseekharness/app/util/AutomaticBackupPolicy.java"
 OWNER="$ROOT/backup/src/main/java/com/deepseekharness/app/util/ScheduledBackupOwner.java"
 
@@ -2454,7 +2457,7 @@ RET_INJ() {
     python3 - "$1" <<'PYR'
 import pathlib, sys
 m = sys.argv[1]
-p = pathlib.Path("backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRetention.java")
+p = pathlib.Path("backup/src/main/java/com/dshfusion/app/backup/DshAutomaticBackupRetention.java")
 t = p.read_text(encoding="utf-8")
 subs = {
  "operation": ("if (!OPERATION.equals(archive.operation)) continue;", "// 变异"),
@@ -2585,7 +2588,7 @@ if [[ -f "$ABS" ]]; then
     done
 
     # ②b 导出编排在位，且**不重写容器格式** —— 它只允许调用上游那几个入口。
-    EXP="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExporter.java"
+    EXP="$ROOT/backup/src/main/java/com/dshfusion/app/backup/DshBackupExporter.java"
     if [[ -f "$EXP" ]]; then
         ok "导出编排 DshBackupExporter.java 在位"
         for wanted in 'HostSnapshot.create' 'FileBackupSource' 'fs.move'; do
@@ -2668,7 +2671,7 @@ PYI
     fi
 
     # ②e Kotlin 桥：三处决策都可能静默出错，逐条钉住。
-    BRIDGE="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExportBridge.kt"
+    BRIDGE="$ROOT/backup/src/main/java/com/dshfusion/app/backup/DshBackupExportBridge.kt"
     if [[ -f "$BRIDGE" ]]; then
         ok "范围 → 成员的 Kotlin 桥在位"
         # v5Scope 必须取自 DshBackupMember，不许自己拼字符串
@@ -2854,12 +2857,12 @@ else
     CR_BAD=1
 fi
 
-SCREEN="$ROOT/app/src/main/java/com/dshbox/app/ui/settings/BackupScreen.kt"
+SCREEN="$ROOT/app/src/main/java/com/dshfusion/app/ui/settings/BackupScreen.kt"
 if [[ -f "$SCREEN" ]]; then
     ok "导出界面 BackupScreen.kt 在位"
 
     # ① 它必须真的被挂进设置页，否则是一个没人能打开的界面。
-    if grep -q 'BackupScreen(' "$ROOT/app/src/main/java/com/dshbox/app/ui/settings/SettingsScreen.kt"; then
+    if grep -q 'BackupScreen(' "$ROOT/app/src/main/java/com/dshfusion/app/ui/settings/SettingsScreen.kt"; then
         ok "导出界面已挂进设置页（覆盖式，与 DshUpdateScreen 同一套写法）"
     else
         fail "BackupScreen 没有被任何地方挂载 —— 界面存在但打不开"
@@ -2989,7 +2992,7 @@ else
 fi
 
 # ⑥c 恢复界面（阶段 2.6 第 ⑤ 段的前半）。
-RESTORE="$ROOT/app/src/main/java/com/dshbox/app/ui/settings/RestoreSection.kt"
+RESTORE="$ROOT/app/src/main/java/com/dshfusion/app/ui/settings/RestoreSection.kt"
 if [[ -f "$RESTORE" ]]; then
     ok "恢复界面 RestoreSection.kt 在位"
     if grep -q 'RestoreSection(' "$SCREEN"; then
@@ -3053,7 +3056,7 @@ fi
 #    这一条与 i18n 门禁**不重复**：门禁查的是六份之间一致，
 #    而它能允许「六份都没有某个键」—— 那样界面会在运行时抛。
 MISSING=""
-for key in $(grep -ohE 'R\.string\.(backup|restore)_[a-z_]+' "$SCREEN" "$ROOT/app/src/main/java/com/dshbox/app/ui/settings/RestoreSection.kt" 2>/dev/null | sed 's/R\.string\.//' | sort -u); do
+for key in $(grep -ohE 'R\.string\.(backup|restore)_[a-z_]+' "$SCREEN" "$ROOT/app/src/main/java/com/dshfusion/app/ui/settings/RestoreSection.kt" 2>/dev/null | sed 's/R\.string\.//' | sort -u); do
     for lang in values values-zh values-ar values-es values-fr values-ru; do
         if ! grep -q "name=\"$key\"" "$ROOT/app/src/main/res/$lang/strings.xml"; then
             MISSING="$MISSING $key($lang)"
@@ -3083,7 +3086,7 @@ section "5u. 自动备份的顺序（阶段 2.6 第 ⑥ 段的核心）"
 # **文件根本没被改**（而当时的输出看起来像「注入生效了」）。
 # 语义那一半由上面那条行为测试覆盖 —— 若实现真反过来，它会红。
 # 两半合起来才完整，谁也不替代谁。
-RUNNER="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshAutomaticBackupRunner.java"
+RUNNER="$ROOT/backup/src/main/java/com/dshfusion/app/backup/DshAutomaticBackupRunner.java"
 if [[ -f "$RUNNER" ]]; then
     ok "自动备份运行器 DshAutomaticBackupRunner.java 在位"
     if python3 - "$RUNNER" <<'PYI'
@@ -3117,9 +3120,9 @@ else
 fi
 
 # ── 胶水层：JobService / 设置存储 / 界面 ────────────────────────────────
-SVC="$ROOT/app/src/main/java/com/dshbox/app/service/AutomaticBackupJobService.kt"
-STORE="$ROOT/app/src/main/java/com/dshbox/app/service/AutomaticBackupSettingsStore.kt"
-AUTOUI="$ROOT/app/src/main/java/com/dshbox/app/ui/settings/AutomaticBackupSection.kt"
+SVC="$ROOT/app/src/main/java/com/dshfusion/app/service/AutomaticBackupJobService.kt"
+STORE="$ROOT/app/src/main/java/com/dshfusion/app/service/AutomaticBackupSettingsStore.kt"
+AUTOUI="$ROOT/app/src/main/java/com/dshfusion/app/ui/settings/AutomaticBackupSection.kt"
 for f in "$SVC" "$STORE" "$AUTOUI"; do
     if [[ -f "$f" ]]; then ok "自动备份的胶水层在位：$(basename "$f")"; else fail "缺 $(basename "$f")"; CR_BAD=1; fi
 done
@@ -3278,10 +3281,10 @@ section "5v. 凭据被就地投影（真机泄漏过 API Key，这一节是那�
 # 修的过程里我又错了一次：让凭据文件**单独成根**好套上游那个装饰器，
 # 结果恢复时 `OVERLAPPING_TARGETS`（目标嵌套）。所以现在**一个根 + 内部投影**。
 
-EXCL="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExclusions.kt"
-SCOPE="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupScope.kt"
-EXPORT="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExporter.java"
-CREDSRC="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshCredentialsSource.java"
+EXCL="$ROOT/backup/src/main/java/com/dshfusion/app/backup/DshBackupExclusions.kt"
+SCOPE="$ROOT/backup/src/main/java/com/dshfusion/app/backup/DshBackupScope.kt"
+EXPORT="$ROOT/backup/src/main/java/com/dshfusion/app/backup/DshBackupExporter.java"
+CREDSRC="$ROOT/backup/src/main/java/com/dshfusion/app/backup/DshCredentialsSource.java"
 
 # ① 投影类必须在场，而且**导出编排无条件包它**（不按标志位判断 —— 「忘了包」正是事故形态）。
 if [ -f "$CREDSRC" ]; then
@@ -3375,8 +3378,8 @@ section "5w. 交给文件系统的路径必须规范化（真机上红过两次�
 # 这条规则没法靠「记得」—— 两次都是「我修了想到的那几个参数」而不是「所有路径」。
 # 所以这里把它变成一条**结构性断言**：这两个编排类的**代码**里不许出现
 # `getAbsoluteFile()`（`getCanonicalFile()` 才是对的）。
-for ORCH in "$ROOT/backup/src/main/java/com/dshbox/app/backup/DshBackupExporter.java" \
-            "$ROOT/backup/src/main/java/com/dshbox/app/backup/DshRestoreOrchestrator.java"; do
+for ORCH in "$ROOT/backup/src/main/java/com/dshfusion/app/backup/DshBackupExporter.java" \
+            "$ROOT/backup/src/main/java/com/dshfusion/app/backup/DshRestoreOrchestrator.java"; do
     NAME="$(basename "$ORCH")"
     # ⚠️ 剥注释再查 —— 我在两个文件里都**写注释解释过**「不是 getAbsoluteFile()」，
     # 不剥注释这条检查会被我自己的说明文字命中（同一族问题的第 7 次）。
@@ -3403,7 +3406,7 @@ for SPEC in "DshBackupExporter.java:canonical(userDataDir)" \
             "DshRestoreOrchestrator.java:canonical(taskDir)" \
             "DshRestoreOrchestrator.java:canonical(archive)"; do
     F="${SPEC%%:*}"; PAT="${SPEC#*:}"
-    if grep -q "DshHostPaths.$PAT" "$ROOT/backup/src/main/java/com/dshbox/app/backup/$F"; then
+    if grep -q "DshHostPaths.$PAT" "$ROOT/backup/src/main/java/com/dshfusion/app/backup/$F"; then
         ok "$F 规范化了 ${PAT#canonical(}"
     else
         fail "$F 没有规范化 ${PAT#canonical(} —— 真机上它会以 PARENT_LINK 失败"
@@ -3413,7 +3416,7 @@ done
 
 # 注入：把恢复编排里的 archive 规范化撤掉（**真机上第二次红的那个原状**），上面必须变红。
 W_BAK="$(mktemp)"
-W_SRC="$ROOT/backup/src/main/java/com/dshbox/app/backup/DshRestoreOrchestrator.java"
+W_SRC="$ROOT/backup/src/main/java/com/dshfusion/app/backup/DshRestoreOrchestrator.java"
 cp "$W_SRC" "$W_BAK"
 W_BEFORE="$(sha256sum "$W_SRC" | cut -d' ' -f1)"
 sed -i 's|    File stagedArchive = DshHostPaths.canonical(archive);|    File stagedArchive = archive;|' "$W_SRC"

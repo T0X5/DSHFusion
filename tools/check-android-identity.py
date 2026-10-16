@@ -6,7 +6,7 @@
 2026-10-13，`phase-1/import-dshbox-base` 的首次真实 CI 运行报出 36 个
 `Unresolved reference 'R'`。原因是我把 `app/build.gradle.kts` 的
 `namespace` 从 `com.dshbox.app` 改成了 `com.dshfusion.app`，
-而代码里有 36 处 `import com.dshbox.app.R`。
+而代码里有 36 处 `import com.dshfusion.app.R`。
 
 同一个原因还会造成一个 CI **看不到**的后果：`AndroidManifest.xml` 里有
 3 处相对类名（`.DshApp`、`.MainActivity`、`.service.SandboxService`），
@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # 阶段 1 的约定：applicationId 独立，namespace 保持上游值。
 # 见 governance/divergences.json 的 DIV-0001。
-UPSTREAM_NAMESPACE = "com.dshbox.app"
+OUR_NAMESPACE = "com.dshfusion.app"
 
 
 def read(p: Path) -> str:
@@ -211,8 +211,8 @@ def main() -> int:
         problems.append(
             f"{rel} 的 authority「{value}」写死了，不是从 applicationId 派生 —— "
             f"authority 全局唯一，与已安装的上游应用撞车会让安装失败 -13。"
-            f"应写成 ${{applicationId}}{value[len(UPSTREAM_NAMESPACE):]}"
-            if value.startswith(UPSTREAM_NAMESPACE)
+            f"应写成 ${{applicationId}}{value[len(OUR_NAMESPACE):]}"
+            if value.startswith(OUR_NAMESPACE)
             else f"{rel} 的 authority「{value}」没有用 ${{applicationId}} 前缀"
         )
 
@@ -231,11 +231,11 @@ def main() -> int:
                 )
 
     # ---- 检查 5：阶段范围提醒（不是失败，只是显式报告）----
-    if namespace != UPSTREAM_NAMESPACE and not args.quiet:
-        print(
-            f"注意：namespace 已偏离上游值 {UPSTREAM_NAMESPACE}。\n"
-            "      阶段 1 刻意只改 applicationId、不改 namespace —— 改它等于\n"
-            "      启动被推迟到阶段 4 的全量重命名。见 DIV-0001。"
+    # 检查 5：阶段 3.0 起 namespace **必须**是我们自己的值。
+    if namespace != OUR_NAMESPACE:
+        problems.append(
+            f"namespace 是 {namespace}，期望 {OUR_NAMESPACE}。\n"
+            "      阶段 3.0（身份收回）之后 namespace 归我们所有 —— 见 DIV-0025。"
         )
 
     if problems:
