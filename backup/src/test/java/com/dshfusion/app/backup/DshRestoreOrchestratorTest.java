@@ -579,4 +579,58 @@ public class DshRestoreOrchestratorTest {
         "根是 home 里的子树 → 必须是合并，否则窄范围恢复会把其它东西也删掉",
         mapping.target(part).merge);
   }
+
+  /**
+   * 🔴 **窄范围 + 全量归档 = 报错，不是「静默把设置与插件也恢复进去」。**
+   *
+   * <p>这条测试是为**更正一句文档**而写的。`docs/INSTALL-ON-DEVICE.md` §8.8 第 2 条写着：
+   *
+   * <blockquote>选择了「只恢复会话」而拿到一份全量归档时，设置与插件也会被恢复进去
+   * —— 上游把它做成了通配符，我们目前照它的语义走。</blockquote>
+   *
+   * <p>**那句话与代码不符。** `NativeRestorePlan.inspect` 的过滤是
+   * `if (!selected.contains("application") && !selected.contains(scope)) continue;`，
+   * 而全量归档的根 `scope` 就是 `"application"` —— 选「会话」时 `selected = {"sessions"}`，
+   * 两个条件都成立 → **根被跳过** → `plan.targets` 为空 → 抛 `NO_RECOVERABLE_SCOPE`。
+   *
+   * <p>也就是说行为是**明确报错**，而不是**静默多恢复**。
+   * 后者是更严重的事（用户以为只换了会话，结果设置也被换掉），
+   * 所以「实际是哪个」必须由执行来回答，不能靠推理 —— 我是推理错的。
+   */
+  @Test
+  public void aNarrowScopeRefusesAFullArchiveInsteadOfOverRestoring() throws Exception {
+    File source = makeSource();
+    File archive = exportArchive(source, "full-for-narrow.dshbak");
+
+    File target = temporary.newFolder("target-narrow");
+    write(new File(target, ".dsh/sessions/a.json"), "{\"a\":1}");
+    write(new File(target, ".dsh/settings.yaml"), "keep: me");
+    File task = temporary.newFolder("restore-narrow");
+
+    DshRestoreOrchestrator run = new DshRestoreOrchestrator();
+    IOException error =
+        assertThrows(
+            IOException.class,
+            () ->
+                run.inspect(
+                    fs,
+                    archive,
+                    // SESSIONS 范围的成员：id 是 `dsh-sessions` 这类，**不是** `dsh`
+                    List.of(new HostRestoreMapping.Member("dsh-sessions", ".dsh/sessions", "sessions")),
+                    Set.of("sessions"),
+                    "sessions",
+                    target,
+                    task,
+                    new BackupControl(null)));
+
+    assertEquals(
+        "窄范围拿到全量归档时必须**明确报错**，而不是静默把设置与插件也恢复进去"
+            + "（§8.8 第 2 条原话与代码不符，这条测试是那句更正的证据）",
+        "NO_RECOVERABLE_SCOPE",
+        error.getMessage());
+
+    // 而且**什么都没动** —— 报错之后目标必须原样。
+    assertTrue("报错不能动数据", new File(target, ".dsh/sessions/a.json").isFile());
+    assertTrue("设置也不能被动", new File(target, ".dsh/settings.yaml").isFile());
+  }
 }

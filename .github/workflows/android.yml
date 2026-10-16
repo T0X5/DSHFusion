@@ -176,7 +176,7 @@ jobs:
                "「符号链接没被解析」的**唯一**症状"),
               ("com.dshfusion.app.backup.DshAutomaticBackupRunnerTest", 11,
                "自动备份的**顺序**守卫没跑 = 「导出失败时不会净损失旧备份」没有证据"),
-              ("com.dshfusion.app.backup.DshRestoreOrchestratorTest", 16,
+              ("com.dshfusion.app.backup.DshRestoreOrchestratorTest", 17,
                "恢复编排是本模块**会毁数据**的那条路径；「预检不碰数据」由摘要证明，"
                "且**三种坏归档都必须有具名错误码**（验收标准写的是「明确报错」）"),
               ("com.dshfusion.app.backup.DshBackupExporterTest", 17,
