@@ -3280,23 +3280,35 @@ if [ "$XD_BEFORE" = "$XD_AFTER" ]; then
     CR_BAD=1
 elif grep -q '阶段验证套件（113 项' "$README"; then
     # 检查它会不会被抓到：套件项数这一条要真的去比
-    if python3 - "$README" "$ROOT/tools/verify-phase0.sh" <<'PYX'
-import pathlib, re, subprocess, sys
+    # ⚠️ **不在这里跑套件。**
+    #
+    # 原先这里是一行 `subprocess.run(["bash", sys.argv[2]])` —— 也就是说
+    # **在套件里再跑一遍套件**。内层又走一遍全部故障注入（几分钟），**外层被拖死**。
+    # **实测被拖死过两次**，每次都停在 5x 的注入点，还留下没还原的残迹
+    # （README 的项数卡在注入值 113）。
+    #
+    # 现在读 `governance/suite-total.json` —— 套件每次跑完**自己**把合计写进去。
+    #
+    # ⚠️ **这使它滞后一次运行**：改了套件项数之后，要跑完一次才会被抓到。
+    # 这是**有意的取舍** —— 宁可滞后一次，也不要一个会把自己跑死的检查。
+    if python3 - "$README" "$ROOT/governance/suite-total.json" <<'PYX'
+import json, pathlib, re, sys
 readme = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 m = re.search(r"阶段验证套件（(\d+) 项", readme)
 if not m:
-    sys.exit(0)          # 没写数字，这一条不管
+    sys.exit(0)          # README 没写数字 → 这一条不管
 claimed = int(m.group(1))
-# 实测值：跑一次套件、读它的合计行
-out = subprocess.run(["bash", sys.argv[2]], capture_output=True, text=True).stdout
-m2 = re.search(r"合计[:：]\s*(\d+) 项", out)
-sys.exit(1 if m2 and claimed != int(m2.group(1)) else 0)
+record = pathlib.Path(sys.argv[2])
+if not record.is_file():
+    sys.exit(0)          # 还没记录过（第一次跑套件）→ 这一条不管
+total = int(json.loads(record.read_text(encoding="utf-8"))["total"])
+sys.exit(1 if claimed != total else 0)
 PYX
     then
-        fail "README 写的套件项数与实测不符 —— 这种数字会骗人（写的时候是对的，改了代码就变了）"
+        fail "README 写的套件项数与记录不符 —— 这种数字会骗人（写的时候是对的，改了代码就变了）"
         CR_BAD=1
     else
-        ok "README 的套件项数与实测不一致被抓到了"
+        ok "README 的套件项数与记录不一致被抓到了"
     fi
 else
     fail "注入没有落到预期位置"
@@ -3629,6 +3641,24 @@ else
 fi
 
 printf '  合计: %d 项\n' "$TOTAL"
+
+# 🔴 **把自己的项数写下来** —— 这是掐掉递归的另一半。
+#
+# `5x` 原先为了核 README 里的项数，会**在套件里再跑一遍套件**（内层又走一遍全部故障注入，
+# 几分钟），外层被拖死 —— 实测两次。现在它读这个文件。
+#
+# ⚠️ 代价如实写在 5x 那边：**判据滞后一次运行**。
+python3 - "$TOTAL" <<'PYT' 2>/dev/null || true
+import json, pathlib, sys, datetime
+p = pathlib.Path("governance/suite-total.json")
+p.write_text(json.dumps({
+    "schema": 1,
+    "purpose": "verify-phase0.sh 上一次运行记录的合计项数。5x 节读它来核 README 里的数字，"
+               "以免在套件里再跑一遍套件（那会递归并拖死外层）。判据因此滞后一次运行。",
+    "total": int(sys.argv[1]),
+    "recorded_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
+}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PYT
 
 if [ "$SKIP" -gt 0 ]; then
     printf '\n  ⚠️  跳过项（既不算通过，也不算失败）：\n'
