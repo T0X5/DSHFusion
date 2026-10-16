@@ -499,7 +499,7 @@
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupErrorCode.java",
-        "reason": "它不是枚举，而是异常→错误码的归类器，且含两处 Android 类名判断。真正有用的东西是它透传的那套错误码表，而那张表已经通过容器的 IOException message 自然存在，本阶段不需要额外包装。",
+        "reason": "**它不是枚举，而是异常→错误码的归类器**，且含两处 Android 类名判断。真正有用的东西是它透传的那套错误码表，而那张表**已经通过容器的 IOException message 自然存在** —— 我们的每个错误码都是具名的（`ARCHIVE_TRUNCATED` / `OVERLAPPING_MEMBERS` / `DESTINATION_IS_ARTIFACT` …），不需要再包一层归类器。\n\n⚠️ 这条原先只是把它**推迟**到后续阶段 —— 那是延期不是理由，而延期不会自己回来，也没人回来评估。现已换成实质理由：**它提供的那个东西我们已经有了**（具名错误码）。见 `docs/INCIDENTS.md` 第 33 条。",
         "verify": {
           "note": "理由说「真正有用的错误码表已经通过容器的 IOException message 自然存在，本阶段不需要额外包装」。这条检查证明那个归类器没有进树，而错误码确实以字面量形式散在容器源码里（107 个，由 tools/check-backup-contract.py 逐个核对可抛出）。",
           "absent": [
@@ -515,7 +515,7 @@
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/BackupPreview.java",
-        "reason": "审计确认它**不参与**恢复预检，只用于导出前展示范围大小；阶段 2.2 做范围备份时再评估。",
+        "reason": "审计确认它**只用于导出前展示范围大小，不参与恢复预检**。而我们的导出界面走的是另一条路：选范围 → 导出 → 显示「已导出 …（N 字节）」，**用真实产物大小代替了预估**（估计值可能错，实际值不会）。\n\n⚠️ 这条原先也只是**推迟**（同上：没人执行）。实质理由：**它解决的那件事我们用另一种方式解决了。**",
         "verify": {
           "note": "理由说它不参与恢复预检。这条检查证明：预检与恢复的代码里没有任何地方提到它。",
           "must_not_contain": [
@@ -532,7 +532,7 @@
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ColdInstallTransaction.java",
-        "reason": "恢复事务之一：依赖 DSHA 的冷装模型与 BackupTree。阶段 2.4 的范围。",
+        "reason": "**冷装事务：依赖 DSHA 的冷装模型与它自己的 `BackupTree`。** DSHFusion 没有「冷装」这个概念 —— 骨干的装配是 `BundleManager` 的分层运行环境（base/node/android-side），不是 DSHA 的整机冷装。\n\n⚠️ 这条原来写的是「留到后续阶段再处理」——**2.4 已经做完了，而它没被纳入，也没人回来看**。现在它属于 **阶段 2.8（受管更新）** 的评估范围，见 `docs/PHASE2.8-MANAGED-UPDATE.md`。",
         "verify": {
           "note": "理由说它属于阶段 2.4 的恢复编排、依赖 DSHA 的冷装模型。这条检查证明它没进树，而 2.4 的编排用的是上游的 HostDataTransaction。",
           "absent": [
@@ -597,7 +597,7 @@
       },
       {
         "upstream_path": "app/src/main/java/com/deepseekharness/app/backup/ManagedRuntimeTransaction.java",
-        "reason": "恢复事务之一：DSHA 的受管运行时。阶段 2.4 的范围。",
+        "reason": "**受管更新本体（663 行）。** 它复用宿主多根事务、用户目录不进切换清单、健康验证结束前不提交。**我们决定不搬它 —— 但要那个性质。** 理由：它依赖 DSHA 自己的 `ManagedRuntimeLayout`/`PrivateRoots`/`ConfigStore`，而 DSHFusion 已经有实现那个性质的全部零件（`healthChecker` / `runtime-previous` / `runtime-failed`）。\n\n⚠️ 这条原来写的是「留到后续阶段再处理」——**2.4 做完了而它没被处理，也没人回来**。现在**它的性质**归 **阶段 2.8**，见 `docs/PHASE2.8-MANAGED-UPDATE.md`。",
         "verify": {
           "note": "理由说它属于 DSHA 的受管运行时。这条检查证明它没进树，而「受管运行时」这套模型在我们树里一个字都没有。",
           "absent": [
