@@ -39,7 +39,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 （建会话 → 导出 → 新建一个 → 恢复 → 完全重启 DSH → 它消失了）。
 明细见 [docs/INCIDENTS.md](docs/INCIDENTS.md) 末尾的验收表。
 
-**真机一共抓出 6 个 bug（事故第 39–44 条），而本机 174 条 + 325 项 + CI 全绿时
+**真机一共抓出 6 个 bug（事故第 39–44 条），而本机 174 条 + 335 项 + CI 全绿时
 一个都没抓到。** 下一个阶段的计划见 [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md)。
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个

@@ -76,8 +76,6 @@
    可检查：`docs/FEATURES-OWNS.md` 里逐条列「这件东西为什么不是抄的」。
 
 <!-- future: docs/FEATURES-OWNS.md -->
-<!-- future: tools/measure-ownership.py -->
-<!-- future: governance/ownership.json -->
 
 **「有多少是自己的」必须是一个能看着涨的数字，而不是感觉。**
 所以新增 `tools/measure-ownership.py`：按目录统计「上游原样 / 上游副本 / 自写」，
@@ -89,7 +87,7 @@
 |---|---|---|
 | 2.7 | **修 `OVERLAPPING_TARGETS`**（一个根 + 内部投影），完成阶段 2 的真机验收 | ✅ **已完成**（真机验收五条全过） |
 | **2.8** | **受管更新的健康门槛与自动回切** —— 阶段 2 定义里的另一半，先前**没有归属** | 🔨 **审计完成**（见 [PHASE2.8-MANAGED-UPDATE.md](PHASE2.8-MANAGED-UPDATE.md)） |
-| 3.0 | **身份收回**：全量包名重命名 + 我们的接口边界 + `measure-ownership.py` | 🔨 **审计完成**（见 [PHASE3-IDENTITY-RENAME.md](PHASE3-IDENTITY-RENAME.md)） |
+| 3.0 | **身份收回**：全量包名重命名 + 我们的接口边界 + `measure-ownership.py` | ✅ **已完成**（改名 CI 全绿；`measure-ownership.py` 已接进套件 5y 节） |
 | 3.1 | **能力台账**：枚举两边的现有能力、去重、标出各自的缺口 | 待做 |
 | 3.1-前置 | 🔴 **设备桥会带来凭据文件，必须先确保它们不进归档** —— 见下 | ✅ **已预防**（2026-10-16） |
 | 3.2 | **统一授权模型**：能力分级（无障碍 / root / 应用层）、可授权、可撤销、可审计 | 待做 |

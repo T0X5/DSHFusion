@@ -3267,6 +3267,55 @@ else
     CR_BAD=1
 fi
 
+section "5y. 自写占比不许下降（「有多少是自己的」是数字，不是感觉）"
+
+# 🔴 这一节存在的理由：用户 2026-10-16 说「感觉就是 fork 的 DSHBox 加一些 DSHA 的功能，
+# 更像二改作品」。**那句话不该用感觉判断，也不该用感觉反驳。**
+#
+# `tools/measure-ownership.py` 把四类（自写 / DSHA 导入 / 骨干偏离 / 骨干原样）
+# 按**治理登记**分类（不硬编码路径），算出「自写占比」并写进 governance/ownership.json。
+#
+# 这里让它成为一条**不许下降**的断言：想让它降，必须显式改 registry 并写清原因 ——
+# 于是「在做自己的东西」变成可验证的，而不是一句自我评价。
+
+if [ -f "$ROOT/governance/ownership.json" ]; then
+    ok "governance/ownership.json 在场（自写占比已留档）"
+else
+    fail "governance/ownership.json 不存在 —— 先跑一次 python3 tools/measure-ownership.py"
+    CR_BAD=1
+fi
+
+if expect 0 "自写占比没有下降" python3 tools/measure-ownership.py --check; then :; fi
+
+# 反向：证明这条断言**会红** —— 把记录里的占比抬高一档，--check 必须失败。
+OW_BAK="$(mktemp)"
+cp "$ROOT/governance/ownership.json" "$OW_BAK"
+OW_BEFORE="$(sha256sum "$ROOT/governance/ownership.json" | cut -d' ' -f1)"
+python3 - "$ROOT/governance/ownership.json" <<'PYW'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["ours_ratio_lines"] = min(0.99, float(d.get("ours_ratio_lines", 0)) + 0.05)
+p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PYW
+OW_AFTER="$(sha256sum "$ROOT/governance/ownership.json" | cut -d' ' -f1)"
+if [ "$OW_BEFORE" = "$OW_AFTER" ]; then
+    fail "注入**没有生效**（文件没被改动）—— 这条注入需要修"
+    CR_BAD=1
+elif python3 tools/measure-ownership.py --check >/dev/null 2>&1; then
+    fail "把记录里的占比抬高之后，--check 居然还通过 —— 这条断言是瞎的"
+    CR_BAD=1
+else
+    ok "注入：把记录占比抬高 → --check 会红（抓得住「占比被悄悄改小」）"
+fi
+cp "$OW_BAK" "$ROOT/governance/ownership.json"
+rm -f "$OW_BAK"
+if python3 tools/measure-ownership.py --check >/dev/null 2>&1; then
+    ok "复原后占比检查重新通过"
+else
+    fail "复原失败 —— 注入没被还原干净"
+    CR_BAD=1
+fi
+
 section "5v. 凭据被就地投影（真机泄漏过 API Key，这一节是那次事故的守卫）"
 
 # 🔴 这一节存在的理由：**真机上导出的归档里，用户的 API Key 与浏览器会话授权是明文。**
