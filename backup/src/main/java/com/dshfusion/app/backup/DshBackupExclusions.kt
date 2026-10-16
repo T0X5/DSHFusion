@@ -87,8 +87,42 @@ object DshBackupExclusions {
     // （`DshCredentialsSource` 按路径施加，见那个类的注释）。
     // 所以它**不该**出现在排除清单里 —— 排除 = 不备份，而用户要的是「投影后备份」。
 
+    /**
+     * 🔴 **桥接与调试凭据 —— 现在手机上还没有，但阶段 3.1 一定会带来它们。**
+     *
+     * 这条是**预防性的**，而它有一个具体的来源：本项目的容器里那份 DSH home
+     * （DSHA 风格的设备桥集成）**确实**有这些文件：
+     *
+     * ```
+     * .dsh/.bridge_token        32 字节：桥接令牌
+     * .dsh/.bridge_headers      42 字节：桥接鉴权头
+     * .dsh/.bridge_status
+     * .dsh/adbkeys/             ADB 私钥（能连设备）
+     * .dsh/adb-wheels.tar.gz    9.9 MB：可重建的 wheel 包，不是状态
+     * ```
+     *
+     * **而我们的备份范围是整个 `.dsh`。** 也就是说：谁把设备桥接进 DSH home，
+     * 谁就会让这些凭据进归档 —— 与技术事故第 41 条（API Key 明文进归档）**同一个坑**。
+     *
+     * 今天**不漏**：真机归档里 `.dsh` 根下只有 `.anonymous-user-id`、`.credentials.yaml`、
+     * `dshbox/`、`profiles/`、`sessions/`、`storages/`；也确认全库没有往 `.dsh` 写
+     * token / adbkeys 的代码。**但 3.1 正好要做设备桥。**
+     *
+     * ⚠️ 这是**保险，不是修复** —— 它的效果**没有被真机验证过**（没有文件可验）。
+     * 单测证明的是「这些路径**会被**排除」，而不是「真机上一次都没漏」。
+     */
+    val BRIDGE_CREDENTIALS: List<String> =
+        listOf(
+            ".dsh/.bridge_token",
+            ".dsh/.bridge_headers",
+            ".dsh/.bridge_status",
+            ".dsh/adbkeys",
+            // 9.9 MB 的 wheel 包：内容寻址、可从锁文件重建，进归档只是把包撑大。
+            ".dsh/adb-wheels.tar.gz",
+        )
+
     /** [isExcluded] 用的全集。 */
-    private val all: List<String> = REGENERATED
+    private val all: List<String> = REGENERATED + BRIDGE_CREDENTIALS
 
     /**
      * 这个路径是否不进归档。命中规则：**等于**清单项，或是清单项的**子孙**。

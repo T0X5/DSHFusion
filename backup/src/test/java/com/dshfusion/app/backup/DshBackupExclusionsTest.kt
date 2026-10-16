@@ -87,6 +87,23 @@ class DshBackupExclusionsTest {
         assertFalse(DshBackupExclusions.isExcluded(".dsh/bin/my-script"))
     }
 
+    @Test
+    fun bridgeCredentialsAreExcludedEvenThoughTheyDoNotExistYet() {
+        // 🔴 **预防性**：现在真机上没有这些文件，但阶段 3.1（设备桥）会带来它们。
+        //
+        // 它是怎么被发现的：本项目的容器里那份 DSH home（DSHA 风格的桥接集成）
+        // **确实**有 `.bridge_token` / `.bridge_headers` / `adbkeys/`，
+        // 而我们的备份范围是整个 `.dsh` —— 谁把桥接进 DSH home，谁就会让凭据进归档。
+        // 与技术事故第 41 条同一个坑。
+        //
+        // ⚠️ 这条测试证明的是「这些路径**会被**排除」，**不是**「真机上一次都没漏」。
+        for (path in DshBackupExclusions.BRIDGE_CREDENTIALS) {
+            assertTrue("$path 必须被排除（桥接凭据 / 可重建的大包）", DshBackupExclusions.isExcluded(path))
+        }
+        // 子路径也要挡住 —— `adbkeys` 是个目录。
+        assertTrue(DshBackupExclusions.isExcluded(".dsh/adbkeys/id_ed25519"))
+    }
+
     // ---- 凭据 --------------------------------------------------------------
 
     @Test
