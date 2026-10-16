@@ -16,10 +16,11 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 > 全部依据、可检查标准与阶段计划见 [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md) ——
 > **不要重新推翻，要改就改那一份。**
 >
-> 🔨 **阶段 3.0（身份收回）已开始**：分支 `phase-3.0/identity`，
-> **审计已完成、尚未动代码** —— 实测 279 个文件 / 1069 处 / 52 个目录，
-> 且**分类后每类的正确动作都不同**（盲 sed 会改错 4 类）。
-> 范围、分类、执行顺序、登记方式与验证清单见
+> ✅ **阶段 3.0（身份收回）已完成**：分支 `phase-3.0/identity`，
+> `com.dshbox.app` → `com.dshfusion.app`，实测 **279 个文件 / 1069 处 / 52 个目录**
+> （当初估 721 处，**漏了 48%** —— 还漏了 `com.dshbox.pluginmanager` / `.terminal` / `.testhost`
+> 这三个不含 `.app` 的包）。Android CI 全绿（**真的编得过**）。
+> 偏离登记为 `DIV-0025`；审计、五类分法与陷阱清单见
 > [docs/PHASE3-IDENTITY-RENAME.md](docs/PHASE3-IDENTITY-RENAME.md)。
 
 它不是 DSHBox 的 fork，也不是 DSHA 的 fork —— 它是**独立仓库**，通过显式的
@@ -39,7 +40,7 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 （建会话 → 导出 → 新建一个 → 恢复 → 完全重启 DSH → 它消失了）。
 明细见 [docs/INCIDENTS.md](docs/INCIDENTS.md) 末尾的验收表。
 
-**真机一共抓出 6 个 bug（事故第 39–44 条），而本机 174 条 + 335 项 + CI 全绿时
+**真机一共抓出 6 个 bug（事故第 39–44 条），而本机 176 条 + 335 项 + CI 全绿时
 一个都没抓到。** 下一个阶段的计划见 [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md)。
 
 上游 790 个跟踪文件 → 排除 23 个（`website/`、`pages.yml`，DIV-0005）→ 归档 2 个
