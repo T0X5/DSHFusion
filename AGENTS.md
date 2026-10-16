@@ -15,6 +15,12 @@ DSHFusion 是**个人自用**的 Android 项目：在手机上运行 DeepSeek Ha
 > 第二件东西定为 **统一设备能力层**；身份收回（全量包名重命名）**提前到现在**。
 > 全部依据、可检查标准与阶段计划见 [docs/PRODUCT-DIRECTION.md](docs/PRODUCT-DIRECTION.md) ——
 > **不要重新推翻，要改就改那一份。**
+>
+> 🔨 **阶段 3.0（身份收回）已开始**：分支 `phase-3.0/identity`，
+> **审计已完成、尚未动代码** —— 实测 279 个文件 / 1069 处 / 52 个目录，
+> 且**分类后每类的正确动作都不同**（盲 sed 会改错 4 类）。
+> 范围、分类、执行顺序、登记方式与验证清单见
+> [docs/PHASE3-IDENTITY-RENAME.md](docs/PHASE3-IDENTITY-RENAME.md)。
 
 它不是 DSHBox 的 fork，也不是 DSHA 的 fork —— 它是**独立仓库**，通过显式的
 双上游同步流程长期跟踪两者。见 [docs/UPSTREAM-SYNC.md](docs/UPSTREAM-SYNC.md)。
