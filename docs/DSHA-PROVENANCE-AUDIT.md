@@ -1,7 +1,7 @@
 # DSHA 来源审计：Shizuku `ShellService`
 
 > **为什么要有这一份**：`AGENTS.md` 的「已知陷阱」写着 ——
-> DSHA 自己的 `docs/source-provenance.md` 记录了它的 Shizuku `ShellService`
+> DSHA 自己的 `DSHA:docs/source-provenance.md` 记录了它的 Shizuku `ShellService`
 > **存在来源不可核验的 CFR 反编译标注**，所以「若要复用 DSHA 的对应实现，
 > 必须先单独做来源审计；在结论明确前不要把它并入主干」。
 >
@@ -21,7 +21,7 @@
 
 ## 2. DSHA 自己怎么说
 
-它的 `docs/source-provenance.md`：
+它的 `DSHA:docs/source-provenance.md`：
 
 - 承认旧文件头标注 CFR 0.152，并明确说**该标注不能证明外部反编译对象、原作者身份或许可不兼容**
 - build156 对本地可用 Git 历史逐次读原始 blob，找到该路径的 **10 次记录**，
