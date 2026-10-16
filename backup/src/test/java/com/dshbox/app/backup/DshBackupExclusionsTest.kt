@@ -1,5 +1,6 @@
 package com.dshbox.app.backup
 
+import com.deepseekharness.app.backup.CredentialProjection
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -89,13 +90,30 @@ class DshBackupExclusionsTest {
     // ---- 凭据 --------------------------------------------------------------
 
     @Test
-    fun credentialsAreExcluded() {
-        // Constants.kt 第 148 行把 DSH 的数据列为
-        // `profiles / sessions / settings.yaml / storages / credentials`。
-        for (path in DshBackupExclusions.CREDENTIALS) {
-            assertTrue(DshBackupExclusions.isExcluded(path))
-            assertTrue(DshBackupExclusions.isExcluded("$path/nested"))
-        }
+    fun credentialsAreNotExcludedBecauseTheyMustBeProjectedNotDropped() {
+        // 🔴 **这一条曾经是反的**（`credentialsAreExcluded`），而那是真机泄漏 API Key 的成因之一。
+        //
+        // 原来它遍历 `DshBackupExclusions.CREDENTIALS`（`[".dsh/credentials"]` ——
+        // 我照着 `Constants.kt` 里的**逻辑名**猜的路径），断言那些字符串被排除。
+        // 而真机上的文件名是 **`.credentials.yaml`**，所以：
+        //   · 那条排除**匹配不到任何东西** → 用户的 API Key 明文进了归档；
+        //   · 而这条测试**照样通过** —— 因为它测的是「清单里那个字符串被排除」，
+        //     不是「真机上那个文件被处理」。
+        //
+        // **期望值取自被测对象自己，是这一族事故的共同形态。**
+        //
+        // 现在的语义是明确的：凭据文件**进归档，但是投影之后的**
+        // （`DshCredentialsSource` 按路径施加）。**排除 = 不备份**，
+        // 与「投影后保留 provider 凭据」不可能同时成立 —— 所以它不该在排除清单里。
+        val credentials = ".dsh/" + CredentialProjection.FILE
+        assertFalse(
+            "凭据文件必须进归档（投影后），不能排除：$credentials",
+            DshBackupExclusions.isExcluded(credentials),
+        )
+        assertFalse(
+            "裸文件名也不该被排除",
+            DshBackupExclusions.isExcluded(CredentialProjection.FILE),
+        )
     }
 
     @Test
