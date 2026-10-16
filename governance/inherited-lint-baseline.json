@@ -1,0 +1,139 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-13",
+  "note": "从上游原样导入的文件中**已存在**的静态检查告警。这些不是 DSHFusion 引入的，也不在阶段 1 就地修复 —— 理由见下。本文件只用于让门禁能区分『继承的问题』与『新引入的问题』，不是豁免名单。",
+  "why_not_fix_in_phase1": [
+    "导入的文件与上游逐字节一致，是为了让长期同步能用 git merge 干净地吸收上游更新。",
+    "任何为过 lint 而做的改动，都会在以后每次合并上游时变成冲突。AGENTS.md 编码约定第 4 条明确禁止这种改动。",
+    "这些告警不影响功能：i18n_check.sh 实测退出码 0，全部检查通过。",
+    "正确做法是把修复作为候选 PR 提交给上游（见 candidate_prs），而不是在本地制造偏离。"
+  ],
+  "stale_policy": "门禁会双向核对：基线里登记了但实际已不存在的条目同样算失败。这样基线无法被用来长期压制一个已经修好的问题，也无法掩盖行号漂移。",
+  "shellcheck": {
+    "tool": "shellcheck",
+    "severity_floor": "warning",
+    "scope": "tools/*.sh",
+    "findings": [
+      {
+        "file": "tools/build_apk.sh",
+        "line": 34,
+        "column": 15,
+        "code": "SC2155",
+        "level": "warning",
+        "summary": "声明与赋值写在同一行，会掩盖返回值",
+        "inherited_from": "DSHBox@266290a6d16f",
+        "functional_impact": "无"
+      },
+      {
+        "file": "tools/build_arm64_runtime_bundle.sh",
+        "line": 94,
+        "column": 1,
+        "code": "SC2034",
+        "level": "warning",
+        "summary": "BASE_META 赋值后未被使用",
+        "inherited_from": "DSHBox@266290a6d16f",
+        "functional_impact": "无"
+      },
+      {
+        "file": "tools/build_arm64_runtime_bundle.sh",
+        "line": 95,
+        "column": 1,
+        "code": "SC2034",
+        "level": "warning",
+        "summary": "NODE_META 赋值后未被使用",
+        "inherited_from": "DSHBox@266290a6d16f",
+        "functional_impact": "无"
+      },
+      {
+        "file": "tools/build_arm64_runtime_bundle.sh",
+        "line": 96,
+        "column": 1,
+        "code": "SC2034",
+        "level": "warning",
+        "summary": "ASIDE_META 赋值后未被使用",
+        "inherited_from": "DSHBox@266290a6d16f",
+        "functional_impact": "无"
+      },
+      {
+        "file": "tools/deploy_to_device.sh",
+        "line": 101,
+        "column": 66,
+        "code": "SC1083",
+        "level": "warning",
+        "summary": "`}` 被当作字面量，可能是缺分号或漏引号",
+        "inherited_from": "DSHBox@266290a6d16f",
+        "functional_impact": "无（实测脚本可正常执行）"
+      },
+      {
+        "file": "tools/pack_runtime.sh",
+        "line": 31,
+        "column": 1,
+        "code": "SC2034",
+        "level": "warning",
+        "summary": "ARCH 赋值后未被使用",
+        "inherited_from": "DSHBox@266290a6d16f",
+        "functional_impact": "无"
+      },
+      {
+        "file": "tools/release_check.sh",
+        "line": 25,
+        "column": 1,
+        "code": "SC2164",
+        "level": "warning",
+        "summary": "cd 未处理失败情况",
+        "inherited_from": "DSHBox@266290a6d16f",
+        "functional_impact": "无（脚本开头已 set -e）"
+      }
+    ]
+  },
+  "candidate_prs": [
+    {
+      "id": "PR-CAND-0001",
+      "target": "WSK-build/DSHBox",
+      "title": "给 android.yml 增加顶层 permissions",
+      "rationale": "缺顶层 permissions 时 GITHUB_TOKEN 拿到仓库默认的宽权限；构建任务只需要读取源码。",
+      "status": "DSHFusion 已就地修复并登记为 DIV-0006（该工作流要在 DSHFusion 实际运行，不宜豁免），仍建议回报上游。"
+    },
+    {
+      "id": "PR-CAND-0002",
+      "target": "WSK-build/DSHBox",
+      "title": "i18n_check.sh 两处正则改用 ${CJK}[ 消歧义",
+      "rationale": "消除 shellcheck 的 SC1087 error 级告警。纯写法调整，无行为变化。",
+      "status": "未提交。DSHFusion 阶段 1 不改上游文件。"
+    },
+    {
+      "id": "PR-CAND-0003",
+      "target": "WSK-build/DSHBox",
+      "title": "启动页标记在浅色主题下不可见",
+      "rationale": "ic_splash_mark.png 主体为纯白（实测最常见像素 255,255,255,255），而 LaunchScreen.kt 原样绘制标记、不加 tint，且应用提供浅色主题（values/themes.xml 的 windowBackground 为白色）。浅色主题下白环画在白底上等于消失。DSHFusion 的自绘标记已改用跨明暗的渐变环规避。",
+      "status": "未提交。需要上游确认设计意图后决定。"
+    },
+    {
+      "id": "PR-CAND-0004",
+      "target": "WSK-build/DSHBox",
+      "title": "剩余 7 条 shellcheck warning",
+      "rationale": "SC2155 / SC2034 ×4 / SC1083 / SC2164，均为写法层面，无功能影响。",
+      "status": "未提交。优先级低。"
+    }
+  ],
+  "exec_bit": {
+    "note": "上游 DSHBox 自己的 git 索引里就有 13 个 .sh 是 100644（16 个是 100755），并不是 DSHFusion 导入时丢了可执行位。上游 CI 一律用 `bash <文件>` 调用，因此不依赖可执行位，功能上无影响。为保持与上游逐字节（含模式）一致、避免制造同步冲突，阶段 1 不修改这些模式。",
+    "how_verified": "用 `git -C <上游> ls-files -s '*.sh'` 取上游索引的真实模式，与本项目索引逐条比对；本项目 100644 集合与上游 100644 集合完全相同。",
+    "default_mode": "100755",
+    "inherited_non_executable": [
+      "plugin-manager/dshbox-plugins/assets/plugins/dsh-mobile-adapt/install.sh",
+      "plugin-manager/dshbox-plugins/assets/plugins/dsh-mobile-adapt/uninstall.sh",
+      "plugin-manager/dshbox-plugins/assets/plugins/mobile-pilot/install.sh",
+      "plugin-manager/dshbox-plugins/assets/plugins/mobile-pilot/uninstall.sh",
+      "plugin-manager/dshbox-plugins/tools/link-shim/build_inner.sh",
+      "plugin-manager/dshbox-plugins/tools/link-shim/build_link_shim.sh",
+      "plugin-manager/dshbox-plugins/tools/mobile-adapt/mobile_adapt_probe_matrix_test.sh",
+      "runtime-bundle/build_android_side.sh",
+      "runtime-bundle/build_base.sh",
+      "runtime-bundle/build_node.sh",
+      "runtime-bundle/scripts/gen_profile.sh",
+      "tools/i18n_check.sh",
+      "tools/release_check.sh"
+    ]
+  }
+}

@@ -37,6 +37,18 @@ jobs:
       - name: Validate workflow YAML (PyYAML)
         run: python3 tools/check-workflows.py
 
+      # 工作流里那段几十行的内联 Python **本地从来没被编译过** ——
+      # YAML 解析器不看它，actionlint 也不看它的宿主语言。
+      # 2.5 的计数步骤因此把语法错误带进了 CI，在第 13 步才红（第 36 条）。
+      - name: 工作流内联 Python 语法
+        run: python3 tools/check-workflow-python.py
+
+      # 本机没有 kotlinc（第 21 条），所以 .kt 的编译结论只能由 CI 给出 ——
+      # 而一轮 CI 十几分钟。这两类错**不需要类型信息**就能判，
+      # 让它们活到 CI 就是十几分钟一轮（2.6 第 ④ 段第一次真跑红的就是这两类）。
+      - name: Kotlin 机械错误（缺 import / 残留 it.）
+        run: python3 tools/check-kotlin-hazards.py
+
       - name: Install actionlint
         run: |
           set -euo pipefail
@@ -47,11 +59,20 @@ jobs:
             aarch64) goarch=arm64 ;;
             *) echo "::error::不支持的架构 $arch"; exit 1 ;;
           esac
-          curl -sSL -o /tmp/actionlint.tar.gz \
+          # 用一次性目录，不写死 /tmp 文件名：
+          # 写死会被发布前的隐私审计报成「本机痕迹」，且并发 job 会互相覆盖。
+          work="$(mktemp -d)"
+          curl -sSL -o "$work/actionlint.tar.gz" \
             "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_${goarch}.tar.gz"
-          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
-          sudo install -m 0755 /tmp/actionlint /usr/local/bin/actionlint
+          tar -xzf "$work/actionlint.tar.gz" -C "$work" actionlint
+          sudo install -m 0755 "$work/actionlint" /usr/local/bin/actionlint
+          rm -rf "$work"
           actionlint --version
+
+      - name: Check Android app identity consistency
+        # namespace 决定 R/BuildConfig 的包名与 manifest 相对类名的解析基准。
+        # 改错会让源码编译失败、或让应用装上就崩 —— 两者都不需要编译就能查。
+        run: python3 tools/check-android-identity.py
 
       - name: Lint workflows with actionlint (incl. shellcheck)
         run: actionlint -no-color .github/workflows/*.yml
@@ -86,20 +107,63 @@ jobs:
           done < <(find tools -name '*.sh')
           exit "$failed"
 
-      - name: Shell scripts are executable
-        run: |
-          set -euo pipefail
-          failed=0
-          while IFS= read -r file; do
-            if [ ! -x "$file" ]; then
-              echo "::error file=$file::缺少可执行位"
-              failed=1
-            fi
-          done < <(find tools -name '*.sh')
-          exit "$failed"
+      # 可执行位检查读 git 索引，并对照 governance/inherited-lint-baseline.json。
+      # 原先这里是内联的 `find tools -name '*.sh'` + `-x`，只认「必须可执行」，
+      # 于是阶段 1 导入的 13 个上游 100644 脚本一律报错。
+      # 逻辑抽成工具后，本地套件与 CI 共用同一份实现 —— 此前两份实现漂移，
+      # 导致套件已经修好、CI 仍然红。
+      - name: Script executable bits (index modes vs inherited baseline)
+        run: python3 tools/check-exec-bits.py
 
       - name: Python tools compile
         run: python3 -m compileall -q tools
+
+      - name: No new shellcheck findings beyond inherited baseline
+        run: python3 tools/check-lint-baseline.py
+
+      - name: Import fidelity vs upstream (only in this workspace)
+        run: |
+          set -euo pipefail
+          # 逐 blob 对照上游需要上游审计副本，CI 里没有，因此自动跳过。
+          # 本工作区（有 ../audit/DSHBox）里会真正比对。
+          python3 tools/check-import-fidelity.py
+
+      - name: DSHA import fidelity (source header + body)
+        run: |
+          set -euo pipefail
+          # 与上一步刻意不同：这里的期望值**内嵌在 governance/dsha-imports.json**，
+          # 不需要仓库外副本，因此在 CI 里是真跑 —— 上一步在 CI 里只会跳过。
+          # 它同时验证来源头（署名义务）与正文（「原样」必须可验证），
+          # 并反向检查导入目录里没有未登记的文件。
+          python3 tools/check-dsha-imports.py
+
+      - name: Set up JDK 17 (for the :backup JVM tests)
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: :backup JVM tests, compiled and run for real
+        run: |
+          set -euo pipefail
+          # 与 android.yml 的 `testDebugUnitTest` 刻意重叠，但**不是重复**：
+          # 那一条要等 AGP/Gradle/Android SDK 全部就绪（十几分钟），
+          # 这一条两秒出结果，且**不需要 Android SDK**。
+          # 更重要的是它跑得起来的前提不同 —— android.yml 只在 main/develop 上触发，
+          # 叠放的阶段 PR 拿不到任何 Android CI（见 docs/FUSION-PLAN.md）。
+          # 依赖版本由脚本自己对着 gradle/libs.versions.toml 断言，取不到就**退 2 报错**，
+          # 不会静默变成「跳过」。
+          bash tools/run-backup-jvm-tests.sh
+
+      - name: Backup module contract (magic / no hand-copied constants / error codes)
+        run: |
+          set -euo pipefail
+          # 阶段 2.1 的第一次真实编译就红在这里：测试把容器的 8 字符魔数
+          # `DSHADATA` 手抄成了 7 字符的 `DSHDATA`，5 条用例同时红。
+          # 本机所有检查（套件、导入核验、偏离重放、隐私审计）**没有一条**能发现它 ——
+          # 它们查的是「文件在不在、字节变没变、字符串在不在」，
+          # 没有一条把**测试夹具**和**容器源码**对起来。这一步就是那一条。
+          python3 tools/check-backup-contract.py
 
       - name: Verify upstream mirrors are NOT tracked
         run: |
@@ -114,19 +178,29 @@ jobs:
             echo "::error::运行环境大资产被误提交进仓库"
             exit 1
           fi
-          echo "无镜像与大资产入库。"
+          # :backup 本机测试的依赖与编译产物缓存（1.4 MB，含 4 个 jar 与几十个 .class）。
+          # 上面两条都抓不到它 —— 它们匹配的是 tar.zst/gz 与 runtime 资产，**不匹配 jar**。
+          # 2026-10-14 实测：`.gitignore` 缺这一条时 `git add -A` 一次就暂存了 57 个文件。
+          # 这条断言的意义与「缺层只记成备注」相反：**发现得了，而且判失败。**
+          if git ls-files | grep -q '\.jvm-test-cache/'; then
+            echo "::error::本机 JVM 测试缓存被误提交进仓库（应被 .gitignore 覆盖）"
+            exit 1
+          fi
+          echo "无镜像、大资产与测试缓存入库。"
 
       - name: Phase 0 verification suite (success and failure paths)
         run: bash tools/verify-phase0.sh
 
-      - name: No upstream brand assets reused
+      - name: Brand assets are our own, not upstream's
         run: |
           set -euo pipefail
-          # DSHBox 的 TRADEMARK.md 保留其品牌图形全部权利。
-          # 阶段 1 导入上游源码后，自有图标必须替换 brand_icon。
-          # 阶段 0 不该存在任何图片资产。
-          if find . -name '*.png' -o -name '*.jpg' -o -name '*.webp' | grep -q .; then
-            echo "NOTE: 仓库中出现图片资产。阶段 1 起需确认不是 DSHBox 的品牌图形："
-            find . \( -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) -not -path './.git/*'
+          # DSHBox 的 TRADEMARK.md 保留其品牌图形全部权利，并禁止使用其设计构造方法。
+          # 阶段 1 起仓库里有 8 个自有品牌图形，必须证明它们出自本项目生成器。
+          #
+          # 这里不是「找找有没有图片」那种只会打印的弱检查 —— 它重跑生成器，
+          # 与磁盘上的文件逐字节比对。上游图形不可能通过。
+          if ! find app/src/main/res -name '*.png' | grep -q .; then
+            echo "阶段 1 尚未导入上游源码，跳过品牌图形核验。"
+            exit 0
           fi
-          echo "无品牌资产复用风险。"
+          python3 tools/make-brand-assets.py --check

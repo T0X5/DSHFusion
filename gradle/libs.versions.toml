@@ -1,0 +1,68 @@
+[versions]
+agp = "8.9.2"
+kotlin = "2.0.21"
+coreKtx = "1.15.0"
+appcompat = "1.7.0"
+activityCompose = "1.9.3"
+composeBom = "2024.12.01"
+lifecycle = "2.8.7"
+webkit = "1.12.1"
+coroutines = "1.9.0"
+junit = "4.13.2"
+commonsCompress = "1.27.1"
+androidxJunit = "1.2.1"
+espressoCore = "3.6.1"
+documentfile = "1.0.1"
+androidxAnnotation = "1.9.0"
+soraEditor = "0.23.5"
+markwon = "4.6.2"
+kxml2 = "2.3.0"
+bcpg = "1.78.1"
+# Gson 只服务于 :backup 的 v5 归档元数据解析（BackupJson）。必须 >= 2.11，
+# 因为那里用了 com.google.gson.Strictness —— 这是「拒绝重复键 / 拒绝深层嵌套」
+# 那层保护的实现基础，不能用 org.json 替代（它不检测重复键、不流式限长）。
+gson = "2.13.1"
+# SnakeYAML 只服务于 :backup 的**凭据投影**（阶段 2.3 的 CredentialProjection）。
+# 它按 DSH 自己的 `.credentials.yaml` 布局解析、删掉机器本地记录、再序列化回去，
+# 所以需要一个**严格**的 YAML 解析器：CredentialProjection 用 SafeConstructor +
+# 自定义 Resolver + 节点级 compose/serialize，不走 JavaBean 反射，也不接受锚点/别名。
+# 版本与 DSHA 一致（org.yaml:snakeyaml:2.4，Apache-2.0）。
+snakeyaml = "2.4"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+androidx-compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
+androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
+androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
+androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+sora-editor = { group = "io.github.Rosemoe.sora-editor", name = "editor", version.ref = "soraEditor" }
+markwon-core = { group = "io.noties.markwon", name = "core", version.ref = "markwon" }
+markwon-ext-tables = { group = "io.noties.markwon", name = "ext-tables", version.ref = "markwon" }
+kxml2 = { group = "net.sf.kxml", name = "kxml2", version.ref = "kxml2" }
+bcpg = { group = "org.bouncycastle", name = "bcpg-jdk18on", version.ref = "bcpg" }
+gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
+snakeyaml = { group = "org.yaml", name = "snakeyaml", version.ref = "snakeyaml" }
+androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
+androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

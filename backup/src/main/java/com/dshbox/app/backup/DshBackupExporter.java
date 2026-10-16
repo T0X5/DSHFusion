@@ -1,0 +1,298 @@
+// DSHFusion 自写。不是 DSHA 的副本 —— 登记在 governance/dsha-imports.json 的 original 段。
+//
+// 为什么是 Java 而不是 Kotlin：本机有 JDK 17、没有 kotlinc（见 docs/INCIDENTS.md 第 21 条）。
+// 这一层决定「到底把哪些东西写进了归档」，是本模块第三段会毁数据/泄数据的路径
+// （前两段是恢复的落点与提交回切）。只让 CI 编译它太贵。
+// 与 `HostRestoreMapping` / `HostRestoreTransaction` / `DshAutomaticBackupRetention`
+// 同一条约定。
+package com.dshbox.app.backup;
+
+import com.deepseekharness.app.backup.BackupControl;
+import com.deepseekharness.app.backup.BackupFileSystem;
+import com.deepseekharness.app.backup.BackupSource;
+import com.deepseekharness.app.backup.CredentialProjection;
+import com.deepseekharness.app.backup.FileBackupSource;
+import com.deepseekharness.app.backup.HostSnapshot;
+import com.deepseekharness.app.util.Ids;
+import java.io.*;
+import java.security.MessageDigest;
+import java.util.*;
+import java.util.function.Predicate;
+
+/**
+ * 把用户数据导出成一份 v5 归档。
+ *
+ * <h2>它做什么，不做什么</h2>
+ *
+ * 它只做三件事：把「范围成员」翻译成 {@link BackupSource}、调用上游的
+ * {@link HostSnapshot#create}、把产物移出任务目录。**容器格式、逐文件校验、
+ * 完整性判定全部在上游那个类里**，这里一行都不重写（硬约束 2）。
+ *
+ * <h2>为什么成员与排除都是参数</h2>
+ *
+ * 范围的词汇（{@code DshBackupScope}）与排除清单（{@code DshBackupExclusions}）
+ * 都在 Kotlin 侧。若在这里 import 它们，本机就编不了、跑不了，这一层就退化回
+ * 「只有 CI 能验」—— 而它恰恰是最该本机验的一层。
+ * 所以这里只认**纯数据**（{@link Member}）与一个
+ * {@link Predicate}（「这个 user-data 相对路径要不要排除」）；
+ * Kotlin 侧负责把范围翻译成前者、把排除清单包成后者。
+ *
+ * <h2>任务目录与产物为什么必须分开</h2>
+ *
+ * 上游 {@code create} 有一条硬断言：{@code archive.getParentFile()} 必须**等于**
+ * {@code ownedTask}，而 {@link BackupSource#containsLocal} 又不允许任务目录落在任何
+ * 源根之内。这两条合起来的意思是：**产物必须先写在一个既在源之外、又被我们独占的
+ * 目录里**，写完再移出去。所以任务目录由调用方给出（应当是一块不在
+ * {@code user-data} 下的独占目录），产物文件名由这里从目标文件名派生。
+ */
+public final class DshBackupExporter {
+  private DshBackupExporter() {}
+
+  /** 任务目录里被上游自己使用的两个名字 —— 产物不能撞上它们。 */
+  private static final Set<String> RESERVED = Set.of("source-checks", "capture");
+
+  /** 一个范围成员：选中的那一小块用户数据。纯数据，不含任何 Kotlin 类型。 */
+  public static final class Member {
+    public final String id;
+    /** 相对 {@code userDataDir} 的路径，例如 {@code .dsh/sessions}。 */
+    public final String path;
+    /** 写进每条记录的 v5 范围名（例如 {@code sessions}）。 */
+    public final String scope;
+    public final boolean external;
+
+    public Member(String id, String path, String scope, boolean external) {
+      this.id = id;
+      this.path = path;
+      this.scope = scope;
+      this.external = external;
+    }
+
+    @Override
+    public String toString() {
+      return id + "(" + path + ")";
+    }
+  }
+
+  /** 一次导出的结果。{@code skipped} 是**没被选中**的成员，不是错误。 */
+  public static final class Exported {
+    public final File archive;
+    public final Map<String, Object> manifest;
+    public final long bytes;
+    public final String sha256;
+    public final List<String> skipped;
+
+    Exported(
+        File archive,
+        Map<String, Object> manifest,
+        long bytes,
+        String sha256,
+        List<String> skipped) {
+      this.archive = archive;
+      this.manifest = manifest;
+      this.bytes = bytes;
+      this.sha256 = sha256;
+      this.skipped = Collections.unmodifiableList(skipped);
+    }
+
+    /** 逐文件、给界面看的一行摘要。不含路径以外的任何用户数据。 */
+    public String describe() {
+      Object integrity = manifest.get("integrity");
+      return archive.getName()
+          + " · "
+          + bytes
+          + " 字节 · 完整性 "
+          + integrity
+          + (skipped.isEmpty() ? "" : " · 跳过 " + skipped.size() + " 项");
+    }
+  }
+
+  /**
+   * 导出。**不覆盖已存在的目标文件**（上游的 {@code move} 语义）。
+   *
+   * @param userDataDir 成员路径的解析起点（DSHFusion 的 {@code user-data}）
+   * @param taskDir 独占的临时目录，**必须不在 {@code userDataDir} 之下**
+   * @param destination 最终位置（例如下载目录里的一个文件）
+   * @param provenance 容器清单的**调用方字段**（{@code operation}/{@code createdAt}/
+   *     {@code appVersion}/{@code runtime}/{@code dataFormat}/{@code sensitivePolicy}/
+   *     {@code plugins}）。{@code integrity} 由上游自己推导，这里不放。
+   */
+  public static Exported export(
+      BackupFileSystem fs,
+      File userDataDir,
+      List<Member> members,
+      File taskDir,
+      File destination,
+      Map<String, Object> provenance,
+      Predicate<String> excluded,
+      boolean rescue,
+      BackupControl control)
+      throws IOException {
+    if (members == null || members.isEmpty()) throw new IOException("NO_SELECTED_DATA");
+    // 🔴 **成员路径不许互为前缀。**
+    //
+    // 真机上撞过一次：凭据文件被做成**独立的成员**，于是它的恢复目标
+    // （`.dsh/.credentials.yaml`）落在另一个成员（`.dsh`）的目标**之内** ——
+    // 而上游 `HostDataTransaction` 用**路径前缀**判目标重叠，直接抛
+    // `OVERLAPPING_TARGETS`。那个拒绝是对的：嵌套目标没法保证「要么都换成、要么都不换」。
+    //
+    // ⚠️ 而那次是**在真机上、在用户点过「确认恢复」之后**才发现的 ——
+    // 归档已经产出、预检已经显示「将恢复 2 个根」，然后才红。
+    //
+    // 所以这条守卫放在**导出时**：同样的规则，但在**写出归档之前**，
+    // 而且本机就能测。名字与上游那个区分开（`OVERLAPPING_MEMBERS`）——
+    // 上游那条说的是「恢复目标重叠」，这条说的是「你的成员表本身是坏的」。
+    for (Member a : members) {
+      for (Member b : members) {
+        if (a == b) continue;
+        String pa = a.path, pb = b.path;
+        if (pa.equals(pb) || pa.startsWith(pb + "/") || pb.startsWith(pa + "/"))
+          throw new IOException("OVERLAPPING_MEMBERS");
+      }
+    }
+    // ⚠️ **规范化，不是 `getAbsoluteFile()`。** 后者只保证绝对路径、**不解析符号链接**。
+    // 真机上第一次点导出就红了 `PARENT_LINK`：Android 的 `/data/user/0` 是指向
+    // `/data/data` 的符号链接，而 `cacheDir`/`filesDir` 返回的正是那条路径 ——
+    // `AndroidBackupFileSystem` 逐级用 `O_NOFOLLOW` 走父目录，见到链接就拒绝。
+    // 详见 `DshHostPaths` 的类注释。
+    File home = DshHostPaths.canonical(userDataDir);
+    File task = DshHostPaths.canonical(taskDir);
+    File target = DshHostPaths.canonical(destination);
+
+    if (!task.isDirectory()) throw new IOException("TASK_DIRECTORY_MISSING");
+    // 任务目录落在源之内 = 备份会把自己正在写的东西也读进去。
+    // 上游也有这条检查（BACKUP_DESTINATION_IN_SOURCE），但它是在 create 内部才抛 ——
+    // 那时已经建了草稿文件。这里提前一次，代价是一次字符串比较。
+    if (isInside(home, task)) throw new IOException("TASK_INSIDE_SOURCE");
+    if (isInside(home, target)) throw new IOException("DESTINATION_INSIDE_SOURCE");
+
+    File parent = target.getParentFile();
+    if (parent == null || !parent.isDirectory()) throw new IOException("DESTINATION_PARENT_MISSING");
+    if (target.exists()) throw new IOException("DESTINATION_EXISTS");
+    // 产物必须落在任务目录里（上游的硬断言），所以它是「任务目录 + 目标文件名」。
+    String name = target.getName();
+    if (RESERVED.contains(name)) throw new IOException("RESERVED_ARTIFACT_NAME");
+    File archive = new File(task, name);
+    if (archive.exists()) throw new IOException("ARTIFACT_EXISTS");
+    // **目标不能就是产物本身。** 上游 `move` 要求目标不存在，所以那种调用会以
+    // `UNSAFE_MOVE` 失败 —— 而那个名字说的是「跨设备/父目录不对」，**指向的是错的方向**：
+    // 真机上我照着它去查文件系统，而真正的原因是调用方把 destination 传成了产物路径。
+    // 所以在这里把它变成一个说得出自己意思的码。
+    if (archive.equals(target)) throw new IOException("DESTINATION_IS_ARTIFACT");
+
+    List<BackupSource> sources = new ArrayList<>();
+    List<String> skipped = new ArrayList<>();
+    Set<String> ids = new HashSet<>();
+    for (Member member : members) {
+      if (!ids.add(member.id)) throw new IOException("DUPLICATE_ROOT");
+      File root = new File(home, member.path);
+      // 没被选中（用户还没用过那一块）不是错误。如实报出来，不静默。
+      if (!root.exists()) {
+        skipped.add(member.id);
+        continue;
+      }
+      BackupSource source =
+          new FileBackupSource(
+              fs, member.id, member.scope, root, member.external, policyFor(member, excluded));
+      // 🔴 **总是包一层选择性投影。**
+      //
+      // 阶段 2.3 做了投影（`CredentialFileBackupSource`），它的单测也过了 ——
+      // 但**生产路径上从来没有人用它**，于是真机上 `.credentials.yaml` **原样**进了归档，
+      // 用户的 API Key 与明文会话授权躺在下载目录里。
+      //
+      // 第一版修法我让凭据文件**单独成一个根**，好让上游那个装饰器能套上 ——
+      // 结果撞上 `OVERLAPPING_TARGETS`：`.dsh/.credentials.yaml` 落在 `.dsh` 之内，
+      // 而上游用**路径前缀**判目标重叠（那个拒绝是对的，嵌套目标没法原子换入）。
+      //
+      // 所以改成 `DshCredentialsSource`：包在**整棵树**外面，只对那一个文件动手、
+      // 其余原样透传。根的数量不变 ⇒ 目标不重叠。
+      //
+      // **无条件包**，不按 `member.path` 判断该不该包 —— 它自己不匹配时是纯透传，
+      // 而「忘了包」正是这个模块出过两次事故的形态。
+      sources.add(new DshCredentialsSource(source));
+    }
+    if (sources.isEmpty()) throw new IOException("NO_SELECTED_DATA");
+
+    Map<String, Object> manifest = HostSnapshot.create(
+        fs, sources, task, archive, provenance, rescue, control);
+
+    // 移出任务目录。上游的 move 不覆盖 —— 上面已经查过目标不存在，
+    // 但两次检查之间目标可能被人创建，那时 move 会抛，而不是悄悄盖掉别人的备份。
+    fs.move(archive, target);
+    long bytes = fs.stat(target).size;
+    return new Exported(target, manifest, bytes, sha256(fs, target), skipped);
+  }
+
+  /**
+   * 把一个「排除谓词」适配成某个成员根的 {@link FileBackupSource.Policy}。
+   *
+   * <h2>为什么这里有一步前缀拼接，而它不是可有可无的</h2>
+   *
+   * 上游的 {@code Policy.exclusion(relative, node)} 给的 {@code relative} 是**相对这个成员根**
+   * 的 —— 成员根是 {@code .dsh} 时，凭据文件叫 {@code credentials}。
+   * 而 {@code DshBackupExclusions.isExcluded} 收的是**相对 user-data** 的 —— 同一个文件叫
+   * {@code .dsh/credentials}。**两套坐标系，差一个前缀。**
+   *
+   * 少了这一步拼接，排除清单**一条都不会命中**，而且不会报任何错：
+   * 归档里会安静地带上机器本地凭据，所有计数、所有摘要、所有完整性判定都照常通过。
+   * 所以拼接放在这里（本机真跑），由 {@code exclusionsAreMatchedThroughTheMemberPrefix}
+   * 那条用例钉住 —— 它也**先自证谓词真的被调用过**，否则「一条都没命中」与
+   * 「谓词压根没被调用」在结果上一样。
+   */
+  static FileBackupSource.Policy policyFor(Member member, Predicate<String> excluded) {
+    if (excluded == null) return null;
+    return (relative, node) ->
+        excluded.test(join(member.path, relative)) ? "EXCLUDED_BY_POLICY" : "";
+  }
+
+  /**
+   * 把成员根与成员内的相对路径拼成 user-data 相对路径。
+   *
+   * 根自身（{@code relative} 为空）得到的就是成员路径本身 —— 它有意的：
+   * 用户把整个 {@code .dsh/credentials} 选成一个成员时，那条也必须被排除。
+   */
+  static String join(String base, String relative) {
+    String head = base == null ? "" : base.replaceAll("^/+|/+$", "");
+    String tail = relative == null ? "" : relative.replaceAll("^/+|/+$", "");
+    if (head.isEmpty()) return tail;
+    if (tail.isEmpty()) return head;
+    return head + "/" + tail;
+  }
+
+  /** 任务目录名：**必须匹配上游的 UUID 形状**（它自己会校验）。 */
+  public static String taskName() {
+    return UUID.randomUUID().toString();
+  }
+
+  /**
+   * 包含关系判定。**委托给 `DshHostPaths`** —— 它两边都规范化。
+   *
+   * <p>自己那份用 `getAbsoluteFile()` 的实现在符号链接下会**判错**：源是
+   * `/data/data/a`、任务目录是 `/data/user/0/a/task` 时，字符串比较会得出
+   * 「不在源之内」—— 于是 `TASK_INSIDE_SOURCE` 这条守卫静默失效。
+   */
+  static boolean isInside(File ancestor, File candidate) throws IOException {
+    return DshHostPaths.isInside(ancestor, candidate);
+  }
+
+  private static String sha256(BackupFileSystem fs, File file) throws IOException {
+    MessageDigest digest;
+    try {
+      digest = MessageDigest.getInstance("SHA-256");
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IOException("SHA256_UNAVAILABLE", impossible);
+    }
+    try (InputStream in = fs.read(file, fs.stat(file))) {
+      byte[] buffer = new byte[64 * 1024];
+      int n;
+      while ((n = in.read(buffer)) > 0) digest.update(buffer, 0, n);
+    }
+    StringBuilder out = new StringBuilder(64);
+    for (byte b : digest.digest()) out.append(String.format("%02x", b));
+    return out.toString();
+  }
+
+  /** 供 Kotlin 侧构造合法的任务目录名时自检，避免把非法 UUID 传进来。 */
+  public static boolean validTaskName(String name) {
+    return Ids.uuid(name);
+  }
+}

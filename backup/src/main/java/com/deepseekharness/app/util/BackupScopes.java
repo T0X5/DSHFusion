@@ -1,0 +1,23 @@
+// 来源：DSHA (https://github.com/DSH-APP/DSHA) — MIT
+// Copyright (c) 2026 qiannianhuanxiang
+// 原样复制进 DSHFusion，正文未做任何修改。见 governance/dsha-imports.json。
+package com.deepseekharness.app.util;
+
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
+/** Host v5 scope names; legacy full/sessions integer encodings remain in BackupScope. */
+public final class BackupScopes {
+  public static final String APPLICATION = "application",
+      SESSIONS = "sessions",
+      SETTINGS = "settings",
+      PLUGINS = "plugins",
+      PROJECTS = "projects";
+  public static final List<String> ORDERED =
+      List.of(APPLICATION, SESSIONS, SETTINGS, PLUGINS, PROJECTS);
+  public static final Set<String> ALL = Collections.unmodifiableSet(new LinkedHashSet<>(ORDERED));
+
+  private BackupScopes() {}
+}
