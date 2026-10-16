@@ -274,3 +274,70 @@ device.computer-use    DSHA 有，DSHBox 没有
 3. `mobile-pilot` vs DSHA 那 5 个：**是不是在解决同一个问题**（上一批遗留）
 4. `agent.auto-review` 在 DSHBox 侧的对应物（第一批遗留）
 5. 每条能力的**证据升级路径**
+
+---
+
+# 台账 · 第四批（2026-10-16）：两个 patch 到底补了什么 —— **3.3 的答案**
+
+> 第三批遗留的问题：「两条的 `cordis.patch.yml` 具体补了什么」。
+> 答案很短，但对 3.3（统一入口）是决定性的。
+
+## 两个 patch 的全文
+
+```yaml
+# dsh-tool-vscreen/cordis.patch.yml（3 行）
+- insert:
+    - id: dsh-tool-vscreen
+      name: dsh-tool-vscreen
+
+# dsh-computer-use-android/cordis.patch.yml（5 行）
+- insert:
+    - id: dsha-computer-use-service
+      name: '@deepseek-ai/dsh-computer-use'
+    - id: dsha-computer-use-android
+      name: dsh-computer-use-android
+```
+
+**两个加起来 8 行，而且都是同一个动作：`insert`。**
+
+## 这意味着什么
+
+### ① 它们是**标准插件机制**，不是 hack
+
+`insert` 是 Cordis 组合方言里的标准操作。**DSHA 没有为这两条能力发明任何东西** ——
+它只是把插件插进组合。**所以 3.3 的「统一入口」可以直接复用这套机制。**
+
+### ② `computer-use` 的 patch **示范了一个可抄的形状**
+
+它一次插**两个**条目：
+
+```
+官方 service  @deepseek-ai/dsh-computer-use   ← 智能部分（官方，npm 上就有）
+平台绑定      dsh-computer-use-android        ← 落到 Android（DSHA 自己写的）
+```
+
+**这正是「吸收精华」应有的形状**：**官方能力 + 我们自己的平台绑定**。
+DSHA 的绑定接的是**它的**设备桥；我们的绑定接**我们的** ——
+**patch 的形状不变，绑定的实现换掉。这就是「做一套更好的」。**
+
+### ③ 能力的实现**不在 patch 里**
+
+patch 只有注册。真正的实现在插件体内（`dsh-tool-vscreen` 的 `lib/`、
+`dsh-computer-use-android` 的绑定代码）。
+**所以 3.3 要复用的是「机制」，要重写/移植的是「体内」。**
+
+## 3.1 到此的阶段性结论（给 3.2–3.4）
+
+| 给谁 | 结论 |
+|---|---|
+| **3.2 授权模型** | `device.shell.command` 一条就带**三档前提**（root/Shizuku/ADB）—— 分级从它开始 |
+| **3.3 统一入口** | **机制可复用**（标准 Cordis `insert`）；**形状可抄**（官方 service + 我们的绑定）；**要换的是绑定的实现** |
+| **3.4 安全边界** | `device.vdisplay` 应归**默认关**（DSHA 自己都要 workaround）；`computer-use`（让 agent 直接操作手机）**必须先有前提分级**再谈默认 |
+
+## 仍未查（下一批）
+
+1. `device.computer-use` 的「已认证设备桥」**认证的是什么**（token？3090 那条？）
+2. `mobile-pilot` vs DSHA 那 5 个：**是不是在解决同一个问题**（第二批遗留）
+3. `agent.auto-review` 在 DSHBox 侧的对应物（第一批遗留）
+4. **各条能力的证据升级路径**（要做什么才算「本机跑过」/「真机验证过」）——
+   ⚠️ **这一条现在最要紧**：整张台账的证据等级还是「只读过代码」
