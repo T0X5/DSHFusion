@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.PowerManager
 import com.dshfusion.app.R
 import com.dshfusion.app.bridge.BridgeRouter
+import com.dshfusion.app.bridge.DeviceCapabilitySettings
 import com.dshfusion.app.bridge.DeviceCapabilityWiring
 import com.dshfusion.app.bridge.api.BridgeApi
 import com.dshfusion.app.runtime.RuntimeUpdateManager
@@ -56,10 +57,21 @@ object ServiceLocator {
             override suspend fun clipboardWrite(text: String) = Unit
         }
         val bridgeRouter = BridgeRouter(delegate = noopBridge, expectedDshToken = "")
-        // 设备能力层：**只构造，不启动**。`startIfEnabled(true)` 目前没有任何调用点，
-        // 所以这个服务在装好之后一次都不会监听端口 —— 这是 3.4 边界 1 要的形态：
-        // 「关着」等于「没有那条路径」，而不是「有路径但会拒绝」。
+        // 设备能力层：构造对象图，然后**按用户开关决定要不要起**。
+        // 开关默认关（`DeviceCapabilityDefaults.ENABLED`），所以全新安装上
+        // 这个服务一次都不会监听端口 —— 这是 3.4 边界 1 要的形态。
         val deviceCapability = DeviceCapabilityWiring.create(sandboxConfig.userDataDir)
+        // **唯一的启动点。** 值来自用户开关（默认关），不是一个常量 ——
+        // 套件 5z 节盯的就是这件事：主源码里只允许这一个调用点，且不许写死 `true`。
+        //
+        // 起不来（端口被占之类）不该让 App 起不来，但也**不许静默**：
+        // 记一条 ASCII 标识的警告，因为中文日志会撞 i18n 门禁，而它判得对 ——
+        // 日志里的标识符不该随语言变。
+        try {
+            deviceCapability?.bridge?.startIfEnabled(DeviceCapabilitySettings.isEnabled(context))
+        } catch (error: java.io.IOException) {
+            android.util.Log.w("DSHFusion", "DEVICE_CAPABILITY_START_FAILED", error)
+        }
         val overlayAssets = listOf(
             "vim_9.1.1230-2_arm64.deb",
             "vim-common_9.1.1230-2_all.deb",

@@ -3751,28 +3751,22 @@ except Exception:
     expect 0 "恢复后重新通过" python3 tools/check-exec-bits.py
 fi
 
-# === 5z. 设备能力层必须**默认关**（结构检查，不是注释检查） ===
+# === 5z. 设备能力层：**只有一个启动点，且开关不许写死** ===
 #
-# 判据只有一条：**没有任何调用点给 `startIfEnabled` 传 `true`。**
+# 「默认关」靠三样东西一起守，缺一个都留有悄无声息的缺口：
+#   ① `DeviceCapabilityDefaults.ENABLED == false`（有测试钉住）；
+#   ② 开关的值来自用户设置（`DeviceCapabilitySettings`），不是常量；
+#   ③ **主源码里只允许一个启动点**，且它不许把 `true` 写死。
 #
-# 为什么用这个判据，而不是去读 `ServiceLocator` 里有没有调用：
-# 「现在没调用」与「以后也没人调用」是两件事，而注释管不住后者。
-# 这一条会在**有人第一次把它打开时**变红 —— 那一刻正是应当有人来
-# 决定「打开的条件是什么、写在哪」的时刻，而不是让它顺手溜进去。
-#
-# 打开这件事本身不违规（3.5 之后确实要能打开），但它必须是**一次显式的、
-# 带上下文的改动**，而不是某个 PR 里顺手加的一行。
-section "5z. 设备能力层默认关（没有任何调用点传 true）"
+# 本节管的是 ③。它的判据刻意做成「计数 + 不许写死」而不是「不许出现」——
+# 因为 3.4 之后这个服务**确实要能被打开**，禁令会挡掉正当用法，
+# 而**只允许一处**能挡住「顺手又加一个启动点」这件真正危险的事。
+section "5z. 设备能力层：只有一个启动点，且开关不许写死 true"
 
-# **只扫主源码，且剥掉注释行。**
-#
-# 第一版把注释和测试也算进去了，于是它报的「被打开了」其实是：
-# 三处**注释**（在说明为什么现在没打开）+ 四处**测试**（测试本来就要打开它）。
-# 又是「检查的输入空间包含了关于被查对象的散文」—— 同一族问题在套件里第 N 次出现。
-#
-# 判据收紧为：**主源码里、且不是注释行**的调用点，一个都不许有。
-sz_scan() {   # $1 = 要扫的根目录
-    grep -rn 'startIfEnabled(true)' "$1" 2>/dev/null \
+# 只扫主源码，并剥掉注释行 —— 第一版把注释与测试也算进去，
+# 于是它报的「被打开了」其实是三处注释加四处测试。
+sz_scan() {   # $1 = 根目录，$2 = 模式
+    grep -rn "$2" "$1" 2>/dev/null \
         | awk -F: '{
               rest = $0
               sub(/^[^:]*:[0-9]+:/, "", rest)
@@ -3781,11 +3775,10 @@ sz_scan() {   # $1 = 要扫的根目录
           }' || true
 }
 
-# 自证：把模式写进一个临时文件，扫描器必须找得到它。
-# 没有这条，下面那个「扫不到」可能只是因为扫描器本身是瞎的。
+# 自证：扫描器必须能找到自己写进去的东西（否则下面「数量不对」可能只是它瞎了）。
 SZ_PROBE="$(mktemp -d)"
-printf 'val port = bridge.startIfEnabled(true)\n' > "$SZ_PROBE/probe.kt"
-if [ -n "$(sz_scan "$SZ_PROBE")" ]; then
+printf 'val p = bridge.startIfEnabled(anything)\n' > "$SZ_PROBE/probe.kt"
+if [ -n "$(sz_scan "$SZ_PROBE" 'startIfEnabled(')" ]; then
     ok "5z 扫描器自证：写进去的调用点能被找到（不是恒空的假检查）"
 else
     fail "5z 扫描器是瞎的 —— 连自己写进去的调用点都找不到"
@@ -3793,14 +3786,25 @@ else
 fi
 rm -rf "$SZ_PROBE"
 
-SZ_HITS="$(sz_scan "$ROOT/app/src/main")$(sz_scan "$ROOT/bridge/src/main")"
-if [ -z "$SZ_HITS" ]; then
-    ok "没有任何调用点给 startIfEnabled 传 true —— 「默认关」是结构上的，不是注释里的"
+# 只匹配**调用**形态（前面有个点），不匹配声明 `fun startIfEnabled(` ——
+# 第一版把声明也算成调用点，于是「恰好 1 个」永远不可能成立。
+SZ_CALLS="$(sz_scan "$ROOT/app/src/main" '\.startIfEnabled(')"
+SZ_COUNT=$(printf '%s' "$SZ_CALLS" | grep -c . || true)
+if [ "$SZ_COUNT" -ge 1 ] 2>/dev/null && [ "$SZ_COUNT" -eq 1 ]; then
+    ok "主源码里只有一个启动点（新增一个会在这里红）"
 else
-    fail "设备能力桥被打开了，而这条切换必须是一次显式改动：$SZ_HITS"
+    fail "主源码里有 $SZ_COUNT 个 startIfEnabled 调用点，应当恰好 1 个：$SZ_CALLS"
     CR_BAD=1
 fi
 
+# 开关不许写死。`(true)` 与 `( true )` 都算写死。
+SZ_HARDCODED="$(sz_scan "$ROOT/app/src/main" '\.startIfEnabled([[:space:]]*true[[:space:]]*)')"
+if [ -z "$SZ_HARDCODED" ]; then
+    ok "启动点没有把开关写死 —— 值必须来自用户设置（默认关）"
+else
+    fail "有人把开关写死成 true 了，那等于绕过了用户：$SZ_HARDCODED"
+    CR_BAD=1
+fi
 
 section "汇总"
 TOTAL=$((PASS + FAIL + SKIP))

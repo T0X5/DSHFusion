@@ -209,6 +209,8 @@ jobs:
                "授权状态读写没跑 = 坏文件可能被当成「已开启」"),
               ("com.dshfusion.app.bridge.security.BridgeTokenTest", 6,
                "桥自己的 token 没跑 = 「没有 token 就不许起服务」没有证据"),
+              ("com.dshfusion.app.bridge.security.DeviceCapabilityDefaultsTest", 1,
+               "「默认关」那条承诺没人看着了"),
           ):
               if name not in bridge_classes:
                   problems.append(f"{name} 没有运行（{why}）")
@@ -221,8 +223,8 @@ jobs:
               problems.append(f"{contract} 没有运行（新增能力可以不加映射）")
           # 下限 = 9 + 6 + 6 + 8 + 5 + 6 + 3（既有 BridgePolicyTest）= 43，
           # 再给 Kotlin 那 2 条留位 ⇒ 45。本机实测正是 40 + 3 + 2 = 45。
-          if bridge_total < 49:
-              problems.append(f":bridge 只有 {bridge_total} 条测试，低于预期下限 49")
+          if bridge_total < 50:
+              problems.append(f":bridge 只有 {bridge_total} 条测试，低于预期下限 50")
 
           # 设备能力端点的生命周期在 :app 里（它要碰 BuildConfig 与将来的无障碍服务），
           # 所以这里也要确认那几条真的跑了 —— 否则「默认关」只是注释里的说法。
