@@ -97,6 +97,10 @@ class DshBackupExclusionsTest {
         // 与技术事故第 41 条同一个坑。
         //
         // ⚠️ 这条测试证明的是「这些路径**会被**排除」，**不是**「真机上一次都没漏」。
+        for (path in DshBackupExclusions.CAPABILITY_GRANTS) {
+            assertTrue("$path 必须被排除（授权是「这台设备对这台设备」的信任，不该跟着归档走）",
+                DshBackupExclusions.isExcluded(path))
+        }
         for (path in DshBackupExclusions.BRIDGE_CREDENTIALS) {
             assertTrue("$path 必须被排除（桥接凭据 / 可重建的大包）", DshBackupExclusions.isExcluded(path))
         }

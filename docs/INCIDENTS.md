@@ -2858,7 +2858,7 @@ Android 的 string 资源不解释 Markdown。我在中文里写了 `**`、其�
 
 ---
 
-## 附录 B：事故索引表（48 条）
+## 附录 B：事故索引表（49 条）
 
 这张表原来在 `AGENTS.md` 里，**五次把那个文件撑过 65536 字节的指令预算而被静默截断**（截掉的正是「编码约定」与「已知陷阱」两节）。
 
@@ -3409,6 +3409,7 @@ DSHFusion 阶段 0 验证
 | 45 | 套件的结论行 | 没读；只看到「没报红」 |
 | 47 | 套件的全部 | 干脆没跑（「只是改文档」） |
 | 48 | **读了一份两天前的日志，差点报「全绿」** | 套件「报」315 项通过 —— 而它根本没跑 | `&` 作用在整条 `&&` 链上，`sleep 2; echo started` 在链外（`started` 不证明任何事）；`rm -f done` 让「没有 done」看起来像「正在跑」；`那份日志` 是 2026-10-15 的旧文件 | —（3.3） | **假绿比红贵：红会迫使你看，绿不会。** 而且 315 是真实的历史结论，比编造更难察觉。同族第 3 次（45 没读结论行 → 47 没跑 → 48 读了旧的）。新增 `tools/run-suite.sh`：日志名带时间与提交；`--check` 与当前 HEAD 比，读不到头就不认。三次注入实测退 1。§48 |
+| 49 | **`java.*` 不都等于「JDK 与 Android 都有」** —— 一轮命中两次 | CI 红在 `:bridge:compileDebugUnitTestJavaWithJavac`；`com.sun.net.httpserver`（主源码）与 `java.net.http`（测试源码）Android 都没有 | `:bridge` 按 `android.jar` 编，而**本机 `javac` 用完整 JDK** ⇒ 本机 34 条全过也不代表能编 | —（3.4） | **「本机能过 ≠ 能编」第一次以「我自己的代码红了 CI」兑现**，此前它一直只是一句劝告。改成 `ServerSocket` / `HttpURLConnection`（两边都有）；并把 `java.net.http|com.sun.|javax.` 加进排查。§49 |
 | **48** | **这一次的日志** | **两天前那次的日志** |
 
 **三次都不是逻辑错，是「我以为我在看 X，而实际在看 Y」。**
@@ -3432,6 +3433,48 @@ DSHFusion 阶段 0 验证
 
 > **第二条是关键设计**：**读不到头就等于不认**。
 > 否则「文件存在 + 内容健康」就够了 —— 而那正是这次事故的形态。
+
+---
+
+## 49. **`java.*` 并不都等于「JDK 与 Android 都有」** —— 一轮里命中两次
+
+**时间**：2026-10-17，做 3.4 的第一个端点面时。
+
+### 症状
+
+**第一次（我自己发现）**：主源码用 `com.sun.net.httpserver` —— 它是 **JDK 独有的**，
+而 `:bridge` 是 Android 库，主源码集要按 `android.jar` 编。**改掉了**（换成手写 `ServerSocket`）。
+
+**第二次（CI 发现）**：
+
+```
+> Task :bridge:compileDebugUnitTestJavaWithJavac FAILED
+    private HttpResponse<String> get(String path, String token) throws Exception {
+```
+
+`java.net.http`（JDK 11 的 HTTP 客户端）**Android 也没有** —— 这次炸的是**测试源码**。
+
+### 为什么它值得单独记
+
+**上一次推送时本机 34 条 JUnit 全过。**
+
+> **本机能过 ≠ 能编**：本机 `javac` 用完整 JDK，CI 用 `android.jar`。
+
+这句话我写过很多遍。**这是它第一次以「我自己的代码红了一次 CI」的形式兑现** ——
+而之前那些次，它都是一句劝告。
+
+### 规律（一句话）
+
+> **`java.*` 并不都等于「JDK 与 Android 都有」。**
+
+具体到这两次：`com.sun.*`（从来不是标准）与 `java.net.http`（JDK 11 新加、Android 没跟）。
+而 `java.net.ServerSocket` / `HttpURLConnection` **两边都有** —— 所以能用。
+
+### 处置
+
+- 测试改成 `HttpURLConnection` + 自写的一个极小 `Reply` 载体；
+- 在流程里加一条排查：`grep -rn 'java\.net\.http\|com\.sun\.\|javax\.' <模块>/src`；
+- **不把「本机全过」当成「能编」** —— 该等 CI 就等 CI。
 
 ---
 

@@ -121,8 +121,28 @@ object DshBackupExclusions {
             ".dsh/adb-wheels.tar.gz",
         )
 
+    /**
+     * **设备能力的授权状态**（阶段 3.2 未决③ / 3.4 §四）。
+     *
+     * 它必须**不进归档**，理由与凭据不同：**授权是「这台设备对这台设备」的信任。**
+     * 跟着归档搬到新设备上，等于「换台设备恢复」时把旧的信任一起搬过去 ——
+     * 那不是恢复数据，**那是伪造授权**。
+     *
+     * 路径与 {@code GrantStore.FILE_NAME} 必须一致；那条链没有编译期约束，
+     * 所以这里写死并在测试里钉住（两处不一致会表现为「排除没生效」而没有任何报错）。
+     *
+     * ⚠️ 与 [BRIDGE_CREDENTIALS] 一样，这是**保险，不是修复**：真机上还没有这个文件，
+     * 所以「真机上一次都没漏」没有被验证过。单测证明的是「这些路径**会被**排除」。
+     */
+    val CAPABILITY_GRANTS: List<String> =
+        listOf(
+            ".dsh/.capability-grants",
+            // 保存是先写临时文件再改名；正常不会残留，但残留的那一份内容同样是授权状态。
+            ".dsh/.capability-grants.tmp",
+        )
+
     /** [isExcluded] 用的全集。 */
-    private val all: List<String> = REGENERATED + BRIDGE_CREDENTIALS
+    private val all: List<String> = REGENERATED + BRIDGE_CREDENTIALS + CAPABILITY_GRANTS
 
     /**
      * 这个路径是否不进归档。命中规则：**等于**清单项，或是清单项的**子孙**。

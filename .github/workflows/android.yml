@@ -204,6 +204,8 @@ jobs:
                "端点门禁没跑 = 「关着时做不了」没有证据"),
               ("com.dshfusion.app.bridge.server.DeviceBridgeHttpServerTest", 5,
                "真 HTTP 的门禁没跑 = 验收句子里的「真的」没有被兑现"),
+              ("com.dshfusion.app.bridge.security.GrantStoreTest", 6,
+               "授权状态读写没跑 = 坏文件可能被当成「已开启」"),
           ):
               if name not in bridge_classes:
                   problems.append(f"{name} 没有运行（{why}）")
@@ -214,10 +216,10 @@ jobs:
           contract = "com.dshfusion.app.bridge.security.CapabilityTierMapContractTest"
           if contract not in bridge_classes:
               problems.append(f"{contract} 没有运行（新增能力可以不加映射）")
-          # 下限 = 9 + 6 + 6 + 8 + 5 + 3（既有 BridgePolicyTest）= 37，
-          # 再给 Kotlin 那 2 条留位 ⇒ 39。本机实测正是 34 + 3 + 2 = 39。
-          if bridge_total < 37:
-              problems.append(f":bridge 只有 {bridge_total} 条测试，低于预期下限 37")
+          # 下限 = 9 + 6 + 6 + 8 + 5 + 6 + 3（既有 BridgePolicyTest）= 43，
+          # 再给 Kotlin 那 2 条留位 ⇒ 45。本机实测正是 40 + 3 + 2 = 45。
+          if bridge_total < 43:
+              problems.append(f":bridge 只有 {bridge_total} 条测试，低于预期下限 43")
           # 2.4 的恢复核心是**会毁数据**的那条路径，所以单独钉住它的类。
           # 「总数够了」不代表「新那 8 条在里面」（第 26 条的同族）。
           restore = "com.deepseekharness.app.backup.NativeRestorePlanTest"
