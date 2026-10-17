@@ -341,3 +341,292 @@ patch 只有注册。真正的实现在插件体内（`dsh-tool-vscreen` 的 `li
 3. `agent.auto-review` 在 DSHBox 侧的对应物（第一批遗留）
 4. **各条能力的证据升级路径**（要做什么才算「本机跑过」/「真机验证过」）——
    ⚠️ **这一条现在最要紧**：整张台账的证据等级还是「只读过代码」
+
+---
+
+# 台账 · 第五批（2026-10-16）：**「桥」才是能力本体** —— 本批第一次有执行证据
+
+> 做法与前三批不同：**前三批只有「读 DSHA/DSHBox 的源码」，本批第一次读了「本机装着的东西」，
+> 并第一次对真机发了请求。**
+>
+> 触发点是一个很小的动作：先看**本机 `node_modules` 里到底有没有**那两个包。
+> 答案是有 —— 而那两个包的内容把前三批的两条结论直接推翻了。
+
+## 更正一：第一批整张表的「体积」列**不可靠**（我把 `du` 的块大小当成了代码量）
+
+第一批写「`dsh-auto-review` 19K」「`dsh-web-mobile` 1.7M」—— 那些是 **`du` 的磁盘块占用**，
+不是代码量。实测：
+
+| 插件 | **自有 JS 字节** | **行数** | 第一批写的 | 倍差 |
+|---|---:|---:|---:|---:|
+| `dsh-auto-review` | **171** | 3 | 19K | **114×** |
+| `dsh-task-notifier` | 2,874 | 68 | 19K | 6.6× |
+| `dsh-computer-use-android` | 8,401 | 84 | 27K | 3.3× |
+| `dsh-device-shell-guide` | 8,808 | 125 | 27K | 3.1× |
+| `dsh-tool-vscreen` | 11,176 | 105 | 31K | 2.8× |
+| `dsh-status-overlay` | 16,795 | 407 | 35K | 2.1× |
+| `dsh-destructive-guard` | 69,468 | 1,650 | 87K | 1.3× |
+| `dsh-web-mobile` | **758,632** | **14,309** | **1672K** | 2.2× |
+
+**8 个插件自有代码合计 876 KB，其中 `dsh-web-mobile` 一个占 87%。**
+剔除它之后**其余 7 个加起来 118 KB** —— 而这 118 KB 里 `dsh-destructive-guard` 又占 59%。
+
+> **教训**：`du` 测的是「占了多少块」，块大小会随文件系统与文件数变化。
+> 用 `find … | xargs cat | wc -c` 才是代码量。**第一批的倍数误差最大到 114 倍。**
+
+## 更正二：第四批「官方能力 + 我们的平台绑定」**把比例说反了**
+
+第四批看到 DSHA 那 5 行 patch 插了两个条目，写下了「**官方能力 + 我们的平台绑定**」。
+本机装着 `@deepseek-ai/dsh-computer-use@0.2.0-rc.2`，读它：
+
+```
+deps   {}                                    ← 零运行时依赖
+peer   { cordis, dsh-brand }
+lib/index.js   35 行
+```
+
+**全文就是一张「独占槽位」注册表**：
+
+```js
+var ComputerUseRegistry = class extends Service {
+  register(name) {
+    if (this.registration !== void 0) throw new Error(`computer use provider "..." is already registered`);
+    return this.ctx.effect(() => { this.registration = name; return () => { this.registration = void 0; }; }, "computerUse.register()");
+  }
+};
+```
+
+它自己的 README 写着：**"This package adds no model-visible tools."** —— 一个工具都没有。
+
+| | 第四批写的 | **实测** |
+|---|---|---|
+| 官方那半边 | 「能力」（智能部分） | **35 行的仲裁位**（同一时刻只允许一个 provider） |
+| DSHA 那半边 | 「平台绑定」 | **84 行的 provider**（18 行 index.js + 66 行 server.cjs） |
+
+**正确记法**：**官方给的是「谁来当 provider」这个位置，不是「provider 能做什么」。**
+能做到什么，全在 provider 里 —— 而 provider 只有 84 行，**因为它也不过是个桥客户端**（见下）。
+
+> ⚠️ 这条更正**不改变**第四批的结论「3.3 可以复用标准 Cordis `insert` 机制」——
+> 它改变的是「官方已经给了多少」：**基本没给**。所以要自己写的比原来估计的多。
+
+---
+
+## 答案一：`device.computer-use` 的「已认证设备桥」**认证的是什么** —— 有答案了
+
+`dsh-computer-use-android/lib/server.cjs` 第 75–79 行（原文）：
+
+```js
+const token = (await dependencies.fs.readFile('/root/.dsh/.bridge_token','utf8')).trim();
+if (!token) throw Error('BRIDGE_NOT_READY');
+const url = new URL('http://127.0.0.1:3090' + def[2]);
+for (const [k,v] of Object.entries(args)) url.searchParams.set(k, String(v));
+const response = await fetch(url, { signal, headers: { 'X-Token': token } });
+```
+
+| 项 | 值 | 怎么核实的 |
+|---|---|---|
+| 凭据文件 | `/root/.dsh/.bridge_token` | `ls` 实测存在，**32 字节** |
+| 传输方式 | HTTP 头 **`X-Token`** | 源码 + 下面 `/app/version` 的 `BRIDGE_AUTH=header-x-token` |
+| 目标 | `http://127.0.0.1:3090` | 源码 + 实测 |
+
+**并且实测了两个文件是同一份凭据**：
+
+```
+$ cmp <(tr -d '\n' < /root/.dsh/.bridge_token) <(sed -n 's/^X-Token: *//p' /root/.dsh/.bridge_headers | tr -d '\n')
+token files identical? YES
+```
+
+⇒ **「已认证」= 3090 桥 + `X-Token` 头 + `/root/.dsh/.bridge_token`。不是 OAuth，不是设备配对，不是 Shizuku。**
+
+## 答案二：`device.vdisplay` **也走同一个桥**（不是另一条路）
+
+`dsh-tool-vscreen/lib/server.cjs`：
+
+```
+59: const url='http://127.0.0.1:3090/app/vscreen/'+route;
+75: const token=(await …readFile('/root/.dsh/.bridge_token','utf8')).trim();
+79: const response=await fetch(request.url,{…headers:{…request.headers,'X-Token':token}});
+```
+
+**逐字同一个模式。** 体量：605 字节 `index.js` + 10,571 字节 `server.cjs`。
+
+⇒ 于是把第四批的第 ② 条收得更紧：**不是「两条能力都依赖同一个桥」，而是
+「DSHA 的设备能力全部是同一个桥的客户端」** —— 下一条把这句话证完。
+
+## 答案三：`agent.auto-review` 在 DSHA 侧**一行逻辑都没有**，在 DSHBox 侧**没有对应物**
+
+**DSHA 侧**：`dsh-auto-review` 的自有代码**全文 171 字节 / 3 行**：
+
+```js
+// 实际逻辑由已锁定的官方 Auto review 模块提供；当前会话仍须主动选择并确认。
+export const name='dsh-auto-review';
+export function apply() {}
+```
+
+**`apply()` 是空的。** 而它的 `cordis.patch.yml` 与官方包**逐字节相同**：
+
+```
+$ sha256sum dsh-auto-review/cordis.patch.yml \
+            /usr/local/lib/node_modules/@deepseek-ai/dsh-experimental-auto-review/cordis.patch.yml
+21d456d0053b3d52ca8ad4ceef60e4cd5618e8c850ab8fe9e6377dfcdcb3bc2a  dsh-auto-review/cordis.patch.yml
+21d456d0053b3d52ca8ad4ceef60e4cd5618e8c850ab8fe9e6377dfcdcb3bc2a  …/dsh-experimental-auto-review/cordis.patch.yml
+```
+
+⇒ **DSHA 做的事是「把官方包塞进它的离线 rootfs，再用一个空壳把它选进组合」。**
+那个「19K」是块大小（见更正一）。**第一批把它读成一份 19K 的实现，是读数错误。**
+
+**DSHBox 侧**：817 个文件里搜 `auto.review|autoReview|自动审核|自动审查|auto_review` → **命中 0**；
+搜 `review` 命中的全是文件查看器 / 代码评审类文案。⇒ **没有对应物。**
+
+**所以 `agent.auto-review` 这一条的性质要改**：不是「DSHA 的能力，看 DSHBox 有没有」，
+而是「**官方已有，两边都没有自研**」。**我们的动作是「装官方包」，不是「吸收」** ——
+它与 DSHA 一样是**默认关**的（官方 README：`dsh installation ships this layer switched off`）。
+
+---
+
+## 🔴 本批最大的一条：**DSHA 的插件层几乎不值钱，真正的能力全在 App 里**
+
+把 8 个插件按**形态**分类（不是按描述）：
+
+| 插件 | 自有代码 | **形态** | 它实际做的事 |
+|---|---:|---|---|
+| `dsh-auto-review` | 171 B | **空壳** | `apply(){}` + 官方 patch |
+| `dsh-device-shell-guide` | 8.8 KB | **提示词插件** | 注入 `systemPrompt` 分区 + `mkdir` 一个缓存目录 |
+| `dsh-task-notifier` | 2.9 KB | **桥客户端** | `turn/end` → `GET /app/notify`，`X-Token` |
+| `dsh-computer-use-android` | 8.4 KB | **桥客户端（MCP 转发）** | 起 MCP server → `/app/ui/*` |
+| `dsh-tool-vscreen` | 11.2 KB | **桥客户端（MCP 转发）** | 起 MCP server → `/app/vscreen/*` |
+| `dsh-status-overlay` | 16.8 KB | **桥客户端** | 节流 → `GET /app/overlay` + `/app/plugins` |
+| `dsh-destructive-guard` | **69.5 KB** | ★ **真正的逻辑** | `tools/pre-execute` 拦截（`destructive.js` / `workdir.js`） |<!-- ignore-ref: tools/pre-execute -->
+
+<!-- 上面那个 `tools/pre-execute` 是 **Cordis 的事件名**，不是仓库内路径 —— 为它加 ignore-ref 标注。 -->
+| `dsh-web-mobile` | 758.6 KB | 前端适配 | 竖屏等（另一类，见 PRODUCT-DIRECTION §9.1） |
+
+**6 个是这条桥的客户端（其中 2 个还是提示词/空壳），1 个是真逻辑，1 个是前端。**
+
+### 决定性的一处：`device.shell.command` 的 DSHA 侧**是提示词**
+
+`dsh-device-shell-guide/lib/index.js` 全部 125 行做两件事：`prepareCacheDirectory()`（`mkdir` 三级目录）
+与 `buildPrompt()`（拼一段中文），然后 `ctx.inject(['systemPrompt'], …)` 把它挂上去。
+**它一次设备命令都不执行。**
+
+**这条我能给最强的证据**：那个 `PROMPT` 字符串**就是本次会话的系统提示里
+「【设备操作能力 · DSHA】」那一整块**，逐字相同，包括 `curl -H @/root/.dsh/.bridge_headers`
+和最后那句「与用户交流一律使用中文」。
+⇒ **我现在就运行在 `dsh-device-shell-guide` 的输出之下。这不是读出来的，是它在跑。**
+
+### 那么真正的实现在哪 —— **在 App 侧**
+
+`/app/version` 实测返回（真机，本批执行）：
+
+```
+BRIDGE_PROTOCOL=3
+BRIDGE_AUTH=header-x-token
+APP_VERSION=0.2.21-20261009.0750-dsh0.2.0-rc.2
+APP_CODE=170
+HINT=端点清单见 /app/help；判版本请用 >= 而不是 ==
+```
+
+那个格式串**逐字写在 DSHA 的 `app/src/main/java/com/deepseekharness/app/HttpShellService.java:1354`**；
+`/app/help` 那十几 KB 的清单在**同一文件第 1361 行**；`/app/*` 的路由表在
+`util/BridgeRoutes.java`（100 行）。
+
+| 文件 | 行数 | 作用 |
+|---|---:|---|
+| `HttpShellService.java` | **2,208** | 桥的服务端（HTTP、路由分发、全部 `/app/*` 处理） |
+| `DeviceBridgeService.java` | **607** | 桥的服务本体 |
+| `util/BridgePathPolicy.java` | 187 | 路径策略（凭据区不可读等） |
+| `LanAuth.java` | 145 | token 鉴权 |
+| `util/BridgeRoutes.java` | 100 | 路由表 |
+| **合计** | **3,247** | **「统一设备能力层」事实上已经存在，在 DSHA 的 App 里** |
+
+**⇒ 3.1 的总结论（改写了前四批的框架）**：
+
+> **「DSHA 的 8 个内建插件」在设备能力这一面上不是 8 份实现 —— 是 1 条 3,247 行的桥
+> 加上 6 个共 48 KB 的壳。**
+> 所以「吸收 DSHA 的精华」在这里**只有两个真选项**：
+> **(a) 用 DSHA 的桥**（= 依赖 DSHA 装着，或把 3,247 行搬进来）
+> **(b) 自己实现一条协议兼容的桥**（插件壳可以照抄形状，但壳里没有能力）。
+> **中间选项不存在** —— 因为壳里真的什么都没有。
+
+## 🔴 而这**会作废一份现有审计**：`docs/DSHA-PROVENANCE-AUDIT.md`
+
+那份审计的结论「不复用 DSHA 的 Shizuku `ShellService`」建立在**三条依据**上，第三条是：
+
+> **它不在我们的主干路径上** —— 我们没有任何代码引用 DSHA 的 `ShellService` / `HttpShellService`
+
+而它的 §4 列出两条「结论失效、必须重做审计」的条件，**第 1 条正是**：
+
+> 我们**决定移植 DSHA 的 `HttpShellService`（2208 行）**或其执行路径
+
+**第 2 条是**：「3.1–3.5 决定**采用 DSHA 的设备桥实现**（而不是自研）」。
+
+⚠️ **如实报三件事**：
+
+1. **今天还没有踩到。** 3.1 只是**查清了**桥在哪，没有决定采用它。**所以那份审计现在仍然有效。**
+2. **但触发条件已经从「假想」变成「路线图上的」** —— 上面 (a) 选项会正面踩 §4.1 + §4.2。
+3. **并且我读了 `HttpShellService.java` 的两处**（1354 / 1361 行）与 `BridgeRoutes.java`。
+   **读不构成「采用」**，但它意味着：**如果 3.3 选 (b)「协议兼容」，就必须先划清
+   「兼容」与「派生」的界线** —— 因为 `/app/help` 那份清单的文本**就是它的**，
+   而端点名与语义**必然要一致**（不然客户端全不兼容）。
+
+⇒ **这条写进 3.3 的前置条件，不是可选项。** 审计里加了一节前向引用，见该文件新的 §6。
+
+## 顺带得到一条 3.4 能直接用的：**DSHA 自己也把桥凭据当敏感文件保护**
+
+`dsh-destructive-guard/lib/index.js:60`：
+
+```js
+if (/(?:\.credentials\.yaml|id_rsa|id_ed25519|\.bridge_token|\.bridge_headers)$/.test(path)) return null;
+```
+
+它把 `.bridge_token` / `.bridge_headers` **与私钥、DSH 凭据并列**，阻止破坏性操作碰到它们。
+**这与我方「凭据由宿主写入 `.bridge_headers`、不写进 URL」是同一条纪律的两端。**
+
+---
+
+## 证据升级路径：**逐条**写明「升到下一级要做什么」
+
+⚠️ **这是本批的第二项主产出。** 前四批把 11 条条目的证据等级全写成「只读过代码」，
+而**「只读过代码」不是一个可以停在原地的等级** —— 它是「还不知道」。
+
+等级定义（沿用第三节，本批补上**每一级怎么达成**）：
+
+| 等级 | 含义 | 达成条件（本批补） |
+|---|---|---|
+| `真机验证过` | 在目标设备上真实执行并观察到结果 | 有**设备侧返回**或**界面变化**作证，不看自述 |
+| `本机跑过` | 在本容器里真实执行过 | 有**命令与输出**；仅编译不算 |
+| `只读过代码` | 读了实现，没执行 | 现状 |
+| `只有上游声称` | 只读了描述/README | 比上一级更低 |
+
+| `id` | 现状 | **升到「本机跑过」要做什么** | **升到「真机验证过」要做什么** |
+|---|---|---|---|
+| `device.computer-use` | ✅ **真机验证过**（本批升） | — | **已在跑**：本会话每一条 `android_*` 工具调用都是它 |
+| `device.shell.command` | 只读过代码 | 读 `HttpShellService` 的 `/app/*` 分派（只读，不执行） | 走一次 `adb-shell` 并 `id` 核验身份 —— **注意这是执行设备命令，要有明确目的** |
+| `device.vdisplay` | 只读过代码 | 读 `server.cjs` 的 10.5 KB（13 个路由） | `GET /app/vscreen/status`（**只读**）→ 再决定是否 `create` |
+| `ui.overlay.status` | 只读过代码 | 读 `dsh-status-overlay` 的节流逻辑 | 触发一次并把 `/app/overlay` 的返回记下来 |
+| `ui.notify.turn-end` | 只读过代码 | 读 68 行全文 | 发一条**测试通知**并确认收到 |
+| `ui.a11y.drive` | 只读过代码 | 读 `RelayA11yWatchdog` 与 DSHA 的 `DshaAccessibilityService` | 需**无障碍服务已开**；先查开没开，再决定 |
+| `device.app.control` | 只读过代码 | 读 `mobile-pilot` 的 `app.launch`/`app.info` | `GET /app/apps?q=`（只读）→ `launch` 一个无害应用 |
+| `device.alarm` | 只读过代码 | 读 `alarm.set`/`alarm.show` 的实现 | 设一个 5 秒后的闹钟再看它响 |
+| `safety.destructive-guard` | 只读过代码 | **读那 1,650 行**（唯一有真逻辑的一个） | 造一个破坏性命令看它拦不拦 —— ⚠️ **必须用不毁数据的靶子** |
+| `ui.mobile-adaptation` | 只读过代码 | 两边的入口文件都读 | 手机上实际开一次，看竖屏排版 |
+| `agent.auto-review` | 只读过代码 | **已完成**：官方包 35 行 + DSHA 171 字节都读过了 | 需要在 profile 里**装上并主动选择**它才谈得上验证 |
+
+**一处立刻可做、且零风险的**：`device.vdisplay` 的 `/app/vscreen/status` 是**只读**端点
+（`/app/help` 原文：「查询 displayId、尺寸和 frameSeq（只读）」）——
+**它可以不创建任何虚拟屏就把这一条的证据升到「真机验证过」。** 留到下一批。
+
+> ⚠️ **诚实登记一处操作失误**：本批为核实「两个凭据文件是否同一份」，我用了
+> `sed 's/=.*/=<redacted>/'` 去遮蔽 —— **而该文件的格式是 `X-Token: <值>`（冒号不是等号），
+> 所以遮蔽没有生效，token 明文进了会话记录。**
+> **教训**：遮蔽要按**实际格式**做，或者干脆只比 `cmp` 的退出码（我后来补的那次才是对的做法）。
+> 该 token 是**本机 127.0.0.1 桥**的凭据，未进入 URL 也未进入 argv；
+> 但**轮换清单上要加上它**（与 PAT 一起，只有用户能做）。
+
+## 仍未查（下一批）
+
+1. **`/app/vscreen/status` 的只读真机验证**（上面那条，零风险，把 `device.vdisplay` 升级）
+2. `mobile-pilot` vs DSHA 那 5 个「是不是在解决同一个问题」—— **本批已经把它变成了一个不同的问题**：
+   DSHA 那 5 个里 1 个空壳、1 个提示词、3 个桥客户端，**所以「同一个问题」这个问法本身要重问**：
+   应该问 **「`mobile-pilot` 是在实现能力，还是在绑 App 的接口？」**
+3. 3.2 / 3.3 / 3.4 的落点决定 —— 而 3.3 现在有了一条**必须先做的前置**（划清协议兼容与派生的界线）

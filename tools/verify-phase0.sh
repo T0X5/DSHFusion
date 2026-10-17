@@ -3271,35 +3271,126 @@ fi
 # **所以改成表驱动**：加一处过期陈述时，把它加进这张表，而不是加一段 if。
 #
 # 每一项 = 「文件 | 不许出现的原文 | 现在的事实」。
-STALE_TABLE=(
-    "README.md|包名重构、高级功能 | ⬜ 待做|包名重构已在阶段 3.0 完成"
-    "README.md|数据安全：备份恢复 + 受管更新 | ✅ **已完成|受管更新见阶段 2.8，尚未完成"
-    "README.md|阶段验证套件（325 项|套件项数已增长，写死的数字会骗人"
-    "docs/FUSION-PLAN.md|能否读回会话」未验证|真机已完成完整往返（见 device-acceptance）"
-    "docs/FUSION-PLAN.md|这一层**一项都还没做**|恢复编排已完成并真机跑通"
-    "docs/INSTALL-ON-DEVICE.md|阶段 2 唯一还没做的那件事|已于 2026-10-16 完成"
-    "docs/INCIDENTS.md|更新失败自动回滚 | ✅|那条 ✅ 是错报的 —— 见阶段 2.8"
-)
-# ⚠️ **比对前先剥掉删除线段落。**
+# 🔴 **分隔符必须是 TAB，不能用 `|`** —— 这一条是本表自己的事故（§45）。
 #
-# `~~过期的话~~` 是**明确标注过的历史**，本仓库有意保留它（改历史比留旧话更糟）。
-# 第一版检查没做这个区分，于是把我自己划掉的三处当成「仍写着」报了出来 ——
-# 又是「检查的输入空间包含关于被查对象的散文」那一族，**第 7 次**。
-for row in "${STALE_TABLE[@]}"; do
-    IFS='|' read -r file stale fact <<<"$row"
-    if [ -f "$ROOT/$file" ] && \
-       python3 -c "
+# 本表原先用 `|` 分段，而**第 2 项「不许出现的原文」里本来就含 `|`**
+# （`受管更新 | ✅ **已完成` 是一段 Markdown 表格片段）。于是 bash 静默地把它
+# 切成三段：`file=README.md`、`stale=受管更新 `、`fact= ✅ **已完成|…`。
+# `stale` 退化成一个**人畜无害的主题词**，而主题词当然还在文档里 ——
+# 第 2 项**永远报红**（报红的理由还是错的），第 1 / 7 项**永远报绿**。
+#
+# 修完那次之后，写记录时我又踩了第二次：
+#   ① 正文里逐字引用被查原文 → **这张表把记录它自己的散文当成「仍写着」**（第 8 次同族）；
+#   ② 于是加了 ignore-stale 出口，而**出口的说明注释里我用了反引号** ——
+#      那段 python 写在 bash 的**双引号**里，一对反引号 = 一次命令替换，
+#      而被替换的那条命令是 HTML 注释、**在 bash 里是语法错误** ⇒
+#      整条复合命令在运行期被打断，**循环一行都没判**，
+#      而没有任何东西把 CR_BAD 置 1 ⇒ **整张表贡献 0 项，看起来却是好的**（§45 补记二）。
+#      （用一对反引号是这种形态；只有一个反引号则是**解析期**报错、整个脚本退 2 —— 两种都要防。）
+#
+# ⚠️ **所以这段 python 的注释里不许出现反引号、美元括号。** 它们都在双引号里。
+# ⚠️ **而且谓词只许有一份。** 上一版我给 ignore-stale 写的两条自证，把谓词**抄了一份**
+#    放进自证里 —— 于是自证全绿，而真正在用的那一份是坏的。**自证必须走同一条代码路径**，
+#    这条比「有没有自证」更要紧。
+STALE_TABLE=(
+    $'README.md\t包名重构、高级功能 | ⬜ 待做\t包名重构已在阶段 3.0 完成'
+    $'README.md\t受管更新 | ✅ **已完成\tREADME 应写「受管更新见阶段 2.8，尚未完成」'
+    $'README.md\t阶段验证套件（325 项\t套件项数已增长，写死的数字会骗人'
+    $'docs/FUSION-PLAN.md\t能否读回会话」未验证\t真机已完成完整往返（见 device-acceptance）'
+    $'docs/FUSION-PLAN.md\t这一层**一项都还没做**\t恢复编排已完成并真机跑通'
+    $'docs/INSTALL-ON-DEVICE.md\t阶段 2 唯一还没做的那件事\t已于 2026-10-16 完成'
+    $'docs/INCIDENTS.md\t更新失败自动回滚 | ✅\t那条 ✅ 是错报的 —— 见阶段 2.8'
+)
+stale_row_fields() { awk -F'\t' '{print NF}' <<<"$1"; }
+
+# **唯一的谓词。** 0 = 文件里仍写着（坏）；1 = 没有（好）；其它 = 谓词坏了。
+# 剥掉两类「不算」的内容：删除线段落（历史）与 ignore-stale 标记（显式引用）。
+stale_file_contains() {
+    python3 -c "
 import pathlib, re, sys
 t = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')
-t = re.sub(r'~~.*?~~', '', t, flags=re.S)   # 删除线 = 历史，不算
+t = re.sub(r'~~.*?~~', '', t, flags=re.S)
+for m in re.finditer(r'<!--\s*ignore-stale:\s*(.*?)\s*-->', t, flags=re.S):
+    t = t.replace(m.group(1), '')
 sys.exit(0 if sys.argv[2] in t else 1)
-" "$ROOT/$file" "$stale"; then
+" "$1" "$2"
+}
+
+# ---------- 自证（三条，全部调用上面那一个谓词） ----------
+if [ "$(stale_row_fields $'README.md\t只有两段')" = "2" ]; then
+    ok "5x 段数护栏自证：缺段的行被数成 2 段（不是恒等于 3 的假护栏）"
+else
+    fail "5x 段数护栏是瞎的 —— 缺段的行没被数成 2 段"
+    CR_BAD=1
+fi
+
+STALE_PROBE="$(mktemp)"
+printf '引用：更新失败自动回滚 | ✅<!-- ignore-stale: 更新失败自动回滚 | ✅ -->\n' > "$STALE_PROBE"
+stale_file_contains "$STALE_PROBE" '更新失败自动回滚 | ✅'; probe=$?
+if [ "$probe" = "1" ]; then
+    ok "5x ignore-stale 自证①：带标记的引用不被判成「仍写着」"
+else
+    fail "5x ignore-stale 自证①：带标记的引用仍被判成「仍写着」（实测退出码 $probe）"
+    CR_BAD=1
+fi
+printf '更新失败自动回滚 | ✅\n' > "$STALE_PROBE"
+stale_file_contains "$STALE_PROBE" '更新失败自动回滚 | ✅'; probe=$?
+if [ "$probe" = "0" ]; then
+    ok "5x ignore-stale 自证②：不带标记的同一句话仍被判成「仍写着」（标记没把检查弄瞎）"
+else
+    fail "5x ignore-stale 自证②：不带标记也被放过 —— 标记把检查弄瞎了（实测退出码 $probe）"
+    CR_BAD=1
+fi
+rm -f "$STALE_PROBE"
+
+# ---------- 逐行判 ----------
+STALE_SEEN=0
+for row in "${STALE_TABLE[@]}"; do
+    fields="$(stale_row_fields "$row")"
+    if [ "$fields" != "3" ]; then
+        fail "5x 表的行不是三段（实测 $fields 段；分隔符必须是 TAB）—— $row"
+        CR_BAD=1
+        continue
+    fi
+    IFS=$'\t' read -r file stale fact <<<"$row"
+    STALE_SEEN=$((STALE_SEEN + 1))
+    if [ ! -f "$ROOT/$file" ]; then
+        fail "5x 表点了不存在的文件：$file"
+        CR_BAD=1
+        continue
+    fi
+    # 🔴 谓词坏了必须报红，**不许退化成通过** —— 上一次事故就是这里走的 else。
+    if stale_file_contains "$ROOT/$file" "$stale"; then
         fail "$file 仍写着「$stale」—— $fact"
         CR_BAD=1
     else
-        ok "$file 没有过期陈述「${stale:0:28}…」"
+        hit=$?
+        if [ "$hit" = "1" ]; then
+            ok "$file 没有过期陈述「$stale」"
+        else
+            fail "5x 谓词没有给出 0/1（实测 $hit，文件 $file）—— 判据坏了，不许当成通过"
+            CR_BAD=1
+        fi
     fi
 done
+
+# **行数护栏**：判过的行数必须等于表长且不少于 7。
+# 没有这一条，「循环根本没跑」（数组空 / 解析坏了）会表现成**一行不报 = 全绿**。
+if [ "$STALE_SEEN" = "${#STALE_TABLE[@]}" ] && [ "$STALE_SEEN" -ge 7 ]; then
+    ok "5x 行数护栏：$STALE_SEEN 行逐行判过（等于表长且不少于 7）"
+else
+    fail "5x 行数护栏：只判了 $STALE_SEEN 行，而表长是 ${#STALE_TABLE[@]} —— 循环没跑完"
+    CR_BAD=1
+fi
+
+# **行数护栏**：跑过的行数必须等于表里的行数。
+# 没有这一条，「循环根本没跑」（数组空 / 解析坏了）会表现成**一行不报 = 全绿**。
+if [ "$STALE_SEEN" = "${#STALE_TABLE[@]}" ] && [ "$STALE_SEEN" -ge 7 ]; then
+    ok "5x 行数护栏：$STALE_SEEN 行逐行判过（等于表长且不少于 7）"
+else
+    fail "5x 行数护栏：只判了 $STALE_SEEN 行，而表长是 ${#STALE_TABLE[@]} —— 循环没跑完"
+    CR_BAD=1
+fi
 
 
 # ⑤ 数字类过期陈述：README 里写的套件项数必须等于实测值
