@@ -1,6 +1,6 @@
 {
   "schema": 1,
   "purpose": "verify-phase0.sh 上一次运行记录的合计项数。5x 节读它来核 README 里的数字，以免在套件里再跑一遍套件（那会递归并拖死外层）。判据因此滞后一次运行。",
-  "total": 349,
+  "total": 351,
   "recorded_at": "2026-10-17"
 }

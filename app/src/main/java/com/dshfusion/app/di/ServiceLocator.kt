@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.PowerManager
 import com.dshfusion.app.R
 import com.dshfusion.app.bridge.BridgeRouter
+import com.dshfusion.app.bridge.DeviceCapabilityWiring
 import com.dshfusion.app.bridge.api.BridgeApi
 import com.dshfusion.app.runtime.RuntimeUpdateManager
 import com.dshfusion.app.sandbox.DefaultSandboxManager
@@ -55,6 +56,10 @@ object ServiceLocator {
             override suspend fun clipboardWrite(text: String) = Unit
         }
         val bridgeRouter = BridgeRouter(delegate = noopBridge, expectedDshToken = "")
+        // 设备能力层：**只构造，不启动**。`startIfEnabled(true)` 目前没有任何调用点，
+        // 所以这个服务在装好之后一次都不会监听端口 —— 这是 3.4 边界 1 要的形态：
+        // 「关着」等于「没有那条路径」，而不是「有路径但会拒绝」。
+        val deviceCapability = DeviceCapabilityWiring.create(sandboxConfig.userDataDir)
         val overlayAssets = listOf(
             "vim_9.1.1230-2_arm64.deb",
             "vim-common_9.1.1230-2_all.deb",
@@ -124,6 +129,15 @@ object ServiceLocator {
         val onlineRuntimeImportManager = com.dshfusion.app.runtime.OnlineRuntimeImportManager(
             context, sandboxConfig, sandboxManager,
         )
-        return AppContainer(context, sandboxConfig, sandboxManager, bridgeRouter, dshTerminalManager, runtimeUpdateManager, onlineRuntimeImportManager)
+        return AppContainer(
+            context,
+            sandboxConfig,
+            sandboxManager,
+            bridgeRouter,
+            dshTerminalManager,
+            runtimeUpdateManager,
+            onlineRuntimeImportManager,
+            deviceCapability,
+        )
     }
 }
