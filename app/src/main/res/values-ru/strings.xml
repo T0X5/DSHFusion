@@ -688,4 +688,7 @@
     <string name="auto_last">Последняя копия: %1$s</string>
     <string name="auto_run_now">Скопировать сейчас</string>
     <string name="auto_keep_note">Очищаются только автоматические копии; хранится не более %1$d. Ручные и спасательные архивы не удаляются никогда.</string>
+    <string name="settings_section_device_capability">Возможности устройства</string>
+    <string name="settings_device_capability_intro">Позволяет агенту в контейнере управлять этим телефоном через локальный порт. По умолчанию выключено; прослушивание начинается только после подтверждения.</string>
+    <string name="settings_device_capability_enable">Включить конечные точки возможностей</string>
 </resources>

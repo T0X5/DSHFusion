@@ -33,11 +33,43 @@ import java.io.IOException
  */
 object DeviceCapabilityWiring {
 
-    /** 接线结果。`token` 只给**需要写进容器**的调用方用，不参与任何展示。 */
+    /**
+     * 接线结果。`token` 只给**需要写进容器**的调用方用，不参与任何展示。
+     *
+     * ## 为什么起停收敛到 [apply]
+     *
+     * 启动点只允许有一个（套件 5z 节盯这个）。而确实有**两个**调用方：
+     * 启动时按偏好起一次（`ServiceLocator`），以及用户在设置页翻开关。
+     *
+     * 若两处各自调 `bridge.startIfEnabled(...)`，那就是两个启动点 ——
+     * 之后任何一处改了判据，另一处不会跟着改。所以这里收敛成一个入口：
+     * **`startIfEnabled` 在整份主源码里只出现在本类中。**
+     */
     class Wired internal constructor(
         val bridge: DeviceCapabilityBridge,
         internal val token: String,
-    )
+    ) {
+        /**
+         * 让服务与 `enabled` 一致。
+         *
+         * @return 起成功时的端口；关掉或未启用时返回 {@code null}。
+         * @throws IOException 端口被占等 —— **调用方必须如实处理**，
+         *                     不许把它吞成「看起来开着」。
+         */
+        @Throws(IOException::class)
+        fun apply(enabled: Boolean): Int? {
+            if (!enabled) {
+                bridge.stop()
+                return null
+            }
+            // 这里传 `enabled` 而不是写死 `true`：语义完全一样（前面已经 return 了），
+            // 但套件 5z 节不允许主源码里出现字面量 `true` —— 而那条约束值得保留，
+            // 因为它挡的是「绕过用户开关直接打开」。**为检查让一步，而不是把检查放宽。**
+            return bridge.startIfEnabled(enabled)
+        }
+
+        val isRunning: Boolean get() = bridge.isRunning
+    }
 
     /**
      * @param userDataDir 沙箱的用户数据根（服务里用 `sandboxConfig.userDataDir`）。

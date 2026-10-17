@@ -68,7 +68,7 @@ object ServiceLocator {
         // 记一条 ASCII 标识的警告，因为中文日志会撞 i18n 门禁，而它判得对 ——
         // 日志里的标识符不该随语言变。
         try {
-            deviceCapability?.bridge?.startIfEnabled(DeviceCapabilitySettings.isEnabled(context))
+            deviceCapability?.apply(DeviceCapabilitySettings.isEnabled(context))
         } catch (error: java.io.IOException) {
             android.util.Log.w("DSHFusion", "DEVICE_CAPABILITY_START_FAILED", error)
         }

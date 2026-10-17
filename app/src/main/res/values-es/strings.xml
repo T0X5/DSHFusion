@@ -678,4 +678,7 @@
     <string name="auto_last">Última copia: %1$s</string>
     <string name="auto_run_now">Copiar ahora</string>
     <string name="auto_keep_note">Solo se depuran las copias automáticas; se guardan como máximo %1$d. Las manuales y de rescate nunca se borran.</string>
+    <string name="settings_section_device_capability">Capacidades del dispositivo</string>
+    <string name="settings_device_capability_intro">Permite al agente del contenedor operar este teléfono mediante un puerto local. Desactivado por defecto; solo empieza a escuchar cuando lo confirmas.</string>
+    <string name="settings_device_capability_enable">Activar los puntos de acceso a capacidades</string>
 </resources>

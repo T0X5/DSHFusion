@@ -670,4 +670,7 @@
     <string name="auto_last">Last backup: %1$s</string>
     <string name="auto_run_now">Back up now</string>
     <string name="auto_keep_note">Only automatic backups are pruned; at most %1$d are kept. Manual and rescue archives are never deleted.</string>
+    <string name="settings_section_device_capability">Device capabilities</string>
+    <string name="settings_device_capability_intro">Lets the agent inside the container operate this phone over a local loopback port. Off by default; turning it on starts a listener only once you confirm.</string>
+    <string name="settings_device_capability_enable">Enable device capability endpoints</string>
 </resources>

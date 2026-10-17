@@ -660,4 +660,7 @@
     <string name="auto_last">上次备份：%1$s</string>
     <string name="auto_run_now">立即备份一次</string>
     <string name="auto_keep_note">只清理自动备份，最多保留 %1$d 份。手动与救援归档永不删除。</string>
+    <string name="settings_section_device_capability">设备能力</string>
+    <string name="settings_device_capability_intro">让容器里的 agent 通过本机回环端口操作这台手机。默认关闭；打开后才会开始监听。</string>
+    <string name="settings_device_capability_enable">启用设备能力端点</string>
 </resources>

@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.os.LocaleListCompat
 import com.dshfusion.app.BuildConfig
 import com.dshfusion.app.DshApp
+import com.dshfusion.app.bridge.DeviceCapabilitySettings
 import com.dshfusion.app.R
 import com.dshfusion.app.util.AppUpdater
 import com.dshfusion.app.util.ArchiveErrors
@@ -97,6 +98,10 @@ fun SettingsScreen(
     onPendingOnlineImportConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    // 设备能力层的开关：默认值来自 DeviceCapabilityDefaults（false），这里不另写一个 false。
+    var deviceCapabilityEnabled by remember {
+        mutableStateOf(DeviceCapabilitySettings.isEnabled(context.applicationContext))
+    }
     val scope = rememberCoroutineScope()
     val sandboxManager = (context.applicationContext as DshApp).container.sandboxManager
     var showDiagnostics by remember { mutableStateOf(false) }
@@ -490,6 +495,39 @@ fun SettingsScreen(
                 title = stringResource(R.string.settings_battery_whitelist),
                 onClick = { showBatteryDialog = true },
             )
+        }
+
+        // 设备能力层（阶段 3.4/3.5）。**默认关**，打开是一次显式动作。
+        // 这里只翻偏好并就地起停 —— 真正的默认值在 DeviceCapabilityDefaults，
+        // 套件 5z 节盯着「主源码只有一个启动点且不许写死 true」。
+        SettingsSection(title = stringResource(R.string.settings_section_device_capability)) {
+            Text(
+                text = stringResource(R.string.settings_device_capability_intro),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Switch(
+                    checked = deviceCapabilityEnabled,
+                    onCheckedChange = { wanted ->
+                        deviceCapabilityEnabled = wanted
+                        DeviceCapabilitySettings.setEnabled(context, wanted)
+                        // 就地生效，但要**如实**处理起不来的情况：端口被占、token 拿不到。
+                        val wired = (context.applicationContext as? DshApp)?.container?.deviceCapability
+                        if (wired != null) {
+                            runCatching { wired.apply(wanted) }
+                        }
+                    },
+                )
+                Text(
+                    text = stringResource(R.string.settings_device_capability_enable),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            }
         }
 
         // 「诊断与日志」独立成卡：它是页面上最后一条裸行，包进卡片后

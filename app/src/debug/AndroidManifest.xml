@@ -12,6 +12,18 @@
                 <action android:name="com.dshfusion.app.dev.action.INSTALL_RUNTIME" />
             </intent-filter>
         </receiver>
+
+        <!-- 设备能力层的开关翻板（阶段 3.5 真机验收用）。
+             与上面那个同理：**只在 debug 变体注册**，release 的清单里没有它 ——
+             不是靠运行时判断关掉的。它只翻一个布尔并起停服务，
+             不接受端口/路径/命令参数。 -->
+        <receiver
+            android:name=".dev.DevDeviceCapabilityReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.dshfusion.app.dev.action.DEVICE_CAPABILITY" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

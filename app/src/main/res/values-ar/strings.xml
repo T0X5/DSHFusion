@@ -708,4 +708,7 @@
     <string name="auto_last">آخر نسخة: %1$s</string>
     <string name="auto_run_now">انسخ الآن</string>
     <string name="auto_keep_note">تُنقّى النسخ التلقائية فقط؛ يُحتفظ بـ %1$d كحد أقصى. لا تُحذف النسخ اليدوية أو نسخ الإنقاذ أبدًا.</string>
+    <string name="settings_section_device_capability">قدرات الجهاز</string>
+    <string name="settings_device_capability_intro">يتيح للوكيل داخل الحاوية تشغيل هذا الهاتف عبر منفذ محلي. معطّل افتراضيًا؛ ولا يبدأ الاستماع إلا بعد تأكيدك.</string>
+    <string name="settings_device_capability_enable">تمكين نقاط نهاية قدرات الجهاز</string>
 </resources>

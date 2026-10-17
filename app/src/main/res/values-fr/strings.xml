@@ -678,4 +678,7 @@
     <string name="auto_last">Dernière sauvegarde : %1$s</string>
     <string name="auto_run_now">Sauvegarder maintenant</string>
     <string name="auto_keep_note">Seules les sauvegardes automatiques sont purgées ; %1$d au maximum sont conservées. Les archives manuelles et de secours ne sont jamais supprimées.</string>
+    <string name="settings_section_device_capability">Capacités de l\'appareil</string>
+    <string name="settings_device_capability_intro">Permet à l\'agent du conteneur de piloter ce téléphone via un port local. Désactivé par défaut ; l\'écoute ne démarre qu\'après votre confirmation.</string>
+    <string name="settings_device_capability_enable">Activer les points d\'accès aux capacités</string>
 </resources>
