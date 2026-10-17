@@ -765,9 +765,11 @@ java -cp $OUT CheckCapabilityGate
 真编译、真运行（不是 grep），断言 `CapabilityGate` 的五组边界：默认值 / 无障碍要系统服务 /
 T3 按通道且不降级 / 禁止自目标 / 状态不可用时 fail-closed，外加两条结构性断言。
 
-**CI 里由 `bridge/src/test` 的四个测试类负责**：`CapabilityGateTest` 9 条、
-`CapabilityTierMapTest` 6 条、`CapabilityAuthorizerTest` 6 条（这三个是纯 Java，
-本机也能跑）、加 Kotlin 的 `CapabilityTierMapContractTest` 2 条。这个探针是
+**CI 里由 `bridge/src/test` 的六个测试类负责**：`CapabilityGateTest` 9 条、
+`CapabilityTierMapTest` 6 条、`CapabilityAuthorizerTest` 6 条、
+`DeviceEndpointDispatcherTest` 8 条、`DeviceBridgeHttpServerTest` 5 条
+（这五个是纯 Java，本机也能跑，共 34 条）、加 Kotlin 的
+`CapabilityTierMapContractTest` 2 条。这个探针是
 **本机两秒版**，与 `check-credential-projection.java` 同一个理由：
 本机有 JDK 17、没有 kotlinc，写成 Kotlin 就只能等 CI。
 

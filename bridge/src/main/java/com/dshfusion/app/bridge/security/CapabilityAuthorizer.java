@@ -69,15 +69,34 @@ public final class CapabilityAuthorizer {
      */
     public static Outcome authorize(boolean originTrusted, String capabilityName,
                                     CapabilityGate.Grants grants) {
+        CapabilityGate.Tier tier = CapabilityTierMap.tierFor(capabilityName);
+        if (tier == null) {
+            // 未知能力**先于来源判定**就要拒绝？不 —— 顺序见下：
+            // 来源不受信任时统一报 ORIGIN_NOT_TRUSTED，避免把「能力存在与否」泄露给不受信任的来源。
+            if (!originTrusted) {
+                return new Outcome(false, null, CapabilityGate.DenyCode.ORIGIN_NOT_TRUSTED);
+            }
+            return new Outcome(false, null, CapabilityGate.DenyCode.UNKNOWN_CAPABILITY);
+        }
+        return authorize(originTrusted, tier, false, grants);
+    }
+
+    /**
+     * 按**档位**直接裁决 —— 供设备能力端点表使用（那些端点不是 {@code BridgeCapability}，
+     * 硬塞进那张表会让「枚举对账」这条测试失去意义）。
+     *
+     * @param accessibilityServiceOn T2 专用：系统里的无障碍服务是否开着。
+     *                               **调用方不告诉我们就按「没开」处理** ——
+     *                               「没告知」不能当成「开着」。
+     */
+    public static Outcome authorize(boolean originTrusted, CapabilityGate.Tier tier,
+                                    boolean accessibilityServiceOn,
+                                    CapabilityGate.Grants grants) {
         Objects.requireNonNull(grants, "grants");
+        Objects.requireNonNull(tier, "tier");
 
         if (!originTrusted) {
             return new Outcome(false, null, CapabilityGate.DenyCode.ORIGIN_NOT_TRUSTED);
-        }
-
-        CapabilityGate.Tier tier = CapabilityTierMap.tierFor(capabilityName);
-        if (tier == null) {
-            return new Outcome(false, null, CapabilityGate.DenyCode.UNKNOWN_CAPABILITY);
         }
 
         // T3 需要显式通道，而这条路径没有通道概念 —— 传 null，闸门会拒绝。
@@ -88,9 +107,7 @@ public final class CapabilityAuthorizer {
                 request = CapabilityGate.Request.privileged(null);
                 break;
             case T2_ACCESSIBILITY:
-                // 无障碍的「系统服务是否开着」由调用方另行提供；这条路径默认按**没开**处理，
-                // 因为「没告诉我」不能当成「开着」。
-                request = CapabilityGate.Request.accessibility(false);
+                request = CapabilityGate.Request.accessibility(accessibilityServiceOn);
                 break;
             default:
                 request = CapabilityGate.Request.of(tier);
@@ -107,4 +124,5 @@ public final class CapabilityAuthorizer {
         }
         return new Outcome(false, null, code);
     }
+
 }
