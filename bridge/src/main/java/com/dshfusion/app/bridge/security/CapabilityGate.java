@@ -93,6 +93,10 @@ public final class CapabilityGate {
         CREDENTIAL_NEVER_EXPOSED,
         /** 授权状态读不到或损坏。**按拒绝处理，不按放行处理。** */
         AUTHORIZATION_UNAVAILABLE,
+        /** 来源不是受信任的 DSH WebUI（旧的来源门）；两道门都要过。 */
+        ORIGIN_NOT_TRUSTED,
+        /** 能力名没有映射到任何档位。**新增能力忘了映射时走这里。** */
+        UNKNOWN_CAPABILITY,
     }
 
     /** 一次请求。{@code selfTarget} 只允许在 {@code bringHostToFront} 这一种形状上为真。 */

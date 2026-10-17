@@ -190,16 +190,29 @@ jobs:
           if total < 163:
               problems.append(f":backup 只有 {total} 条测试，低于本轮预期总数 163")
 
-          # 阶段 3.4 的档位闸门（CapabilityGate）。它决定「能不能碰手机」，
-          # 所以不许只靠「总数为正」—— **单独钉住这个类与它的条数**。
-          # 条数是本机实测（JUnit 4.13.2 真跑，OK (9 tests)），不是数出来的。
-          gate = "com.dshfusion.app.bridge.security.CapabilityGateTest"
-          if gate not in bridge_classes:
-              problems.append(f"{gate} 没有运行（档位闸门没跑 = 3.4 没有证据）")
-          elif bridge_classes[gate] != 9:
-              problems.append(f"{gate} 跑了 {bridge_classes[gate]} 条，期望 9 条")
-          if bridge_total < 9:
-              problems.append(f":bridge 只有 {bridge_total} 条测试，至少应有 9 条（档位闸门）")
+          # 阶段 3.4 的档位闸门与它的两道门合成。它们决定「能不能碰手机」，
+          # 所以不许只靠「总数为正」—— **逐类钉住**。
+          # 条数都是**本机实测**（JDK 17 + JUnit 4.13.2 真跑，OK (21 tests)），不是数出来的。
+          for name, want, why in (
+              ("com.dshfusion.app.bridge.security.CapabilityGateTest", 9,
+               "档位闸门没跑 = 3.4 没有证据"),
+              ("com.dshfusion.app.bridge.security.CapabilityTierMapTest", 6,
+               "能力→档位映射没跑 = 映射表可以悄悄放宽"),
+              ("com.dshfusion.app.bridge.security.CapabilityAuthorizerTest", 6,
+               "两道门的合成没跑 = 可能只剩一道门"),
+          ):
+              if name not in bridge_classes:
+                  problems.append(f"{name} 没有运行（{why}）")
+              elif bridge_classes[name] != want:
+                  problems.append(f"{name} 跑了 {bridge_classes[name]} 条，期望 {want} 条")
+          # Kotlin 那个只钉子类名，不钉条数 —— 它要枚举真实枚举值，本机没有 kotlinc 量不了。
+          # 但「存在」已经足够了：它不跑，说明 Kotlin 侧根本没编译。
+          contract = "com.dshfusion.app.bridge.security.CapabilityTierMapContractTest"
+          if contract not in bridge_classes:
+              problems.append(f"{contract} 没有运行（新增能力可以不加映射）")
+          # 下限 = 9 + 6 + 6 + 3（既有 BridgePolicyTest）= 24，再给 Kotlin 那 2 条留位。
+          if bridge_total < 24:
+              problems.append(f":bridge 只有 {bridge_total} 条测试，低于预期下限 24")
           # 2.4 的恢复核心是**会毁数据**的那条路径，所以单独钉住它的类。
           # 「总数够了」不代表「新那 8 条在里面」（第 26 条的同族）。
           restore = "com.deepseekharness.app.backup.NativeRestorePlanTest"
