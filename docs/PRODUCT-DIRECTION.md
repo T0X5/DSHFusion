@@ -180,6 +180,8 @@
 
 > ✅ **这条界线已经写成可逐项套用的判据**（三条 + 一条自我检查），见 [PHASE3.3-COMPAT-BOUNDARY.md](PHASE3.3-COMPAT-BOUNDARY.md)。那里还记了一条实测反例：`/app/help` 自述的端点清单**不是穷举**（`/app/vscreen/status` 返回了一个清单里没有的错误码），这正是「兼容性依据只能是实测」的理由。
 
+> 📄 **3.2 / 3.3 / 3.4 的产物**：授权模型（五档）见 [PHASE3.2-AUTHORIZATION-MODEL.md](PHASE3.2-AUTHORIZATION-MODEL.md)；兼容界线与端点子集见 [PHASE3.3-COMPAT-BOUNDARY.md](PHASE3.3-COMPAT-BOUNDARY.md)；安全边界与 3.5 的验收清单见 [PHASE3.4-SECURITY-BOUNDARY.md](PHASE3.4-SECURITY-BOUNDARY.md)。
+
 ### 与阶段 2.8 的关系
 
 **不冲突。** 2.8 换的是 base/node/dsh 三层**运行环境**；3.3 加的是**设备能力层**。

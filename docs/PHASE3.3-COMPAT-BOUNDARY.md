@@ -233,3 +233,19 @@ python3 tools/probe-bridge-contract.py /app/version   # 指定一条
 `/app/launch` · `/app/overlay` · `/app/vscreen/create|launch|see|close`。
 
 **它们要一条一条来，每条事先想好怎么撤。**
+
+---
+
+## 十、3.4 反过来对 3.3 提的新要求（2026-10-17）
+
+[PHASE3.4-SECURITY-BOUNDARY.md](PHASE3.4-SECURITY-BOUNDARY.md) §四 要求：
+
+> **契约表必须多一列「关着时返回什么」。**
+
+理由：3.5 要验「关着的时候真的做不了」，而**没有期望值就没有可比对的断言** ——
+那就是一条**没有输入空间的检查**（事故第 30 条的形态，本仓库栽过）。
+
+**所以契约表（`tools/probe-bridge-contract.py` 的输出）下一版要加一列**：
+在**未开启授权**的状态下调用，端点返回的那个**稳定错误码**。
+这一列现在**是空的** —— 因为授权层还不存在，没有「关着」这个状态可测。
+**空着就写空着，不猜。**
