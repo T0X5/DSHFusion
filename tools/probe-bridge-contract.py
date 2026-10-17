@@ -43,10 +43,28 @@ READ_ONLY = [
     ("/app/vscreen/status", {}, "虚拟屏状态"),
 ]
 
+# **永不自动探测**：这些端点的探测动作本身就是危险动作。
+# 不是「以后再测」，是**不由脚本测** —— 需要人亲自在场时手工做一次。
+NEVER = {
+    "/exec?cmd=": "能以 shell 身份跑任意命令",
+    "/app/ask": "会弹窗阻塞，等待用户回答（脚本会一直卡住）",
+    "/app/ui/tap": "在用户当前页面上盲点，点中什么都不知道",
+}
+
+# **允许的单条写操作探测**（需显式 --allow-write <path>，一次只准一条）。
+# 每一条都必须写明「它会做什么」与「怎么撤」。
+WRITE_PROBES = {
+    "/app/notify": {
+        "params": {"title": "DSHFusion 契约探测", "text": "3.3 契约表：这是唯一一条写操作探测"},
+        "does": "往通知栏发一条消息",
+        "undo": "用户在通知栏滑掉即可；不改变任何设备状态",
+    },
+}
+
 # 明确**不探测**的（写进表里，让读者知道它为什么是空的）
 NOT_PROBED = [
     ("/app/ui/tap", "/app/ui/screenshot", "/app/ui/input", "/app/ui/key", "/app/ui/swipe"),
-    ("/app/launch", "/app/notify", "/app/overlay", "/app/ask"),
+    ("/app/launch", "/app/overlay"),   # notify 已探测（写探测，见文档）；ask 在 NEVER 里
     ("/app/vscreen/create", "/app/vscreen/launch", "/app/vscreen/see", "/app/vscreen/close"),
     ("/exec?cmd=",),  # ⚠️ 逗号不能省：`(x)` 是字符串，`(x,)` 才是元组
 ]
@@ -119,14 +137,39 @@ def describe(text: str) -> tuple[str, str]:
 
 def main(argv: list[str]) -> int:
     allowed = {p for p, _, _ in READ_ONLY}
-    requested = [a for a in argv[1:] if not a.startswith("-")]
+    args = argv[1:]
+    write_targets = []
+    if "--allow-write" in args:
+        index = args.index("--allow-write")
+        if index + 1 >= len(args):
+            print("拒绝：--allow-write 后面必须跟一个端点路径。", file=sys.stderr)
+            return 2
+        write_targets = [args[index + 1]]
+        args = args[:index] + args[index + 2:]
+
+    for path in write_targets:
+        if path in NEVER:
+            print(f"拒绝：{path} 永不自动探测 —— {NEVER[path]}。", file=sys.stderr)
+            return 2
+        if path not in WRITE_PROBES:
+            print(f"拒绝：{path} 不在写探测名单里（只有 {', '.join(WRITE_PROBES)}）。",
+                  file=sys.stderr)
+            return 2
+
+    requested = [a for a in args if not a.startswith("-")]
     for path in requested:
+        if path in NEVER:
+            print(f"拒绝：{path} 永不自动探测 —— {NEVER[path]}。", file=sys.stderr)
+            return 2
         if path not in allowed:
             print(f"拒绝：{path} 不在只读白名单里。"
                   "「探测」与「执行」在这个端点上没有区别（事故 46）。", file=sys.stderr)
             return 2
 
     targets = [(p, q, w) for p, q, w in READ_ONLY if not requested or p in requested]
+    for path in write_targets:
+        spec = WRITE_PROBES[path]
+        targets.append((path, spec["params"], "⚠️ 写操作：" + spec["does"]))
     tok = token()
     rows = []
     for path, params, why in targets:
@@ -140,6 +183,11 @@ def main(argv: list[str]) -> int:
               f"| {r['shape']} | {r['codes']} | {why} |")
     print()
     print(f"实测 {len(rows)} 条（脚本生成，**不是手抄的**）。")
+    for path in write_targets:
+        print(f"\n> ⚠️ `{path}` 是**写操作**探测：{WRITE_PROBES[path]['does']}。"
+              f"撤法：{WRITE_PROBES[path]['undo']}。\n"
+              f"> 永不自动探测（不是「以后再测」，是**不由脚本测**）："
+              + "；".join(f"`{k}`——{v}" for k, v in NEVER.items()) + "。")
     print()
     print("**未探测**（会改状态，须单独安排一次并想好怎么撤）：")
     for group in NOT_PROBED:
