@@ -146,3 +146,52 @@ GET /app/vscreen/status  →  HTTP 200
 
 > **数字本身不重要，重要的是「排除」这一栏是**先写**的。**
 > 如果先写保留、再补排除，结果一定是「清单里有什么就开什么」。
+
+---
+
+## 八、实测契约表（**第三件产物 · 脚本生成，不手抄**）
+
+**怎么重新生成**：
+
+```bash
+python3 tools/probe-bridge-contract.py          # 全部只读端点
+python3 tools/probe-bridge-contract.py /app/version   # 指定一条
+```
+
+**为什么要有脚本**：判据 ③ 要求「兼容性依据只能是真机实测」，
+而手敲 curl 写进文档的仍然是手抄的 —— 本仓库为手抄栽过不止一次（§七 末尾那次也是）。
+
+**脚本的第一条设计约束不是「能跑」，是「不许乱跑」**：
+只读白名单之外一律拒绝并退 2，**且不提供 --force**。
+理由是事故第 46 条 —— **「探测」与「执行」在会改状态的端点上没有区别**。
+
+| 端点 | HTTP | 耗时 | 返回形状 | 错误码 | 这是测什么的 |
+|---|---:|---:|---|---|---|
+| `/app/version` | 200 | 38 ms | JSON{result} | — | 桥协议版本与 App 版本 |
+| `/app/help` | 200 | 2 ms | JSON{result} | POLICY_BLOCKED, EXECUTION_UNKNOWN, NO_PERMISSION, DISABLED | 端点清单正文（判断清单是否穷举） |
+| `/app/ui/dump` | 200 | 9 ms | JSON{result} | — | 当前页面结构 |
+| `/app/apps` | 200 | 682 ms | JSON{result} | — | 已装应用（取前 5 条） |
+| `/app/vscreen/status` | 200 | 2 ms | JSON{result: JSON{…}}，内层 ok=false | VSCREEN_NOT_RUNNING | 虚拟屏状态 |
+
+实测 5 条（脚本生成，**不是手抄的**）。
+
+**未探测**（会改状态，须单独安排一次并想好怎么撤）：
+- `/app/ui/tap` · `/app/ui/screenshot` · `/app/ui/input` · `/app/ui/key` · `/app/ui/swipe`
+- `/app/launch` · `/app/notify` · `/app/overlay` · `/app/ask`
+- `/app/vscreen/create` · `/app/vscreen/launch` · `/app/vscreen/see` · `/app/vscreen/close`
+- `/exec?cmd=`
+
+> 📌 **两条从这张表里读出来的事**：
+> 1. `/app/help` 的返回里出现了 `POLICY_BLOCKED / EXECUTION_UNKNOWN / NO_PERMISSION / DISABLED`
+>    —— **它是用散文提到这些词的**，不是真的发生了拦截。所以「错误码」这一列
+>    对正文类端点没有意义，**判断错误码要看行为类端点**。
+> 2. `/app/vscreen/status` 的返回是**双层 JSON**（`result` 里再套一个 JSON，内层 `ok=false`），
+>    而内层那个 `VSCREEN_NOT_RUNNING` **不在 `/app/help` 的任何清单里** ——
+>    §三 那条「清单不是穷举」的判断，**由脚本复现了一次**。
+
+## 九、下一批
+
+1. **会改状态的那些端点**：逐条安排一次「想好怎么撤」的探测（每次一条，不批量）。
+2. **把这张表接进 CI**：它是**只读**的，所以 CI 里跑没问题 —— 但目前 CI 没有设备，
+   只能本机跑。**这一条要如实写成「未接入」**，不能写成「已接入」。
+3. 契约表稳定之后才谈**入口呈现**（先接口，后交互）。
