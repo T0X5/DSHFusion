@@ -749,3 +749,28 @@ tools/run-suite.sh --last           # 最近一份日志的路径与结论行
 「文件存在 + 内容健康」不足以证明它是这一轮的。
 
 退出码：套件本身的退出码；`--check` 用 0/1；找不到日志 3；日志不可信 4。
+
+---
+
+## `check-capability-gate.java` —— 档位闸门的行为探针
+
+```bash
+mkdir -p $OUT
+javac -encoding UTF-8 -d $OUT \
+  bridge/src/main/java/com/dshfusion/app/bridge/security/CapabilityGate.java \
+  tools/check-capability-gate.java
+java -cp $OUT CheckCapabilityGate
+```
+
+真编译、真运行（不是 grep），断言 `CapabilityGate` 的五组边界：默认值 / 无障碍要系统服务 /
+T3 按通道且不降级 / 禁止自目标 / 状态不可用时 fail-closed，外加两条结构性断言。
+
+**CI 里由 `CapabilityGateTest`（`bridge/src/test`，JUnit，9 条）负责** —— 这个探针是
+**本机两秒版**，与 `check-credential-projection.java` 同一个理由：
+本机有 JDK 17、没有 kotlinc，写成 Kotlin 就只能等 CI。
+
+> ⚠️ **`-encoding UTF-8` 不能省。** `javac` 默认按平台编码（这里是 US-ASCII）解析，
+> 而这些文件里有中文注释 —— 省掉它会报一串 `unmappable character`。
+> AGP 自己是 UTF-8，所以**CI 不受影响**；只有本机手跑会踩。
+
+退出码：`0` 全过 · `1` 有断言失败。
