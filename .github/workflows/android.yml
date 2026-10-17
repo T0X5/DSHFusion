@@ -141,17 +141,28 @@ jobs:
           python3 - <<'PY'
           import glob, sys, xml.etree.ElementTree as ET
 
-          files = glob.glob("backup/build/test-results/**/*.xml", recursive=True)
-          if not files:
-              sys.exit("::error:::backup 没有产出任何测试结果 XML —— 测试根本没跑")
-          total, classes = 0, {}
-          for f in files:
-              root = ET.parse(f).getroot()
-              classes[root.get("name", "?")] = int(root.get("tests", 0))
-              total += int(root.get("tests", 0))
+          # 两个模块分开统计。**不合并**：合并之后 :backup 少了测试也可能被
+          # :bridge 多出来的数目补上，下限断言就失去意义（第 26 条的同族）。
+          def collect(module):
+              found = glob.glob(f"{module}/build/test-results/**/*.xml", recursive=True)
+              if not found:
+                  sys.exit(f"::error:::{module} 没有产出任何测试结果 XML —— 测试根本没跑")
+              counts, sum_ = {}, 0
+              for f in found:
+                  root = ET.parse(f).getroot()
+                  counts[root.get("name", "?")] = int(root.get("tests", 0))
+                  sum_ += int(root.get("tests", 0))
+              return counts, sum_
+
+          classes, total = collect("backup")
           for name in sorted(classes):
               print(f"  {classes[name]:3d}  {name}")
           print(f":backup 共 {total} 条测试，{len(classes)} 个测试类")
+
+          bridge_classes, bridge_total = collect("bridge")
+          for name in sorted(bridge_classes):
+              print(f"  {bridge_classes[name]:3d}  {name}")
+          print(f":bridge 共 {bridge_total} 条测试，{len(bridge_classes)} 个测试类")
 
           problems = []
           # 期望值说明（都是**实测**出来的，不是数出来的）：
@@ -178,6 +189,17 @@ jobs:
           # 若 CI 报的不是 162，先信 CI（docs/INCIDENTS.md 第 27 条）。
           if total < 163:
               problems.append(f":backup 只有 {total} 条测试，低于本轮预期总数 163")
+
+          # 阶段 3.4 的档位闸门（CapabilityGate）。它决定「能不能碰手机」，
+          # 所以不许只靠「总数为正」—— **单独钉住这个类与它的条数**。
+          # 条数是本机实测（JUnit 4.13.2 真跑，OK (9 tests)），不是数出来的。
+          gate = "com.dshfusion.app.bridge.security.CapabilityGateTest"
+          if gate not in bridge_classes:
+              problems.append(f"{gate} 没有运行（档位闸门没跑 = 3.4 没有证据）")
+          elif bridge_classes[gate] != 9:
+              problems.append(f"{gate} 跑了 {bridge_classes[gate]} 条，期望 9 条")
+          if bridge_total < 9:
+              problems.append(f":bridge 只有 {bridge_total} 条测试，至少应有 9 条（档位闸门）")
           # 2.4 的恢复核心是**会毁数据**的那条路径，所以单独钉住它的类。
           # 「总数够了」不代表「新那 8 条在里面」（第 26 条的同族）。
           restore = "com.deepseekharness.app.backup.NativeRestorePlanTest"
