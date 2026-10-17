@@ -100,14 +100,50 @@
 
 ## 五、未决问题（下一批）
 
-### ① `device.app.control` 到底是不是 T1
+### ① `device.app.control` —— ✅ **已查清：定 T1**（2026-10-17）
 
-它只需要应用层，但「启动任意应用」+「列出全部应用」在 Android 上
-**需要 `QUERY_ALL_PACKAGES` 或等价的可见性声明** —— 那是商店审核意义上的敏感项，
-且**能列出用户装了什么**（这本身是隐私）。
+**查的是 DSHBox 的可见性声明本身，不是它的说明文字。**
+`pilot/interlock-relay-core/src/main/AndroidManifest.xml` 里写着：
 
-**要查的是**：DSHBox 的 `mobile-pilot` 用的是哪条路径、它声明了什么。
-**没查之前不许定档** —— 定档就是一个承诺。
+```xml
+<!-- Declared via <queries> instead of the store-reviewed QUERY_ALL_PACKAGES. -->
+<queries>
+    <package android:name="moe.shizuku.privileged.api" />
+    <intent>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+    </intent>
+</queries>
+```
+
+| 事实 | 含义 |
+|---|---|
+| **没有** `QUERY_ALL_PACKAGES` | 它**看不见全部已安装应用** |
+| 只声明了 `MAIN`/`LAUNCHER` 的 intent | 能看见的只有**有启动图标的包** |
+| `app.info` 的包名来自 `pkg.query` | 而 `pkg.query` 同样受这份 `<queries>` 限制 |
+
+⇒ **可见性被结构性地限在「桌面上有图标的那些」**，所以它拿不到
+商店审核意义上的那个敏感能力。**定 T1。**
+
+> ⚠️ **但 T1 的文案必须说实话**：即使只限 launcher，
+> **「能列出你装了哪些应用」本身就是隐私**（从这份清单能推出你的生活状态）。
+> 所以界面上的措辞是 **「列出你桌面上有图标的应用」**，
+> **不是**「读取应用列表」——后者听起来像数据库查询，前者才是事实。
+
+### ①-bis 顺带查到一条 3.4 该直接抄的规则：**禁止以宿主自身为目标**
+
+`mobile-pilot` 给 `app.launch` 加了一条形状很细的守卫（`plugin/lib/tools.js` 原文）：
+
+> 「宿主对「以宿主自身为目标」的显式放行**仅限 `app.launch` 只带宿主包名**这一种形状，
+> 其余带宿主包名的调用**仍会被拒**」
+
+**为什么这条重要**：能力层如果允许 agent 用自己的宿主应用当目标，
+就能**用它去驱动它自己** —— 那是一条**权限自举回路**（agent 点自己的界面，
+再触发自己的能力）。DSHBox 用「只放行一种精确形状、其余一律拒」来堵它。
+
+⇒ **3.4 应当把它升级成规则**：**能力层的任何操作都不许以宿主自身为目标**，
+唯一例外是那个被显式列出的「把宿主叫回前台」形状。
+DSHA 的桥没有这条（它的 `/app/launch?pkg=` 不区分目标是谁）—— 这是 DSHBox 更严的一处。
 
 ### ② T3 的三档前提，能不能在同一个模型里表达
 
