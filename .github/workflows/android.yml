@@ -164,6 +164,7 @@ jobs:
               print(f"  {bridge_classes[name]:3d}  {name}")
           print(f":bridge 共 {bridge_total} 条测试，{len(bridge_classes)} 个测试类")
 
+
           problems = []
           # 期望值说明（都是**实测**出来的，不是数出来的）：
           # 这个类第一次真跑时报 8 条，而我按阅读数成了 7 条 —— 断言当场红了。
@@ -220,6 +221,18 @@ jobs:
           # 再给 Kotlin 那 2 条留位 ⇒ 45。本机实测正是 40 + 3 + 2 = 45。
           if bridge_total < 43:
               problems.append(f":bridge 只有 {bridge_total} 条测试，低于预期下限 43")
+
+          # 设备能力端点的生命周期在 :app 里（它要碰 BuildConfig 与将来的无障碍服务），
+          # 所以这里也要确认那几条真的跑了 —— 否则「默认关」只是注释里的说法。
+          # ⚠️ 这一段必须放在 problems 初始化**之后**：放前面会 NameError，
+          #    而那个崩掉的表现是「没有 ::error:: 输出」—— 看起来像「没问题」。
+          app_classes, app_total = collect("app")
+          wiring = "com.dshfusion.app.bridge.DeviceCapabilityBridgeTest"
+          if wiring not in app_classes:
+              problems.append(f"{wiring} 没有运行（设备能力生命周期的接线没有证据）")
+          elif app_classes[wiring] != 4:
+              problems.append(f"{wiring} 跑了 {app_classes[wiring]} 条，期望 4 条")
+          print(f":app 共 {app_total} 条测试，{len(app_classes)} 个测试类")
           # 2.4 的恢复核心是**会毁数据**的那条路径，所以单独钉住它的类。
           # 「总数够了」不代表「新那 8 条在里面」（第 26 条的同族）。
           restore = "com.deepseekharness.app.backup.NativeRestorePlanTest"
