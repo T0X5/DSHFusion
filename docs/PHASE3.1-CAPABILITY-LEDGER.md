@@ -623,6 +623,14 @@ if (/(?:\.credentials\.yaml|id_rsa|id_ed25519|\.bridge_token|\.bridge_headers)$/
 > 该 token 是**本机 127.0.0.1 桥**的凭据，未进入 URL 也未进入 argv；
 > 但**轮换清单上要加上它**（与 PAT 一起，只有用户能做）。
 
+## 交接给 3.2
+
+「前提」列已经够用了 —— **3.2 的授权模型（五档）已据此写出**，见 [PHASE3.2-AUTHORIZATION-MODEL.md](PHASE3.2-AUTHORIZATION-MODEL.md)。
+
+那条文档同时承接了本批剩下的两件事：`device.app.control` 的档位**未定**（要查 `mobile-pilot` 的可见性声明），以及 T3 三档前提如何在单值模型里表达。
+
+---
+
 ## 仍未查（下一批）
 
 1. **`/app/vscreen/status` 的只读真机验证**（上面那条，零风险，把 `device.vdisplay` 升级）
